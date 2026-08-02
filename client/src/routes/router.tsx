@@ -4,6 +4,7 @@ import { DashboardLayout } from '@/layouts/DashboardLayout'
 import { LoginPage } from '@/pages/auth/LoginPage'
 import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { PatientsPage } from '@/pages/patients/PatientsPage'
+import { DoctorsPage } from '@/pages/doctors/DoctorsPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ROUTES } from '@/constants/routes'
 
@@ -17,6 +18,7 @@ export const router = createBrowserRouter([
     children: [
       { path: ROUTES.dashboard, element: <DashboardPage /> },
       { path: ROUTES.patients, element: <PatientsPage /> },
+      { path: ROUTES.doctors, element: <DoctorsPage /> },
     ],
   },
   { path: '/', element: <Navigate to={ROUTES.dashboard} replace /> },

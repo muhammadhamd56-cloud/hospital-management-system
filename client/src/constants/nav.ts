@@ -18,7 +18,7 @@ import type { NavItem } from '@/types/nav'
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, path: ROUTES.dashboard },
   { label: 'Patients', icon: Users, path: ROUTES.patients },
-  { label: 'Doctors', icon: Stethoscope },
+  { label: 'Doctors', icon: Stethoscope, path: ROUTES.doctors },
   { label: 'Appointments', icon: CalendarClock },
   { label: 'Laboratory', icon: FlaskConical },
   { label: 'Pharmacy', icon: Pill },
