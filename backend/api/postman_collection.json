@@ -1,0 +1,85 @@
+{
+  "info": {
+    "name": "HMS NestJS Backend",
+    "description": "Google OAuth + JWT backend for the Hospital Management System. GET /auth/google must be opened in a real browser (Postman can't complete the Google consent screen) — copy the `token` query param from the final /oauth/callback?token=... redirect into the `token` collection variable, then run the protected requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Google login (open in browser)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/auth/google",
+            "description": "Not usable directly from Postman — open this URL in a browser tab. It redirects to Google, then back to the frontend's /oauth/callback?token=... on success."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get my profile",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/users/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Patients (placeholder)",
+      "item": [
+        {
+          "name": "List patients",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/patients",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Requires ADMIN or DOCTOR role. Currently returns 501 Not Implemented."
+          }
+        },
+        {
+          "name": "Create patient",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/patients",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Requires ADMIN role. Currently returns 501 Not Implemented."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Appointments (placeholder)",
+      "item": [
+        {
+          "name": "List appointments",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/appointments",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Requires ADMIN, DOCTOR, or PATIENT role. Currently returns 501 Not Implemented."
+          }
+        },
+        {
+          "name": "Create appointment",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/appointments",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Requires PATIENT role. Currently returns 501 Not Implemented."
+          }
+        }
+      ]
+    }
+  ]
+}

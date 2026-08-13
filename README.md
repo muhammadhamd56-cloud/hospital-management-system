@@ -5,29 +5,40 @@ appointments, billing, laboratory, and pharmacy workflows.
 
 ## Status
 
-Frontend scaffolding in progress. The backend (Express + Prisma + PostgreSQL) has
-not been started yet — current work is UI-only, built against mock/placeholder data.
+Frontend and backend are both active and wired together: auth (Google OAuth +
+JWT), patients, doctors, appointments, billing, beds, and chat run against a
+real PostgreSQL database via the NestJS API.
 
 ## Tech Stack
 
-**Client** — React 19, Vite, TypeScript, Tailwind CSS v4, React Router, React Hook
-Form + Zod, React Hot Toast, Lucide React.
+**Frontend** — React 19, Vite, TypeScript, Tailwind CSS v4, React Router, React
+Hook Form + Zod, React Hot Toast, Lucide React.
+
+**Backend** — NestJS, Prisma, PostgreSQL, Passport (Google OAuth + JWT).
 
 ## Getting Started
 
 ```bash
-cd client
+cd frontend
 npm install
 npm run dev      # starts the dev server on http://localhost:5173
 npm run build    # type-checks and builds for production
 npx eslint .      # lint
 ```
 
+```bash
+cd backend/api
+npm install
+npm run start:dev   # starts the API on http://localhost:3000/api
+```
+
+See `backend/api/README.md` for environment variables and Prisma commands.
+
 ## Project Structure
 
 ```
 hospital-management-system/
-├── client/           # React + Vite + TypeScript frontend
+├── frontend/                 # React + Vite + TypeScript frontend
 │   └── src/
 │       ├── components/   # ui/ (Button, Card, Input, ...) and layout/ (Sidebar, Navbar)
 │       ├── layouts/       # Route-level layouts (AuthLayout, DashboardLayout)
@@ -38,8 +49,10 @@ hospital-management-system/
 │       ├── types/         # Shared TypeScript types
 │       ├── utils/         # Shared utilities (cn, ...)
 │       └── styles/        # Tailwind theme tokens and global styles
-├── docs/             # Documentation (added as modules are built)
-└── database/         # Database schema and seed data (added with the backend)
+├── backend/
+│   └── api/               # NestJS backend (Google OAuth + JWT), :3000
+└── database/
+    └── api/               # Prisma schema + migrations (PostgreSQL)
 ```
 
 ## Roles

@@ -1,0 +1,18 @@
+export const ROUTES = {
+  login: '/login',
+  verifyEmail: '/verify-email',
+  oauthCallback: '/oauth/callback',
+  selectRole: '/select-role',
+  dashboard: '/dashboard',
+  patients: '/patients',
+  doctors: '/doctors',
+  appointments: '/appointments',
+  beds: '/beds',
+  laboratory: '/laboratory',
+  pharmacy: '/pharmacy',
+  billing: '/billing',
+  reports: '/reports',
+  settings: '/settings',
+  messages: '/messages',
+  medicalRecords: '/medical-records',
+} as const

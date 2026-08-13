@@ -1,0 +1,260 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../backend/api/node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  DOCTOR
+  PATIENT
+}
+
+model User {
+  id        String   @id @default(cuid())
+  /** Null for accounts created via manual email/password signup. */
+  googleId  String?  @unique
+  email     String   @unique
+  /** Null for accounts created via Google — they have nothing to compare against. */
+  password  String?
+  firstName String
+  lastName  String
+  picture   String?
+  role      Role     @default(PATIENT)
+  /** True once the user has completed the one-time post-signup role picker
+   *  (Google flow) or explicitly chosen a role at manual signup. */
+  roleSelected Boolean @default(false)
+  /** Google accounts are verified by Google itself at signup. Local
+   *  accounts start false and must complete OTP email verification. */
+  emailVerified Boolean @default(false)
+  /** Hashed 6-digit OTP for email verification. Null once verified or if
+   *  no code has been requested yet. */
+  otpCodeHash   String?
+  otpExpiresAt  DateTime?
+  otpAttempts   Int       @default(0)
+  otpLastSentAt DateTime?
+  /** Bumped on logout so previously issued JWTs (which embed the version
+   *  at issue time) stop passing JwtStrategy.validate() immediately. */
+  tokenVersion Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctorProfile Doctor?
+  appointments  Appointment[]
+  chatMessages  ChatMessage[]
+  beds          Bed[]
+  invoices      Invoice[]
+  notifications Notification[]
+  medicalRecords MedicalRecord[]
+  auditLogs      AuditLog[]
+
+  @@index([role])
+}
+
+/** Ward/specialty a Doctor or Bed belongs to (e.g. Cardiology, Emergency). */
+model Department {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  doctors Doctor[]
+  beds    Bed[]
+}
+
+/** Doctor-specific profile fields, collected at manual signup when role = DOCTOR. */
+model Doctor {
+  id              String   @id @default(cuid())
+  specialization  String
+  bio             String
+  experienceYears Int
+  rating          Float    @default(4.5)
+  acceptsOnline   Boolean  @default(true)
+  isAvailable     Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  appointments    Appointment[]
+  chatMessages    ChatMessage[]
+  medicalRecords  MedicalRecord[]
+
+  @@index([departmentId])
+}
+
+enum AppointmentMode {
+  ONLINE
+  IN_PERSON
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+model Appointment {
+  id          String            @id @default(cuid())
+  patientId   String
+  patient     User              @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId    String
+  doctor      Doctor            @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  scheduledAt DateTime
+  mode        AppointmentMode
+  status      AppointmentStatus @default(SCHEDULED)
+  reason      String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  medicalRecord MedicalRecord?
+}
+
+enum ChatSender {
+  PATIENT
+  DOCTOR
+}
+
+model ChatMessage {
+  id        String     @id @default(cuid())
+  patientId String
+  patient   User       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId  String
+  doctor    Doctor     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  sender    ChatSender
+  body      String
+  createdAt DateTime   @default(now())
+}
+
+enum BedStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+}
+
+model Bed {
+  id        String    @id @default(cuid())
+  label     String
+  status    BedStatus @default(AVAILABLE)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  patientId String?
+  patient   User?   @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([departmentId])
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  description String
+  amount      Float
+  status      InvoiceStatus @default(PENDING)
+  dueDate     DateTime
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+
+  patientId String
+  patient   User   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  APPOINTMENT_BOOKED
+  APPOINTMENT_CANCELLED
+  CHAT_MESSAGE
+  MEDICAL_RECORD_ADDED
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  link      String?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+/** A clinical note a doctor writes for a patient, optionally tied to the
+ *  appointment it came out of. Holds the prescriptions issued alongside it. */
+model MedicalRecord {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   User     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId  String
+  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  /** Optional -- a record can also be created outside of a booked appointment. */
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  diagnosis String
+  notes     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prescriptions Prescription[]
+
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+/** One prescribed medication belonging to a MedicalRecord. A record can carry several. */
+model Prescription {
+  id              String   @id @default(cuid())
+  medicalRecordId String
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+
+  medicationName String
+  dosage         String
+  frequency      String
+  durationDays   Int
+  instructions   String?
+  createdAt      DateTime @default(now())
+
+  @@index([medicalRecordId])
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+/** Immutable trail of who changed what. Kept even if the actor's account is
+ *  later deleted -- actorId goes null rather than cascading the row away. */
+model AuditLog {
+  id         String      @id @default(cuid())
+  actorId    String?
+  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     AuditAction
+  entityType String
+  entityId   String
+  /** Free-form before/after or changed-field snapshot; shape depends on entityType. */
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
