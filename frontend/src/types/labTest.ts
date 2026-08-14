@@ -14,9 +14,15 @@ export interface LabTest {
   id: string
   patientId: string
   patientName: string
+  doctorId: string
   doctorName: string
+  department: string
+  assignedToId: string | null
+  assignedToName: string | null
   testName: string
   category: LabTestCategory
-  requestedDate: string
   status: LabTestStatus
+  resultSummary: string | null
+  requestedAt: string
+  completedAt: string | null
 }

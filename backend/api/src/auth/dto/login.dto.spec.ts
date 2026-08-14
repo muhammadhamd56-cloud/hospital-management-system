@@ -44,7 +44,7 @@ describe('LoginDto', () => {
     expect(fieldErrors(errors, 'role')).toBeDefined();
   });
 
-  it.each(['admin', 'doctor', 'patient'])('accepts role %p', async (role) => {
+  it.each(['admin', 'doctor', 'patient', 'receptionist', 'lab_staff', 'pharmacist'])('accepts role %p', async (role) => {
     const errors = await errorsFor({ ...VALID_LOGIN, role });
     expect(fieldErrors(errors, 'role')).toBeUndefined();
   });

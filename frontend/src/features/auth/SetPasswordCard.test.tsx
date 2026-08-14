@@ -34,6 +34,7 @@ function baseUser(overrides: Partial<AuthUser> = {}): AuthUser {
     roleSelected: true,
     hasPassword: false,
     emailVerified: true,
+    mustChangePassword: false,
     ...overrides,
   }
 }

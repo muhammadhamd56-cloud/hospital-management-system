@@ -7,11 +7,13 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
+import { createStaff, type CreateStaffResponse } from '@/features/staff/api'
+import { ApiError } from '@/lib/apiClient'
 import { DEPARTMENTS } from '@/types/doctor'
-import type { DirectoryDoctor } from '@/types/directoryDoctor'
 
 const doctorSchema = z.object({
-  fullName: z.string().min(2, 'Enter the doctor’s full name'),
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().min(1, 'Last name is required'),
   specialization: z.string().min(2, 'Enter a specialization'),
   department: z.enum(DEPARTMENTS),
   email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
@@ -28,10 +30,11 @@ type DoctorFormInput = z.input<typeof doctorSchema>
 interface AddDoctorModalProps {
   isOpen: boolean
   onClose: () => void
-  onAdd: (doctor: DirectoryDoctor) => void
+  /** Called with the created account (and its one-time temp password) so the caller can refresh its list and relay the password. */
+  onCreated: (result: CreateStaffResponse) => void
 }
 
-export function AddDoctorModal({ isOpen, onClose, onAdd }: AddDoctorModalProps) {
+export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalProps) {
   const {
     register,
     handleSubmit,
@@ -49,16 +52,15 @@ export function AddDoctorModal({ isOpen, onClose, onAdd }: AddDoctorModalProps) 
 
   async function onSubmit(values: DoctorFormInput) {
     const parsed = doctorSchema.parse(values)
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    onAdd({
-      id: `local-${crypto.randomUUID().slice(0, 8)}`,
-      rating: 4.5,
-      acceptsOnline: true,
-      isAvailable: true,
-      ...parsed,
-    })
-    toast.success(`${parsed.fullName} was added`)
-    handleClose()
+
+    try {
+      const result = await createStaff({ ...parsed, role: 'doctor' })
+      onCreated(result)
+      handleClose()
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to add doctor'
+      toast.error(message)
+    }
   }
 
   return (
@@ -66,10 +68,13 @@ export function AddDoctorModal({ isOpen, onClose, onAdd }: AddDoctorModalProps) 
       isOpen={isOpen}
       onClose={handleClose}
       title="Add Doctor"
-      description="Add a new doctor to the staff directory."
+      description="Creates the account with a temporary password you'll relay to them."
     >
       <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-        <Input label="Full name" error={errors.fullName?.message} {...register('fullName')} />
+        <div className="grid grid-cols-2 gap-4">
+          <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
+          <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <Input
             label="Specialization"

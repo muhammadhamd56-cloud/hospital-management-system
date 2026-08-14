@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,23 +14,43 @@ import {
   Tooltip,
   Legend,
 } from 'recharts'
+import toast from 'react-hot-toast'
 import { useTheme } from '@/hooks/useTheme'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { ChartTooltip } from '@/features/reports/ChartTooltip'
 import { CHART_PALETTES } from '@/features/reports/chartColors'
-import {
-  appointmentsByDepartment,
-  patientStatusDistribution,
-  MONTHLY_REVENUE,
-} from '@/features/reports/aggregations'
+import type { DepartmentCount, MonthlyRevenue, StatusCount } from '@/features/reports/aggregations'
+import { getAppointmentsByDepartment, getAppointmentsByStatus, getRevenueTrend } from '@/features/reports/api'
+import { ApiError } from '@/lib/apiClient'
 import { formatCurrency } from '@/utils/currency'
-
-const departmentData = appointmentsByDepartment()
-const statusData = patientStatusDistribution()
 
 export function ReportsPage() {
   const { theme } = useTheme()
   const palette = CHART_PALETTES[theme]
+  const [departmentData, setDepartmentData] = useState<DepartmentCount[]>([])
+  const [statusData, setStatusData] = useState<StatusCount[]>([])
+  const [revenueData, setRevenueData] = useState<MonthlyRevenue[]>([])
+
+  useEffect(() => {
+    getAppointmentsByDepartment()
+      .then((res) => setDepartmentData(res.data))
+      .catch((error) => {
+        const message = error instanceof ApiError ? error.message : 'Failed to load department report'
+        toast.error(message)
+      })
+    getAppointmentsByStatus()
+      .then((res) => setStatusData(res.data))
+      .catch((error) => {
+        const message = error instanceof ApiError ? error.message : 'Failed to load status report'
+        toast.error(message)
+      })
+    getRevenueTrend()
+      .then((res) => setRevenueData(res.data))
+      .catch((error) => {
+        const message = error instanceof ApiError ? error.message : 'Failed to load revenue report'
+        toast.error(message)
+      })
+  }, [])
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,7 +107,7 @@ export function ReportsPage() {
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={MONTHLY_REVENUE} margin={{ left: -10 }}>
+              <LineChart data={revenueData} margin={{ left: -10 }}>
                 <CartesianGrid vertical={false} stroke={palette.grid} />
                 <XAxis
                   dataKey="month"
@@ -117,8 +138,8 @@ export function ReportsPage() {
 
         <Card className="xl:col-span-2">
           <CardHeader>
-            <CardTitle>Patient Status Distribution</CardTitle>
-            <CardDescription>Current mix of active, admitted, and discharged patients.</CardDescription>
+            <CardTitle>Appointments by Status</CardTitle>
+            <CardDescription>Current mix of scheduled, completed, and cancelled appointments.</CardDescription>
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -132,7 +153,7 @@ export function ReportsPage() {
                   paddingAngle={2}
                   label={({ name, percent }) => {
                     const pct = `${Math.round((percent ?? 0) * 100)}%`
-                    return name === 'Active' ? pct : `${name} ${pct}`
+                    return name === 'Scheduled' ? pct : `${name} ${pct}`
                   }}
                 >
                   {statusData.map((entry, index) => (

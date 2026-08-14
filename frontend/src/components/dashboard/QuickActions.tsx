@@ -55,7 +55,7 @@ export function QuickActions() {
       <AddDoctorModal
         isOpen={openAction === 'doctor'}
         onClose={() => setOpenAction(null)}
-        onAdd={() => setOpenAction(null)}
+        onCreated={() => setOpenAction(null)}
       />
       <CreateInvoiceModal
         isOpen={openAction === 'invoice'}

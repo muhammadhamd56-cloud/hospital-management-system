@@ -3,6 +3,7 @@ export type NotificationType =
   | 'appointment_cancelled'
   | 'chat_message'
   | 'medical_record_added'
+  | 'lab_result_ready'
 
 export interface AppNotification {
   id: string

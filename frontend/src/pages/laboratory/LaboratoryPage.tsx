@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Search, FlaskConical } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -14,10 +15,12 @@ import {
 import { Pagination } from '@/components/ui/Pagination'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { usePagination } from '@/hooks/usePagination'
-import { formatDate } from '@/utils/datetime'
-import { MOCK_LAB_TESTS } from '@/features/laboratory/mockLabTests'
+import { useAuth } from '@/features/auth/useAuth'
+import { listLabTests } from '@/features/laboratory/api'
 import { LabTestStatusBadge } from '@/features/laboratory/LabTestStatusBadge'
 import { RequestLabTestModal } from '@/features/laboratory/RequestLabTestModal'
+import { UpdateLabTestModal } from '@/features/laboratory/UpdateLabTestModal'
+import { ApiError } from '@/lib/apiClient'
 import { LAB_TEST_CATEGORIES, type LabTest, type LabTestStatus } from '@/types/labTest'
 
 const PAGE_SIZE = 8
@@ -34,12 +37,38 @@ const CATEGORY_FILTER_OPTIONS = [
   ...LAB_TEST_CATEGORIES.map((category) => ({ label: category, value: category })),
 ]
 
+/** Roles allowed to progress a test's status -- matches @Roles(ADMIN, LAB_STAFF) on the backend. */
+const CAN_UPDATE_STATUS = new Set(['admin', 'lab_staff'])
+
 export function LaboratoryPage() {
-  const [labTests, setLabTests] = useState<LabTest[]>(MOCK_LAB_TESTS)
+  const { user } = useAuth()
+  const [labTests, setLabTests] = useState<LabTest[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<LabTestStatus | 'all'>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [isRequestOpen, setRequestOpen] = useState(false)
+  const [editingTest, setEditingTest] = useState<LabTest | null>(null)
+
+  function refresh() {
+    setIsLoading(true)
+    listLabTests()
+      .then((res) => setLabTests(res.tests))
+      .catch((error) => {
+        const message = error instanceof ApiError ? error.message : 'Failed to load lab tests'
+        toast.error(message)
+      })
+      .finally(() => setIsLoading(false))
+  }
+
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleUpdated(updated: LabTest) {
+    setLabTests((current) => current.map((t) => (t.id === updated.id ? updated : t)))
+  }
 
   const filteredTests = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -56,6 +85,7 @@ export function LaboratoryPage() {
   }, [labTests, search, statusFilter, categoryFilter])
 
   const { page, totalPages, pageItems, setPage } = usePagination(filteredTests, PAGE_SIZE)
+  const canUpdateStatus = user ? CAN_UPDATE_STATUS.has(user.role) : false
 
   return (
     <div className="flex flex-col gap-6">
@@ -103,7 +133,7 @@ export function LaboratoryPage() {
         </div>
       </div>
 
-      {filteredTests.length === 0 ? (
+      {!isLoading && filteredTests.length === 0 ? (
         <div className="rounded-card border border-surface-border bg-surface">
           <EmptyState
             icon={Search}
@@ -122,6 +152,7 @@ export function LaboratoryPage() {
                 <TableHead>Referring Doctor</TableHead>
                 <TableHead>Requested</TableHead>
                 <TableHead>Status</TableHead>
+                {canUpdateStatus && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -131,10 +162,17 @@ export function LaboratoryPage() {
                   <TableCell>{test.testName}</TableCell>
                   <TableCell>{test.category}</TableCell>
                   <TableCell>{test.doctorName}</TableCell>
-                  <TableCell>{formatDate(test.requestedDate)}</TableCell>
+                  <TableCell>{new Date(test.requestedAt).toLocaleDateString()}</TableCell>
                   <TableCell>
                     <LabTestStatusBadge status={test.status} />
                   </TableCell>
+                  {canUpdateStatus && (
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="secondary" onClick={() => setEditingTest(test)}>
+                        Update
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -154,6 +192,8 @@ export function LaboratoryPage() {
         onClose={() => setRequestOpen(false)}
         onRequest={(labTest) => setLabTests((current) => [labTest, ...current])}
       />
+
+      <UpdateLabTestModal test={editingTest} onClose={() => setEditingTest(null)} onUpdated={handleUpdated} />
     </div>
   )
 }

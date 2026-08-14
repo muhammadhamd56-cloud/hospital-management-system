@@ -11,6 +11,7 @@ import {
   Settings,
   MessageCircle,
   FileText,
+  UserCog,
 } from 'lucide-react'
 import { ROUTES } from '@/constants/routes'
 import type { NavItem } from '@/types/nav'
@@ -29,13 +30,29 @@ export const NAV_ITEMS: NavItem[] = [
     path: ROUTES.medicalRecords,
     roles: ['patient', 'doctor'],
   },
-  { label: 'Patients', icon: Users, path: ROUTES.patients, roles: OPS_ONLY },
+  { label: 'Patients', icon: Users, path: ROUTES.patients, roles: [...OPS_ONLY!, 'receptionist'] },
   { label: 'Doctors', icon: Stethoscope, path: ROUTES.doctors, roles: OPS_ONLY },
-  { label: 'Appointments', icon: CalendarClock, path: ROUTES.appointments, roles: OPS_ONLY },
+  {
+    label: 'Appointments',
+    icon: CalendarClock,
+    path: ROUTES.appointments,
+    roles: [...OPS_ONLY!, 'receptionist'],
+  },
   { label: 'Beds', icon: BedDouble, path: ROUTES.beds, roles: OPS_ONLY },
-  { label: 'Laboratory', icon: FlaskConical, path: ROUTES.laboratory, roles: OPS_ONLY },
-  { label: 'Pharmacy', icon: Pill, path: ROUTES.pharmacy, roles: OPS_ONLY },
+  {
+    label: 'Laboratory',
+    icon: FlaskConical,
+    path: ROUTES.laboratory,
+    roles: [...OPS_ONLY!, 'lab_staff'],
+  },
+  {
+    label: 'Pharmacy',
+    icon: Pill,
+    path: ROUTES.pharmacy,
+    roles: [...OPS_ONLY!, 'pharmacist'],
+  },
   { label: 'Billing', icon: Receipt, path: ROUTES.billing, roles: OPS_ONLY },
   { label: 'Reports', icon: FileBarChart, path: ROUTES.reports, roles: OPS_ONLY },
+  { label: 'Staff', icon: UserCog, path: ROUTES.staff, roles: ['admin'] },
   { label: 'Settings', icon: Settings, path: ROUTES.settings },
 ]

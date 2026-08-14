@@ -12,6 +12,6 @@ export class LoginDto {
   @MinLength(1, { message: 'Password is required' })
   password!: string;
 
-  @IsIn(['admin', 'doctor', 'patient'])
+  @IsIn(['admin', 'doctor', 'patient', 'receptionist', 'lab_staff', 'pharmacist'])
   role!: ClientRole;
 }

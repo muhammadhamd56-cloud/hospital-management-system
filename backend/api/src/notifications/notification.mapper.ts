@@ -4,7 +4,8 @@ export type ClientNotificationType =
   | 'appointment_booked'
   | 'appointment_cancelled'
   | 'chat_message'
-  | 'medical_record_added';
+  | 'medical_record_added'
+  | 'lab_result_ready';
 
 export interface NotificationResponse {
   id: string;
@@ -21,6 +22,7 @@ const TYPE_TO_CLIENT: Record<Notification['type'], ClientNotificationType> = {
   APPOINTMENT_CANCELLED: 'appointment_cancelled',
   CHAT_MESSAGE: 'chat_message',
   MEDICAL_RECORD_ADDED: 'medical_record_added',
+  LAB_RESULT_READY: 'lab_result_ready',
 };
 
 export function toNotificationResponse(notification: Notification): NotificationResponse {

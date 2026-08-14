@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, UserPlus, Eye } from 'lucide-react'
+import { Search, UserPlus, Eye, Copy, Check } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
 import {
   Table,
   TableHeader,
@@ -20,6 +21,7 @@ import { usePagination } from '@/hooks/usePagination'
 import { listDoctors } from '@/features/patientDashboard/api'
 import { AddDoctorModal } from '@/features/doctors/AddDoctorModal'
 import { DoctorProfileModal } from '@/features/doctors/DoctorProfileModal'
+import type { CreateStaffResponse } from '@/features/staff/api'
 import { ApiError } from '@/lib/apiClient'
 import { DEPARTMENTS } from '@/types/doctor'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
@@ -47,8 +49,11 @@ export function DoctorsPage() {
   const [departmentFilter, setDepartmentFilter] = useState<string>('all')
   const [isAddOpen, setAddOpen] = useState(false)
   const [selectedDoctor, setSelectedDoctor] = useState<DirectoryDoctor | null>(null)
+  const [revealed, setRevealed] = useState<CreateStaffResponse | null>(null)
+  const [copied, setCopied] = useState(false)
 
-  useEffect(() => {
+  function refresh() {
+    setIsLoading(true)
     listDoctors({ limit: 50 })
       .then((res) => setDoctors(res.doctors))
       .catch((error) => {
@@ -56,7 +61,25 @@ export function DoctorsPage() {
         toast.error(message)
       })
       .finally(() => setIsLoading(false))
+  }
+
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  function handleCreated(result: CreateStaffResponse) {
+    refresh()
+    setRevealed(result)
+    setCopied(false)
+  }
+
+  async function handleCopy() {
+    if (!revealed) return
+    await navigator.clipboard.writeText(revealed.tempPassword)
+    setCopied(true)
+    toast.success('Copied to clipboard')
+  }
 
   const filteredDoctors = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -192,10 +215,45 @@ export function DoctorsPage() {
       <AddDoctorModal
         isOpen={isAddOpen}
         onClose={() => setAddOpen(false)}
-        onAdd={(doctor) => setDoctors((current) => [doctor, ...current])}
+        onCreated={handleCreated}
       />
 
       <DoctorProfileModal doctor={selectedDoctor} onClose={() => setSelectedDoctor(null)} />
+
+      <Modal
+        isOpen={revealed !== null}
+        onClose={() => setRevealed(null)}
+        title="Account created"
+        description={
+          revealed
+            ? `Relay this temporary password to ${revealed.staff.fullName} — it won't be shown again.`
+            : undefined
+        }
+      >
+        {revealed && (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-alt px-4 py-3">
+              <code className="text-sm font-medium text-ink">{revealed.tempPassword}</code>
+              <Button type="button" size="sm" variant="secondary" onClick={handleCopy}>
+                {copied ? (
+                  <>
+                    <Check className="size-4" aria-hidden="true" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-4" aria-hidden="true" /> Copy
+                  </>
+                )}
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => setRevealed(null)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

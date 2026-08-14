@@ -23,6 +23,7 @@ function baseUser(overrides: Partial<AuthUser> = {}): AuthUser {
     roleSelected: true,
     hasPassword: true,
     emailVerified: true,
+    mustChangePassword: false,
     ...overrides,
   }
 }
@@ -38,6 +39,7 @@ function renderProtected(initialPath: string) {
         <Route path={ROUTES.login} element={<div>Login Page</div>} />
         <Route element={<ProtectedRoute />}>
           <Route path={ROUTES.selectRole} element={<div>Select Role Page</div>} />
+          <Route path={ROUTES.setPassword} element={<div>Set Password Page</div>} />
           <Route path={ROUTES.dashboard} element={<div>Dashboard Page</div>} />
         </Route>
       </Routes>
@@ -78,6 +80,27 @@ describe('ProtectedRoute', () => {
 
   it('renders the protected route when logged in with a role already selected', () => {
     mockUseAuth.mockReturnValue({ user: baseUser({ roleSelected: true }), isLoading: false })
+    renderProtected(ROUTES.dashboard)
+
+    expect(screen.getByText('Dashboard Page')).toBeInTheDocument()
+  })
+
+  it('redirects to set-password when the account must change its password', () => {
+    mockUseAuth.mockReturnValue({ user: baseUser({ mustChangePassword: true }), isLoading: false })
+    renderProtected(ROUTES.dashboard)
+
+    expect(screen.getByText('Set Password Page')).toBeInTheDocument()
+  })
+
+  it('does NOT redirect away from set-password itself when mustChangePassword is true', () => {
+    mockUseAuth.mockReturnValue({ user: baseUser({ mustChangePassword: true }), isLoading: false })
+    renderProtected(ROUTES.setPassword)
+
+    expect(screen.getByText('Set Password Page')).toBeInTheDocument()
+  })
+
+  it('renders the protected route when mustChangePassword is false', () => {
+    mockUseAuth.mockReturnValue({ user: baseUser({ mustChangePassword: false }), isLoading: false })
     renderProtected(ROUTES.dashboard)
 
     expect(screen.getByText('Dashboard Page')).toBeInTheDocument()

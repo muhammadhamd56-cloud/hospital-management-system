@@ -41,6 +41,7 @@ function buildPatient(overrides: Partial<User> = {}): User {
     otpAttempts: 0,
     otpLastSentAt: null,
     tokenVersion: 0,
+    mustChangePassword: false,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,

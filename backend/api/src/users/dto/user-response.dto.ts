@@ -40,6 +40,10 @@ export class UserResponseDto {
   @Expose()
   emailVerified!: boolean;
 
+  /** True for admin-provisioned staff accounts until they set their own password. */
+  @Expose()
+  mustChangePassword!: boolean;
+
   constructor(user: User) {
     this.id = user.id;
     this.email = user.email;
@@ -51,5 +55,6 @@ export class UserResponseDto {
     this.createdAt = user.createdAt;
     this.hasPassword = user.password !== null;
     this.emailVerified = user.emailVerified;
+    this.mustChangePassword = user.mustChangePassword;
   }
 }

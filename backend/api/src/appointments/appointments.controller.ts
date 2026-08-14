@@ -16,9 +16,9 @@ import type { AdminAppointmentResponse, PatientAppointmentResponse } from './app
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
 
-  /** Admin-wide view across all doctors/patients — overrides the class-level PATIENT-only role. */
+  /** Admin/front-desk-wide view across all doctors/patients — overrides the class-level PATIENT-only role. */
   @Get()
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.RECEPTIONIST)
   async findAllForAdmin(): Promise<{ appointments: AdminAppointmentResponse[] }> {
     const appointments = await this.appointmentsService.findAllForAdmin();
     return { appointments };

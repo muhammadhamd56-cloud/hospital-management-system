@@ -5,6 +5,8 @@ import { LoginPage } from '@/pages/auth/LoginPage'
 import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage'
 import { OAuthCallbackPage } from '@/pages/auth/OAuthCallbackPage'
 import { SelectRolePage } from '@/pages/auth/SelectRolePage'
+import { SetPasswordPage } from '@/pages/auth/SetPasswordPage'
+import { StaffPage } from '@/pages/staff/StaffPage'
 import { DashboardRouteSwitch } from '@/pages/dashboard/DashboardRouteSwitch'
 import { PatientsPage } from '@/pages/patients/PatientsPage'
 import { DoctorsPage } from '@/pages/doctors/DoctorsPage'
@@ -42,7 +44,10 @@ export const router = createBrowserRouter([
     children: [
       {
         element: <AuthLayout />,
-        children: [{ path: ROUTES.selectRole, element: <SelectRolePage /> }],
+        children: [
+          { path: ROUTES.selectRole, element: <SelectRolePage /> },
+          { path: ROUTES.setPassword, element: <SetPasswordPage /> },
+        ],
       },
       {
         element: <DashboardLayout />,
@@ -52,17 +57,32 @@ export const router = createBrowserRouter([
           { path: ROUTES.messages, element: <MessagesRouteSwitch /> },
           { path: ROUTES.medicalRecords, element: <MedicalRecordsRouteSwitch /> },
           {
-            element: <RoleRoute allow={['admin', 'doctor']} />,
+            element: <RoleRoute allow={['admin', 'doctor', 'receptionist']} />,
             children: [
               { path: ROUTES.patients, element: <PatientsPage /> },
-              { path: ROUTES.doctors, element: <DoctorsPage /> },
               { path: ROUTES.appointments, element: <AppointmentsPage /> },
+            ],
+          },
+          {
+            element: <RoleRoute allow={['admin', 'doctor']} />,
+            children: [
+              { path: ROUTES.doctors, element: <DoctorsPage /> },
               { path: ROUTES.beds, element: <BedsPage /> },
-              { path: ROUTES.laboratory, element: <LaboratoryPage /> },
-              { path: ROUTES.pharmacy, element: <PharmacyPage /> },
               { path: ROUTES.billing, element: <BillingPage /> },
               { path: ROUTES.reports, element: <ReportsPage /> },
             ],
+          },
+          {
+            element: <RoleRoute allow={['admin', 'doctor', 'lab_staff']} />,
+            children: [{ path: ROUTES.laboratory, element: <LaboratoryPage /> }],
+          },
+          {
+            element: <RoleRoute allow={['admin', 'doctor', 'pharmacist']} />,
+            children: [{ path: ROUTES.pharmacy, element: <PharmacyPage /> }],
+          },
+          {
+            element: <RoleRoute allow={['admin']} />,
+            children: [{ path: ROUTES.staff, element: <StaffPage /> }],
           },
         ],
       },

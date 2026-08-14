@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import type { AuthRole } from '@/types/role'
+import type { Role } from '@/types/role'
 
 export interface NavItem {
   label: string
@@ -7,5 +7,5 @@ export interface NavItem {
   /** Route path; omitted for sections not yet implemented. */
   path?: string
   /** Roles that can see this item; omitted means visible to everyone. */
-  roles?: AuthRole[]
+  roles?: Role[]
 }

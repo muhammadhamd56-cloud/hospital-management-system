@@ -23,6 +23,7 @@ vi.mock('@/features/auth/useAuth', () => ({
       roleSelected: true,
       hasPassword: true,
       emailVerified: true,
+      mustChangePassword: false,
     } satisfies AuthUser,
     deleteAccount: mockDeleteAccount,
   }),

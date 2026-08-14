@@ -6,6 +6,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
+import { createMedicine } from '@/features/pharmacy/api'
+import { ApiError } from '@/lib/apiClient'
 import { MEDICINE_CATEGORIES } from '@/types/medicine'
 import type { Medicine } from '@/types/medicine'
 
@@ -44,10 +46,16 @@ export function AddMedicineModal({ isOpen, onClose, onAdd }: AddMedicineModalPro
 
   async function onSubmit(values: MedicineFormInput) {
     const parsed = medicineSchema.parse(values)
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    onAdd({ id: `M-${crypto.randomUUID().slice(0, 8)}`, ...parsed })
-    toast.success(`${parsed.name} was added to inventory`)
-    handleClose()
+
+    try {
+      const res = await createMedicine(parsed)
+      onAdd(res.medicine)
+      toast.success(`${parsed.name} was added to inventory`)
+      handleClose()
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to add medicine'
+      toast.error(message)
+    }
   }
 
   return (

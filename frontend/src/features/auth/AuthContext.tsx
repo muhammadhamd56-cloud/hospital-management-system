@@ -1,6 +1,6 @@
 import { createContext, useEffect, useState, type ReactNode } from 'react'
 import { API_BASE_URL, api, clearAccessToken, getAccessToken, setAccessToken } from '@/lib/apiClient'
-import type { AuthRole } from '@/types/role'
+import type { AuthRole, Role } from '@/types/role'
 
 export interface AuthUser {
   id: string
@@ -10,13 +10,15 @@ export interface AuthUser {
   /** Derived as `${firstName} ${lastName}`, for components built around a single display name. */
   fullName: string
   picture: string | null
-  role: AuthRole
+  role: Role
   /** False until the user completes the one-time post-signup role picker. */
   roleSelected: boolean
   /** False for Google-only accounts — they can't sign in with email/password yet. */
   hasPassword: boolean
   /** False for local signups until they complete OTP email verification. Always true for Google accounts. */
   emailVerified: boolean
+  /** True for admin-provisioned staff accounts until they set their own password. */
+  mustChangePassword: boolean
 }
 
 interface RawUser {
@@ -25,10 +27,11 @@ interface RawUser {
   firstName: string
   lastName: string
   picture: string | null
-  role: AuthRole
+  role: Role
   roleSelected: boolean
   hasPassword: boolean
   emailVerified: boolean
+  mustChangePassword: boolean
 }
 
 function toAuthUser(raw: RawUser): AuthUser {
@@ -41,7 +44,7 @@ function toAuthUser(raw: RawUser): AuthUser {
 export interface LoginInput {
   email: string
   password: string
-  role: AuthRole
+  role: Role
 }
 
 export interface SignupInput {

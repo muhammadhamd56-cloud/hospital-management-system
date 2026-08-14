@@ -1,15 +1,16 @@
-import { AUTH_ROLES, ROLE_LABELS, type AuthRole } from '@/types/role'
+import { ROLE_LABELS, type Role } from '@/types/role'
 import { cn } from '@/utils/cn'
 
-export interface RoleSelectorProps {
-  value: AuthRole
-  onChange: (role: AuthRole) => void
+export interface RoleSelectorProps<T extends Role = Role> {
+  roles: T[]
+  value: T
+  onChange: (role: T) => void
 }
 
-export function RoleSelector({ value, onChange }: RoleSelectorProps) {
+export function RoleSelector<T extends Role = Role>({ roles, value, onChange }: RoleSelectorProps<T>) {
   return (
-    <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Account type">
-      {AUTH_ROLES.map((role) => (
+    <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Account type">
+      {roles.map((role) => (
         <button
           key={role}
           type="button"

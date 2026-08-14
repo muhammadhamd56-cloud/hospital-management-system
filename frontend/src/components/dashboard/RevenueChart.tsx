@@ -1,14 +1,23 @@
+import { useEffect, useState } from 'react'
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { ChartTooltip } from '@/features/reports/ChartTooltip'
 import { CHART_PALETTES } from '@/features/reports/chartColors'
-import { MONTHLY_REVENUE } from '@/features/reports/aggregations'
+import { getRevenueTrend } from '@/features/reports/api'
+import type { MonthlyRevenue } from '@/features/reports/aggregations'
 import { formatCurrency } from '@/utils/currency'
 import { useTheme } from '@/hooks/useTheme'
 
 export function RevenueChart() {
   const { theme } = useTheme()
   const palette = CHART_PALETTES[theme]
+  const [data, setData] = useState<MonthlyRevenue[]>([])
+
+  useEffect(() => {
+    getRevenueTrend()
+      .then((res) => setData(res.data))
+      .catch(() => setData([]))
+  }, [])
 
   return (
     <Card className="rounded-2xl">
@@ -18,7 +27,7 @@ export function RevenueChart() {
       </CardHeader>
       <CardContent className="h-64">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={MONTHLY_REVENUE} margin={{ left: -10 }}>
+          <BarChart data={data} margin={{ left: -10 }}>
             <CartesianGrid vertical={false} stroke={palette.grid} />
             <XAxis
               dataKey="month"

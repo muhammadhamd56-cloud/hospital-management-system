@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, Calendar, CalendarX, FileText, MessageCircle } from 'lucide-react'
+import { Bell, Calendar, CalendarX, FileText, MessageCircle, FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { formatDateTime } from '@/utils/datetime'
 import { cn } from '@/utils/cn'
@@ -14,6 +14,7 @@ const TYPE_ICONS: Record<AppNotification['type'], typeof Bell> = {
   appointment_cancelled: CalendarX,
   chat_message: MessageCircle,
   medical_record_added: FileText,
+  lab_result_ready: FlaskConical,
 }
 
 export function NotificationBell() {

@@ -8,13 +8,13 @@ import type { AuthenticatedUser } from '../auth/types/authenticated-user.interfa
 import { PatientDetailResponse, PatientListItemResponse, PatientsService } from './patients.service';
 
 /**
- * Admin/doctor-facing patient directory. Admins see every patient; doctors
- * only see patients they have an appointment or chat relationship with — see
- * PatientsService.scopedPatientIds().
+ * Admin/doctor/front-desk-facing patient directory. Admins and receptionists
+ * see every patient; doctors only see patients they have an appointment or
+ * chat relationship with — see PatientsService.scopedPatientIds().
  */
 @Controller('patients')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN, Role.DOCTOR)
+@Roles(Role.ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
 export class PatientsController {
   constructor(private readonly patientsService: PatientsService) {}
 

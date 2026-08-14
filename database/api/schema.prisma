@@ -12,6 +12,9 @@ enum Role {
   ADMIN
   DOCTOR
   PATIENT
+  RECEPTIONIST
+  LAB_STAFF
+  PHARMACIST
 }
 
 model User {
@@ -40,6 +43,10 @@ model User {
   /** Bumped on logout so previously issued JWTs (which embed the version
    *  at issue time) stop passing JwtStrategy.validate() immediately. */
   tokenVersion Int @default(0)
+  /** True for accounts an admin just provisioned with a server-generated temp
+   *  password -- forces a password change via the existing set-password flow
+   *  before the account can do anything else. */
+  mustChangePassword Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -51,6 +58,8 @@ model User {
   notifications Notification[]
   medicalRecords MedicalRecord[]
   auditLogs      AuditLog[]
+  labTests         LabTest[] @relation("LabTestPatient")
+  assignedLabTests LabTest[] @relation("LabTestAssignee")
 
   @@index([role])
 }
@@ -86,6 +95,7 @@ model Doctor {
   appointments    Appointment[]
   chatMessages    ChatMessage[]
   medicalRecords  MedicalRecord[]
+  labTests        LabTest[]
 
   @@index([departmentId])
 }
@@ -178,6 +188,7 @@ enum NotificationType {
   APPOINTMENT_CANCELLED
   CHAT_MESSAGE
   MEDICAL_RECORD_ADDED
+  LAB_RESULT_READY
 }
 
 model Notification {
@@ -233,6 +244,72 @@ model Prescription {
   createdAt      DateTime @default(now())
 
   @@index([medicalRecordId])
+}
+
+enum LabTestCategory {
+  HEMATOLOGY
+  BIOCHEMISTRY
+  MICROBIOLOGY
+  RADIOLOGY
+  PATHOLOGY
+}
+
+enum LabTestStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+/** A lab test requested for a patient by a doctor, optionally assigned to a
+ *  LAB_STAFF user to process. assignedToId is SetNull (not Cascade) so
+ *  removing a lab tech's account doesn't destroy test history -- same
+ *  reasoning as Bed.patientId. */
+model LabTest {
+  id        String   @id @default(cuid())
+  patientId String
+  patient   User     @relation("LabTestPatient", fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId  String
+  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  assignedToId String?
+  assignedTo   User?   @relation("LabTestAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  testName      String
+  category      LabTestCategory
+  status        LabTestStatus @default(PENDING)
+  resultSummary String?
+  requestedAt   DateTime      @default(now())
+  completedAt   DateTime?
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([assignedToId])
+}
+
+enum MedicineCategory {
+  ANALGESIC
+  ANTIBIOTIC
+  ANTIVIRAL
+  CARDIOVASCULAR
+  GASTROINTESTINAL
+  RESPIRATORY
+  VITAMINS_SUPPLEMENTS
+}
+
+/** Pure inventory -- not linked to Prescription in this pass; real
+ *  prescription-fulfillment-against-inventory is a bigger scope, deferred. */
+model Medicine {
+  id         String           @id @default(cuid())
+  name       String
+  category   MedicineCategory
+  stock      Int
+  unit       String
+  price      Float
+  expiryDate DateTime
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([category])
 }
 
 enum AuditAction {

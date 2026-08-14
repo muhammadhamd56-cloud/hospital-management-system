@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Search, PackagePlus } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -14,11 +15,12 @@ import {
 import { Pagination } from '@/components/ui/Pagination'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { usePagination } from '@/hooks/usePagination'
-import { formatDate } from '@/utils/datetime'
 import { formatCurrency } from '@/utils/currency'
-import { MOCK_MEDICINES } from '@/features/pharmacy/mockMedicines'
+import { listMedicines } from '@/features/pharmacy/api'
 import { StockStatusBadge } from '@/features/pharmacy/StockStatusBadge'
 import { AddMedicineModal } from '@/features/pharmacy/AddMedicineModal'
+import { AdjustStockModal } from '@/features/pharmacy/AdjustStockModal'
+import { ApiError } from '@/lib/apiClient'
 import { MEDICINE_CATEGORIES, getStockStatus, type Medicine, type StockStatus } from '@/types/medicine'
 
 const PAGE_SIZE = 8
@@ -36,11 +38,33 @@ const CATEGORY_FILTER_OPTIONS = [
 ]
 
 export function PharmacyPage() {
-  const [medicines, setMedicines] = useState<Medicine[]>(MOCK_MEDICINES)
+  const [medicines, setMedicines] = useState<Medicine[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StockStatus | 'all'>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [isAddOpen, setAddOpen] = useState(false)
+  const [adjustingMedicine, setAdjustingMedicine] = useState<Medicine | null>(null)
+
+  function refresh() {
+    setIsLoading(true)
+    listMedicines()
+      .then((res) => setMedicines(res.medicines))
+      .catch((error) => {
+        const message = error instanceof ApiError ? error.message : 'Failed to load medicines'
+        toast.error(message)
+      })
+      .finally(() => setIsLoading(false))
+  }
+
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleAdjusted(updated: Medicine) {
+    setMedicines((current) => current.map((m) => (m.id === updated.id ? updated : m)))
+  }
 
   const filteredMedicines = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -101,7 +125,7 @@ export function PharmacyPage() {
         </div>
       </div>
 
-      {filteredMedicines.length === 0 ? (
+      {!isLoading && filteredMedicines.length === 0 ? (
         <div className="rounded-card border border-surface-border bg-surface">
           <EmptyState
             icon={Search}
@@ -120,6 +144,7 @@ export function PharmacyPage() {
                 <TableHead>Price</TableHead>
                 <TableHead>Expiry</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -131,9 +156,14 @@ export function PharmacyPage() {
                     {medicine.stock} {medicine.unit}
                   </TableCell>
                   <TableCell>{formatCurrency(medicine.price)}</TableCell>
-                  <TableCell>{formatDate(medicine.expiryDate)}</TableCell>
+                  <TableCell>{new Date(medicine.expiryDate).toLocaleDateString()}</TableCell>
                   <TableCell>
                     <StockStatusBadge stock={medicine.stock} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="secondary" onClick={() => setAdjustingMedicine(medicine)}>
+                      Adjust stock
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -153,6 +183,12 @@ export function PharmacyPage() {
         isOpen={isAddOpen}
         onClose={() => setAddOpen(false)}
         onAdd={(medicine) => setMedicines((current) => [medicine, ...current])}
+      />
+
+      <AdjustStockModal
+        medicine={adjustingMedicine}
+        onClose={() => setAdjustingMedicine(null)}
+        onAdjusted={handleAdjusted}
       />
     </div>
   )

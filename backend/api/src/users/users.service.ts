@@ -68,7 +68,10 @@ export class UsersService {
 
     const password = await hashPassword(dto.newPassword);
 
-    return this.prisma.user.update({ where: { id: userId }, data: { password } });
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { password, mustChangePassword: false },
+    });
   }
 
   /**

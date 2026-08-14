@@ -13,7 +13,7 @@ import { useAuth } from '@/features/auth/useAuth'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
 import { DEPARTMENTS } from '@/types/doctor'
-import type { AuthRole } from '@/types/role'
+import { AUTH_ROLES, type AuthRole } from '@/types/role'
 
 const signupSchema = z
   .object({
@@ -82,7 +82,7 @@ export function ManualSignupForm() {
 
   return (
     <form className="flex w-full flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-      <RoleSelector value={role} onChange={setRole} />
+      <RoleSelector roles={AUTH_ROLES} value={role} onChange={setRole} />
       <div className="grid grid-cols-2 gap-4">
         <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
         <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />

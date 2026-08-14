@@ -22,6 +22,10 @@ export function ProtectedRoute() {
     return <Navigate to={ROUTES.selectRole} replace />
   }
 
+  if (user.mustChangePassword && location.pathname !== ROUTES.setPassword) {
+    return <Navigate to={ROUTES.setPassword} replace />
+  }
+
   return <Outlet />
 }
 

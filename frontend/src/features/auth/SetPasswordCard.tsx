@@ -22,8 +22,13 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>
 
+export interface SetPasswordCardProps {
+  /** Called after a successful password change/set, once the refreshed user is available. */
+  onSuccess?: () => void
+}
+
 /** Lets a Google-only account add a password (or an existing local account change one). */
-export function SetPasswordCard() {
+export function SetPasswordCard({ onSuccess }: SetPasswordCardProps = {}) {
   const { user, refresh } = useAuth()
   const hasPassword = user?.hasPassword ?? false
   const {
@@ -49,6 +54,7 @@ export function SetPasswordCard() {
       )
       reset()
       await refresh()
+      onSuccess?.()
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Failed to update password'
       toast.error(message)
