@@ -1,5 +1,5 @@
 import { createContext, useEffect, useState, type ReactNode } from 'react'
-import { api, clearAccessToken, getAccessToken, setAccessToken } from '@/lib/apiClient'
+import { API_BASE_URL, api, clearAccessToken, getAccessToken, setAccessToken } from '@/lib/apiClient'
 import type { AuthRole } from '@/types/role'
 
 export interface AuthUser {
@@ -93,7 +93,7 @@ export interface AuthContextValue {
 
 export const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-const GOOGLE_LOGIN_URL = '/api/auth/google'
+const GOOGLE_LOGIN_URL = `${API_BASE_URL}/api/auth/google`
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)

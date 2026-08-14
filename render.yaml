@@ -1,0 +1,35 @@
+# Render Blueprint for backend/api — see https://render.com/docs/blueprint-spec
+# Deploy: connect this repo in the Render dashboard as a Blueprint, then fill
+# in the `sync: false` env vars (they hold secrets and are never read from
+# this file). DATABASE_URL should point at an external managed Postgres
+# (e.g. Neon or Supabase) rather than Render's own free Postgres, which is
+# deleted after 90 days.
+services:
+  - type: web
+    name: hospital-management-api
+    runtime: node
+    plan: free
+    rootDir: backend/api
+    buildCommand: npm install && npx prisma generate --schema=../../database/api/schema.prisma && npm run build
+    startCommand: npx prisma migrate deploy --schema=../../database/api/schema.prisma && node dist/main
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: onboarding@resend.dev
+      - key: PORT
+        value: 3000

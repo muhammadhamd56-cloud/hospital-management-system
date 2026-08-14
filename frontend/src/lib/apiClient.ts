@@ -1,5 +1,11 @@
 const TOKEN_KEY = 'hms_access_token'
 
+// In dev, Vite's server.proxy forwards relative '/api' calls to the backend
+// (see vite.config.ts), so this stays empty. In production the frontend and
+// backend are typically deployed on different origins, so VITE_API_URL must
+// be set to the backend's absolute URL at build time.
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
+
 export function getAccessToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
@@ -33,7 +39,7 @@ interface ApiEnvelope<T> {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getAccessToken()
 
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${API_BASE_URL}/api${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
