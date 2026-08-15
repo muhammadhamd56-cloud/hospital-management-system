@@ -29,6 +29,7 @@ function baseUser(overrides: Partial<AuthUser> = {}): AuthUser {
     firstName: 'Ada',
     lastName: 'Lovelace',
     fullName: 'Ada Lovelace',
+    phone: null,
     picture: null,
     role: 'patient',
     roleSelected: true,

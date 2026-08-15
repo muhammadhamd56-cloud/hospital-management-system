@@ -19,6 +19,10 @@ import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { SettingsRouteSwitch } from '@/pages/settings/SettingsRouteSwitch'
 import { MessagesRouteSwitch } from '@/pages/messages/MessagesRouteSwitch'
 import { MedicalRecordsRouteSwitch } from '@/pages/medicalRecords/MedicalRecordsRouteSwitch'
+import { FindDoctorPage } from '@/pages/findDoctor/FindDoctorPage'
+import { BookAppointmentPage } from '@/pages/appointments/BookAppointmentPage'
+import { MyAppointmentsPage } from '@/pages/appointments/MyAppointmentsPage'
+import { PrescriptionsPage } from '@/pages/prescriptions/PrescriptionsPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/ProtectedRoute'
 import { RoleRoute } from '@/routes/RoleRoute'
@@ -56,6 +60,15 @@ export const router = createBrowserRouter([
           { path: ROUTES.settings, element: <SettingsRouteSwitch /> },
           { path: ROUTES.messages, element: <MessagesRouteSwitch /> },
           { path: ROUTES.medicalRecords, element: <MedicalRecordsRouteSwitch /> },
+          {
+            element: <RoleRoute allow={['patient']} />,
+            children: [
+              { path: ROUTES.findDoctor, element: <FindDoctorPage /> },
+              { path: ROUTES.bookAppointment, element: <BookAppointmentPage /> },
+              { path: ROUTES.myAppointments, element: <MyAppointmentsPage /> },
+              { path: ROUTES.prescriptions, element: <PrescriptionsPage /> },
+            ],
+          },
           {
             element: <RoleRoute allow={['admin', 'doctor', 'receptionist']} />,
             children: [

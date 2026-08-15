@@ -13,6 +13,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     password: 'hashed',
     firstName: 'Grace',
     lastName: 'Hopper',
+    phone: null,
     picture: null,
     role: Role.RECEPTIONIST,
     roleSelected: true,

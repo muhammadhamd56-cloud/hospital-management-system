@@ -24,6 +24,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     password: null,
     firstName: 'Ada',
     lastName: 'Lovelace',
+    phone: null,
     picture: null,
     role: Role.PATIENT,
     roleSelected: false,

@@ -4,6 +4,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { SelectRoleDto } from './dto/select-role.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UsersService } from './users.service';
 
@@ -15,6 +16,15 @@ export class UsersController {
   @Get('me')
   async getProfile(@CurrentUser() currentUser: AuthenticatedUser): Promise<UserResponseDto> {
     const user = await this.usersService.findById(currentUser.id);
+    return new UserResponseDto(user);
+  }
+
+  @Patch('me')
+  async updateProfile(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<UserResponseDto> {
+    const user = await this.usersService.updateProfile(currentUser.id, dto);
     return new UserResponseDto(user);
   }
 

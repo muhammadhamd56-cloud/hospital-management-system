@@ -17,4 +17,8 @@ export const ROUTES = {
   settings: '/settings',
   messages: '/messages',
   medicalRecords: '/medical-records',
+  findDoctor: '/find-doctor',
+  bookAppointment: '/book-appointment',
+  myAppointments: '/my-appointments',
+  prescriptions: '/prescriptions',
 } as const

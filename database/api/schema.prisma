@@ -26,6 +26,7 @@ model User {
   password  String?
   firstName String
   lastName  String
+  phone     String?
   picture   String?
   role      Role     @default(PATIENT)
   /** True once the user has completed the one-time post-signup role picker

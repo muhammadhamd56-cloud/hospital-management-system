@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from '../auth/password.util';
 import { ClientRole, toPrismaRole } from '../common/role.mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UsersService {
@@ -17,6 +18,20 @@ export class UsersService {
     }
 
     return user;
+  }
+
+  /** Updates the caller's own basic profile fields. Any field omitted from the DTO is left unchanged. */
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<User> {
+    await this.findById(userId);
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
+        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
+        ...(dto.phone !== undefined && { phone: dto.phone }),
+      },
+    });
   }
 
   /**

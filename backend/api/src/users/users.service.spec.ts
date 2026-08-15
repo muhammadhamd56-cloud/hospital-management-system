@@ -13,6 +13,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     password: null,
     firstName: 'Ada',
     lastName: 'Lovelace',
+    phone: null,
     picture: null,
     role: Role.PATIENT,
     roleSelected: false,
@@ -61,6 +62,52 @@ describe('UsersService', () => {
       const user = buildUser();
       prisma.user.findUnique.mockResolvedValue(user);
       await expect(service.findById('user-1')).resolves.toBe(user);
+    });
+  });
+
+  describe('updateProfile', () => {
+    it('throws NotFoundException when the account does not exist', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.updateProfile('missing', { firstName: 'New' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('updates only the fields provided, leaving the rest untouched', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser());
+      prisma.user.update.mockResolvedValue(buildUser({ phone: '555-1234' }));
+
+      await service.updateProfile('user-1', { phone: '555-1234' });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { phone: '555-1234' },
+      });
+    });
+
+    it('updates firstName, lastName, and phone together when all are provided', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser());
+      prisma.user.update.mockResolvedValue(
+        buildUser({ firstName: 'Grace', lastName: 'Hopper', phone: '555-5678' }),
+      );
+
+      await service.updateProfile('user-1', { firstName: 'Grace', lastName: 'Hopper', phone: '555-5678' });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { firstName: 'Grace', lastName: 'Hopper', phone: '555-5678' },
+      });
+    });
+
+    it('sends an empty data object when no fields are provided', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser());
+      prisma.user.update.mockResolvedValue(buildUser());
+
+      await service.updateProfile('user-1', {});
+
+      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: {} });
     });
   });
 

@@ -3,15 +3,15 @@ import { useNavigate } from 'react-router'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { Avatar } from '@/components/ui/Avatar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAuth } from '@/features/auth/useAuth'
+import { AccountInfoForm } from '@/features/auth/AccountInfoForm'
+import { SetPasswordCard } from '@/features/auth/SetPasswordCard'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
-import { ROLE_LABELS } from '@/types/role'
 
 export function PatientSettingsPage() {
-  const { user, deleteAccount } = useAuth()
+  const { deleteAccount } = useAuth()
   const navigate = useNavigate()
   const [isConfirmOpen, setIsConfirmOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -40,32 +40,18 @@ export function PatientSettingsPage() {
       <Card className="animate-fade-in">
         <CardHeader>
           <CardTitle>Account Information</CardTitle>
-          <CardDescription>Synced from your Google account.</CardDescription>
+          <CardDescription>Update your name and phone number.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
-            <Avatar name={user?.fullName ?? ''} src={user?.picture ?? undefined} size="lg" />
-            <dl className="grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <dt className="text-xs text-ink-muted">Full name</dt>
-                <dd className="text-sm font-medium text-ink">{user?.fullName}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-ink-muted">Email</dt>
-                <dd className="text-sm font-medium text-ink">{user?.email}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-ink-muted">Account type</dt>
-                <dd className="text-sm font-medium text-ink">
-                  {user ? ROLE_LABELS[user.role] : ''}
-                </dd>
-              </div>
-            </dl>
-          </div>
+          <AccountInfoForm />
         </CardContent>
       </Card>
 
-      <Card className="animate-fade-in border-danger-500/40" style={{ animationDelay: '60ms' }}>
+      <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
+        <SetPasswordCard />
+      </div>
+
+      <Card className="animate-fade-in border-danger-500/40" style={{ animationDelay: '120ms' }}>
         <CardHeader>
           <CardTitle className="text-danger-600">Danger Zone</CardTitle>
           <CardDescription>Permanently delete your account and all associated data.</CardDescription>

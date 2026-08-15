@@ -18,6 +18,7 @@ vi.mock('@/features/auth/useAuth', () => ({
       firstName: 'Dana',
       lastName: 'Doctor',
       fullName: 'Dana Doctor',
+      phone: null,
       picture: null,
       role: 'doctor',
       roleSelected: true,

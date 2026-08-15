@@ -21,6 +21,9 @@ export class UserResponseDto {
   lastName!: string;
 
   @Expose()
+  phone!: string | null;
+
+  @Expose()
   picture!: string | null;
 
   @Expose()
@@ -49,6 +52,7 @@ export class UserResponseDto {
     this.email = user.email;
     this.firstName = user.firstName;
     this.lastName = user.lastName;
+    this.phone = user.phone;
     this.picture = user.picture;
     this.role = toClientRole(user.role);
     this.roleSelected = user.roleSelected;

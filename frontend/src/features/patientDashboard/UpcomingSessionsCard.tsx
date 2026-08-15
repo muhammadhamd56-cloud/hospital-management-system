@@ -19,9 +19,11 @@ interface UpcomingSessionsCardProps {
 function SessionRow({
   appointment,
   onCancelled,
+  showCancel = true,
 }: {
   appointment: PatientAppointment
   onCancelled: (appointment: PatientAppointment) => void
+  showCancel?: boolean
 }) {
   const [isCancelling, setIsCancelling] = useState(false)
 
@@ -62,9 +64,11 @@ function SessionRow({
             </span>
           )}
         </Badge>
-        <Button size="sm" variant="secondary" isLoading={isCancelling} onClick={handleCancel}>
-          Cancel
-        </Button>
+        {showCancel && (
+          <Button size="sm" variant="secondary" isLoading={isCancelling} onClick={handleCancel}>
+            Cancel
+          </Button>
+        )}
       </div>
     </li>
   )
@@ -75,6 +79,11 @@ export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSess
     (appointment) => appointment.status === 'scheduled' && isUpcoming(appointment.scheduledAt),
   )
   const onlineOnly = upcoming.filter((appointment) => appointment.mode === 'online')
+  const past = appointments
+    .filter(
+      (appointment) => appointment.status !== 'scheduled' || !isUpcoming(appointment.scheduledAt),
+    )
+    .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime())
 
   return (
     <Card>
@@ -87,6 +96,7 @@ export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSess
           <TabsList>
             <TabsTrigger value="all">All upcoming</TabsTrigger>
             <TabsTrigger value="online">Online only</TabsTrigger>
+            <TabsTrigger value="past">Past</TabsTrigger>
           </TabsList>
           <TabsContent value="all">
             {upcoming.length === 0 ? (
@@ -114,6 +124,22 @@ export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSess
               <ul className="divide-y divide-surface-border">
                 {onlineOnly.map((appointment) => (
                   <SessionRow key={appointment.id} appointment={appointment} onCancelled={onCancelled} />
+                ))}
+              </ul>
+            )}
+          </TabsContent>
+          <TabsContent value="past">
+            {past.length === 0 ? (
+              <EmptyState icon={CalendarX} title="No past sessions" description="Your session history will show up here." />
+            ) : (
+              <ul className="divide-y divide-surface-border">
+                {past.map((appointment) => (
+                  <SessionRow
+                    key={appointment.id}
+                    appointment={appointment}
+                    onCancelled={onCancelled}
+                    showCancel={false}
+                  />
                 ))}
               </ul>
             )}

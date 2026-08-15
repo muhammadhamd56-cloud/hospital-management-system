@@ -9,6 +9,7 @@ export interface AuthUser {
   lastName: string
   /** Derived as `${firstName} ${lastName}`, for components built around a single display name. */
   fullName: string
+  phone: string | null
   picture: string | null
   role: Role
   /** False until the user completes the one-time post-signup role picker. */
@@ -26,6 +27,7 @@ interface RawUser {
   email: string
   firstName: string
   lastName: string
+  phone: string | null
   picture: string | null
   role: Role
   roleSelected: boolean
@@ -45,6 +47,12 @@ export interface LoginInput {
   email: string
   password: string
   role: Role
+}
+
+export interface UpdateProfileInput {
+  firstName?: string
+  lastName?: string
+  phone?: string
 }
 
 export interface SignupInput {
@@ -86,6 +94,8 @@ export interface AuthContextValue {
   completeOAuthCallback: (token: string) => Promise<void>
   /** One-time role pick shown right after a user's first Google sign-in. */
   selectRole: (role: AuthRole) => Promise<void>
+  /** Updates the caller's own name/phone. Fields omitted are left unchanged. */
+  updateProfile: (input: UpdateProfileInput) => Promise<void>
   /** Re-fetches the current user — call after a change the context doesn't already know about. */
   refresh: () => Promise<void>
   /** Permanently deletes the account, then clears the local session. Irreversible. */
@@ -159,6 +169,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(toAuthUser(raw))
   }
 
+  async function updateProfile(input: UpdateProfileInput) {
+    const raw = await api.patch<RawUser>('/users/me', input)
+    setUser(toAuthUser(raw))
+  }
+
   async function deleteAccount() {
     await api.del<void>('/users/me')
     clearAccessToken()
@@ -188,6 +203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginWithGoogle,
         completeOAuthCallback,
         selectRole,
+        updateProfile,
         refresh,
         deleteAccount,
         logout,
