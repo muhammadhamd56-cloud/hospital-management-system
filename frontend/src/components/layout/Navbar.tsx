@@ -1,13 +1,12 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Menu, Moon, Sun, Search, CalendarDays, LogOut } from 'lucide-react'
-import toast from 'react-hot-toast'
+import { Menu, Moon, Sun, CalendarDays, LogOut } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/features/auth/useAuth'
 import { Avatar } from '@/components/ui/Avatar'
-import { Input } from '@/components/ui/Input'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
+import { GlobalSearch } from '@/features/search/GlobalSearch'
 import { formatFullDate } from '@/utils/datetime'
 import { ROLE_LABELS } from '@/types/role'
 import { ROUTES } from '@/constants/routes'
@@ -22,7 +21,6 @@ export function Navbar({ onMenuClick }: NavbarProps) {
   const { theme, toggleTheme } = useTheme()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const [search, setSearch] = useState('')
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
 
@@ -32,11 +30,6 @@ export function Navbar({ onMenuClick }: NavbarProps) {
     setIsLoggingOut(false)
     setIsLogoutConfirmOpen(false)
     navigate(ROUTES.login)
-  }
-
-  function handleSearchSubmit(event: FormEvent) {
-    event.preventDefault()
-    if (search.trim()) toast('Global search is coming soon')
   }
 
   return (
@@ -52,19 +45,7 @@ export function Navbar({ onMenuClick }: NavbarProps) {
           <Menu className="size-5" aria-hidden="true" />
         </button>
 
-        <form
-          onSubmit={handleSearchSubmit}
-          className="hidden min-w-0 sm:block sm:max-w-xs lg:max-w-sm"
-        >
-          <Input
-            label="Search"
-            hideLabel
-            icon={Search}
-            placeholder="Search patients, doctors, appointments…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </form>
+        {(user?.role === 'admin' || user?.role === 'doctor') && <GlobalSearch />}
 
         <p className="hidden items-center gap-1.5 whitespace-nowrap text-sm text-ink-muted lg:flex">
           <CalendarDays className="size-4" aria-hidden="true" />
