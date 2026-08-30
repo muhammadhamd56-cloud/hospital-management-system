@@ -2,7 +2,7 @@ import { usePatientAppointments } from '@/features/patientDashboard/usePatientAp
 import { DoctorChatPanel } from '@/features/patientDashboard/DoctorChatPanel'
 
 export function MessagesPage() {
-  const { appointments } = usePatientAppointments()
+  const { appointments, isLoading } = usePatientAppointments()
 
   return (
     <div className="flex flex-col gap-6">
@@ -14,7 +14,7 @@ export function MessagesPage() {
       </div>
 
       <div className="animate-fade-in">
-        <DoctorChatPanel appointments={appointments} />
+        <DoctorChatPanel appointments={appointments} isAppointmentsLoading={isLoading} />
       </div>
     </div>
   )

@@ -45,7 +45,7 @@ export function QuickActions() {
       <AddPatientModal
         isOpen={openAction === 'patient'}
         onClose={() => setOpenAction(null)}
-        onAdd={() => setOpenAction(null)}
+        onCreated={() => setOpenAction(null)}
       />
       <BookAppointmentModal
         isOpen={openAction === 'appointment'}

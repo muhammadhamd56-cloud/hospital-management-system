@@ -2,7 +2,9 @@ import {
   createContext,
   useContext,
   useId,
+  useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
 } from 'react'
 import { cn } from '@/utils/cn'
@@ -38,10 +40,38 @@ export function Tabs({ defaultTab, children, className }: TabsProps) {
   )
 }
 
+const ARROW_KEYS = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+
 export function TabsList({ children, className }: { children: ReactNode; className?: string }) {
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Roving tabindex (see TabsTrigger) takes every inactive tab out of the
+  // regular Tab order -- WAI-ARIA's Tabs pattern requires arrow/Home/End to
+  // move between them instead, or they'd be unreachable by keyboard entirely.
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!ARROW_KEYS.includes(event.key)) return
+
+    const tabs = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+    if (tabs.length === 0) return
+
+    const currentIndex = tabs.indexOf(document.activeElement as HTMLButtonElement)
+    let nextIndex = currentIndex
+
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length
+    if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = tabs.length - 1
+
+    event.preventDefault()
+    tabs[nextIndex].focus()
+    tabs[nextIndex].click()
+  }
+
   return (
     <div
+      ref={listRef}
       role="tablist"
+      onKeyDown={handleKeyDown}
       className={cn(
         'inline-flex items-center gap-1 rounded-lg border border-surface-border bg-surface-alt p-1',
         className,

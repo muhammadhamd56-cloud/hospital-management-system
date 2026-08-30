@@ -59,7 +59,7 @@ export function PatientProfileModal({ patientId, onClose }: PatientProfileModalP
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 rounded-lg border border-surface-border p-4 text-sm">
+          <div className="grid grid-cols-1 gap-4 rounded-lg border border-surface-border p-4 text-sm sm:grid-cols-3">
             <div>
               <p className="text-xs text-ink-muted">Joined</p>
               <p className="font-medium text-ink">{new Date(patient.joinedAt).toLocaleDateString()}</p>

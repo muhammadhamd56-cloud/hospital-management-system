@@ -109,7 +109,7 @@ export function NewMedicalRecordModal({
           {fields.map((field, index) => (
             <div key={field.id} className="flex flex-col gap-3 rounded-lg border border-surface-border p-3">
               <div className="flex items-start justify-between gap-3">
-                <div className="grid flex-1 grid-cols-2 gap-3">
+                <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
                   <Input
                     label="Medication"
                     error={errors.prescriptions?.[index]?.medicationName?.message}

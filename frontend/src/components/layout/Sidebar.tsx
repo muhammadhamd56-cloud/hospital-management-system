@@ -18,9 +18,11 @@ function SidebarContent({
   collapsible?: boolean
 }) {
   const { user } = useAuth()
-  const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.roles || (user && item.roles.includes(user.role)),
-  )
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.roles && (!user || !item.roles.includes(user.role))) return false
+    if (item.visible && (!user || !item.visible(user))) return false
+    return true
+  })
   const labelClass = cn(
     'whitespace-nowrap transition-opacity duration-200',
     collapsible && 'opacity-0 group-hover:opacity-100',

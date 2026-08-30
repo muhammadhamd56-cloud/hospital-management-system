@@ -2,7 +2,7 @@ import { useDoctorInbox } from '@/features/doctorDashboard/useDoctorInbox'
 import { DoctorMedicalRecordsPanel } from '@/features/doctorMedicalRecords/DoctorMedicalRecordsPanel'
 
 export function DoctorMedicalRecordsPage() {
-  const { patients } = useDoctorInbox()
+  const { patients, isLoading } = useDoctorInbox()
 
   return (
     <div className="flex flex-col gap-6">
@@ -12,7 +12,7 @@ export function DoctorMedicalRecordsPage() {
       </div>
 
       <div className="animate-fade-in">
-        <DoctorMedicalRecordsPanel patients={patients} />
+        <DoctorMedicalRecordsPanel patients={patients} isPatientsLoading={isLoading} />
       </div>
     </div>
   )

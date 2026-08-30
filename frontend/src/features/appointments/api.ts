@@ -17,3 +17,18 @@ export interface AdminAppointment {
 export function listAllAppointments(): Promise<{ appointments: AdminAppointment[] }> {
   return api.get('/appointments')
 }
+
+export interface AdminBookAppointmentInput {
+  patientId: string
+  doctorId: string
+  scheduledAt: string
+  mode: SessionMode
+  reason: string
+}
+
+/** Front-desk/admin booking on a patient's behalf. */
+export function bookAppointmentForPatient(
+  input: AdminBookAppointmentInput,
+): Promise<{ appointment: AdminAppointment }> {
+  return api.post('/appointments/admin', input)
+}

@@ -89,7 +89,7 @@ export function BookAppointmentPage() {
                   })),
               ]}
             />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input label="Date" type="date" error={errors.date?.message} {...register('date')} />
               <Input label="Time" type="time" error={errors.time?.message} {...register('time')} />
             </div>

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -7,59 +8,77 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
-import { MOCK_PATIENTS } from '@/features/patients/mockPatients'
-import { MOCK_DOCTORS } from '@/features/doctors/mockDoctors'
-import type { Appointment } from '@/types/appointment'
+import { bookAppointmentForPatient } from '@/features/appointments/api'
+import { listPatients } from '@/features/patients/api'
+import { listDoctors } from '@/features/patientDashboard/api'
+import { ApiError } from '@/lib/apiClient'
+import type { PatientListItem } from '@/types/patientDirectory'
+import type { DirectoryDoctor } from '@/types/directoryDoctor'
 
 const appointmentSchema = z.object({
   patientId: z.string().min(1, 'Select a patient'),
   doctorId: z.string().min(1, 'Select a doctor'),
   date: z.string().min(1, 'Select a date'),
   time: z.string().min(1, 'Select a time'),
+  mode: z.enum(['online', 'in-person']),
   reason: z.string().min(5, 'Describe the reason for the visit'),
 })
 
-type AppointmentFormValues = z.infer<typeof appointmentSchema>
+type AppointmentFormInput = z.input<typeof appointmentSchema>
 
 interface BookAppointmentModalProps {
   isOpen: boolean
   onClose: () => void
-  onBook: (appointment: Appointment) => void
+  onBook: () => void
 }
 
 export function BookAppointmentModal({ isOpen, onClose, onBook }: BookAppointmentModalProps) {
+  const [patients, setPatients] = useState<PatientListItem[]>([])
+  const [doctors, setDoctors] = useState<DirectoryDoctor[]>([])
   const {
     register,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<AppointmentFormValues>({ resolver: zodResolver(appointmentSchema) })
+  } = useForm<AppointmentFormInput>({
+    resolver: zodResolver(appointmentSchema),
+    defaultValues: { mode: 'in-person' },
+  })
+
+  useEffect(() => {
+    if (!isOpen) return
+    listPatients()
+      .then((res) => setPatients(res.patients))
+      .catch(() => setPatients([]))
+    listDoctors({ limit: 100 })
+      .then((res) => setDoctors(res.doctors))
+      .catch(() => setDoctors([]))
+  }, [isOpen])
 
   function handleClose() {
     reset()
     onClose()
   }
 
-  async function onSubmit(values: AppointmentFormValues) {
-    const patient = MOCK_PATIENTS.find((p) => p.id === values.patientId)
-    const doctor = MOCK_DOCTORS.find((d) => d.id === values.doctorId)
-    if (!patient || !doctor) return
+  async function onSubmit(values: AppointmentFormInput) {
+    const parsed = appointmentSchema.parse(values)
 
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    onBook({
-      id: `A-${crypto.randomUUID().slice(0, 8)}`,
-      patientId: patient.id,
-      patientName: patient.name,
-      doctorId: doctor.id,
-      doctorName: doctor.name,
-      department: doctor.department,
-      date: values.date,
-      time: values.time,
-      reason: values.reason,
-      status: 'scheduled',
-    })
-    toast.success(`Appointment booked for ${patient.name}`)
-    handleClose()
+    try {
+      await bookAppointmentForPatient({
+        patientId: parsed.patientId,
+        doctorId: parsed.doctorId,
+        scheduledAt: new Date(`${parsed.date}T${parsed.time}`).toISOString(),
+        mode: parsed.mode,
+        reason: parsed.reason,
+      })
+      const patient = patients.find((p) => p.id === parsed.patientId)
+      toast.success(`Appointment booked for ${patient?.fullName ?? 'patient'}`)
+      onBook()
+      handleClose()
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to book appointment'
+      toast.error(message)
+    }
   }
 
   return (
@@ -76,7 +95,7 @@ export function BookAppointmentModal({ isOpen, onClose, onBook }: BookAppointmen
           {...register('patientId')}
           options={[
             { label: 'Select a patient', value: '' },
-            ...MOCK_PATIENTS.map((patient) => ({ label: patient.name, value: patient.id })),
+            ...patients.map((patient) => ({ label: patient.fullName, value: patient.id })),
           ]}
         />
         <Select
@@ -85,13 +104,13 @@ export function BookAppointmentModal({ isOpen, onClose, onBook }: BookAppointmen
           {...register('doctorId')}
           options={[
             { label: 'Select a doctor', value: '' },
-            ...MOCK_DOCTORS.map((doctor) => ({
-              label: `${doctor.name} — ${doctor.department}`,
+            ...doctors.map((doctor) => ({
+              label: `${doctor.fullName} — ${doctor.department}`,
               value: doctor.id,
             })),
           ]}
         />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="Date"
             type="date"
@@ -105,6 +124,15 @@ export function BookAppointmentModal({ isOpen, onClose, onBook }: BookAppointmen
             {...register('time')}
           />
         </div>
+        <Select
+          label="Mode"
+          error={errors.mode?.message}
+          {...register('mode')}
+          options={[
+            { label: 'In-person', value: 'in-person' },
+            { label: 'Online', value: 'online' },
+          ]}
+        />
         <Textarea
           label="Reason for visit"
           error={errors.reason?.message}

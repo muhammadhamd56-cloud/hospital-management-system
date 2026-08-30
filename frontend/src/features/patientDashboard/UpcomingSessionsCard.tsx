@@ -13,6 +13,7 @@ import type { PatientAppointment } from '@/types/patientSession'
 
 interface UpcomingSessionsCardProps {
   appointments: PatientAppointment[]
+  isLoading?: boolean
   onCancelled: (appointment: PatientAppointment) => void
 }
 
@@ -74,7 +75,7 @@ function SessionRow({
   )
 }
 
-export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSessionsCardProps) {
+export function UpcomingSessionsCard({ appointments, isLoading = false, onCancelled }: UpcomingSessionsCardProps) {
   const upcoming = appointments.filter(
     (appointment) => appointment.status === 'scheduled' && isUpcoming(appointment.scheduledAt),
   )
@@ -99,7 +100,7 @@ export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSess
             <TabsTrigger value="past">Past</TabsTrigger>
           </TabsList>
           <TabsContent value="all">
-            {upcoming.length === 0 ? (
+            {!isLoading && upcoming.length === 0 ? (
               <EmptyState
                 icon={CalendarX}
                 title="No upcoming sessions"
@@ -114,7 +115,7 @@ export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSess
             )}
           </TabsContent>
           <TabsContent value="online">
-            {onlineOnly.length === 0 ? (
+            {!isLoading && onlineOnly.length === 0 ? (
               <EmptyState
                 icon={CalendarX}
                 title="No online sessions"
@@ -129,7 +130,7 @@ export function UpcomingSessionsCard({ appointments, onCancelled }: UpcomingSess
             )}
           </TabsContent>
           <TabsContent value="past">
-            {past.length === 0 ? (
+            {!isLoading && past.length === 0 ? (
               <EmptyState icon={CalendarX} title="No past sessions" description="Your session history will show up here." />
             ) : (
               <ul className="divide-y divide-surface-border">

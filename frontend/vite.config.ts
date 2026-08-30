@@ -14,10 +14,6 @@ export default defineConfig({
   server: {
     proxy: {
       // NestJS backend (backend/api/) — Google OAuth + JWT.
-      // The old Express backend (backend/legacy-express/) still runs on :4000
-      // but the frontend no longer talks to it; see
-      // frontend/DOCTOR_PROFILE_FEATURE.md and backend/api/README.md for the
-      // migration status.
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,

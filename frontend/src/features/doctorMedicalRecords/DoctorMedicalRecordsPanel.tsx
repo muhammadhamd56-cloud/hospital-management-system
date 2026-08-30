@@ -14,9 +14,10 @@ import type { DoctorInboxPatient } from '@/types/doctorChatInbox'
 
 interface DoctorMedicalRecordsPanelProps {
   patients: DoctorInboxPatient[]
+  isPatientsLoading?: boolean
 }
 
-export function DoctorMedicalRecordsPanel({ patients }: DoctorMedicalRecordsPanelProps) {
+export function DoctorMedicalRecordsPanel({ patients, isPatientsLoading = false }: DoctorMedicalRecordsPanelProps) {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
   const [records, setRecords] = useState<MedicalRecord[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -54,7 +55,7 @@ export function DoctorMedicalRecordsPanel({ patients }: DoctorMedicalRecordsPane
         <CardDescription>Write and review diagnoses for your patients.</CardDescription>
       </CardHeader>
       <CardContent>
-        {patients.length === 0 ? (
+        {!isPatientsLoading && patients.length === 0 ? (
           <EmptyState
             icon={ClipboardList}
             title="No patients yet"

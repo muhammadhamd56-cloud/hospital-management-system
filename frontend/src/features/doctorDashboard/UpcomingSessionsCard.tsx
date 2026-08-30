@@ -13,6 +13,7 @@ import type { DoctorAppointment } from '@/types/doctorSession'
 
 interface UpcomingSessionsCardProps {
   appointments: DoctorAppointment[]
+  isLoading?: boolean
   onUpdated: (appointment: DoctorAppointment) => void
 }
 
@@ -97,7 +98,7 @@ function SessionRow({
   )
 }
 
-export function UpcomingSessionsCard({ appointments, onUpdated }: UpcomingSessionsCardProps) {
+export function UpcomingSessionsCard({ appointments, isLoading = false, onUpdated }: UpcomingSessionsCardProps) {
   const upcoming = appointments.filter(
     (appointment) => appointment.status === 'scheduled' && isUpcoming(appointment.scheduledAt),
   )
@@ -116,7 +117,7 @@ export function UpcomingSessionsCard({ appointments, onUpdated }: UpcomingSessio
             <TabsTrigger value="online">Online only</TabsTrigger>
           </TabsList>
           <TabsContent value="all">
-            {upcoming.length === 0 ? (
+            {!isLoading && upcoming.length === 0 ? (
               <EmptyState
                 icon={CalendarX}
                 title="No upcoming sessions"
@@ -131,7 +132,7 @@ export function UpcomingSessionsCard({ appointments, onUpdated }: UpcomingSessio
             )}
           </TabsContent>
           <TabsContent value="online">
-            {onlineOnly.length === 0 ? (
+            {!isLoading && onlineOnly.length === 0 ? (
               <EmptyState
                 icon={CalendarX}
                 title="No online sessions"

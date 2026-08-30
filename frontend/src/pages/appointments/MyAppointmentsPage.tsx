@@ -3,7 +3,7 @@ import { UpcomingSessionsCard } from '@/features/patientDashboard/UpcomingSessio
 import { SessionCalendar } from '@/features/patientDashboard/SessionCalendar'
 
 export function MyAppointmentsPage() {
-  const { appointments, upsertAppointment } = usePatientAppointments()
+  const { appointments, isLoading, upsertAppointment } = usePatientAppointments()
 
   return (
     <div className="flex flex-col gap-6">
@@ -14,7 +14,7 @@ export function MyAppointmentsPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="animate-fade-in xl:col-span-2">
-          <UpcomingSessionsCard appointments={appointments} onCancelled={upsertAppointment} />
+          <UpcomingSessionsCard appointments={appointments} isLoading={isLoading} onCancelled={upsertAppointment} />
         </div>
         <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
           <SessionCalendar appointments={appointments} />

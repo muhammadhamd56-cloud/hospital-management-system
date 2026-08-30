@@ -1,5 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, Calendar, CalendarX, FileText, MessageCircle, FlaskConical } from 'lucide-react'
+import {
+  Bell,
+  BellRing,
+  Calendar,
+  CalendarClock,
+  CalendarPlus,
+  CalendarX,
+  FileText,
+  MessageCircle,
+  FlaskConical,
+  CheckCircle2,
+  XCircle,
+  ClipboardList,
+  AlarmClock,
+  AlertTriangle,
+  Megaphone,
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 import { formatDateTime } from '@/utils/datetime'
 import { cn } from '@/utils/cn'
@@ -12,9 +28,19 @@ const POLL_INTERVAL_MS = 30_000
 const TYPE_ICONS: Record<AppNotification['type'], typeof Bell> = {
   appointment_booked: Calendar,
   appointment_cancelled: CalendarX,
+  appointment_reminder: BellRing,
   chat_message: MessageCircle,
   medical_record_added: FileText,
   lab_result_ready: FlaskConical,
+  shift_scheduled: CalendarPlus,
+  shift_updated: CalendarClock,
+  shift_cancelled: CalendarX,
+  shift_application_approved: CheckCircle2,
+  shift_application_rejected: XCircle,
+  task_assigned: ClipboardList,
+  task_due_soon: AlarmClock,
+  task_overdue: AlertTriangle,
+  announcement_published: Megaphone,
 }
 
 export function NotificationBell() {

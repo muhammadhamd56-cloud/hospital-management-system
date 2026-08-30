@@ -63,8 +63,8 @@ export function AvailabilityToggle({ labelClass }: AvailabilityToggleProps) {
       >
         <span
           className={cn(
-            'absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform',
-            isAvailable ? 'translate-x-4' : 'translate-x-0.5',
+            'absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform',
+            isAvailable ? 'translate-x-4' : 'translate-x-0',
           )}
         />
       </span>

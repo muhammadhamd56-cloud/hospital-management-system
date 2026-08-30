@@ -7,7 +7,6 @@ import { RevenueChart } from '@/components/dashboard/RevenueChart'
 import { AppointmentsTable } from '@/components/dashboard/AppointmentsTable'
 import { DoctorsOnDuty } from '@/components/dashboard/DoctorsOnDuty'
 import { RecentPatients } from '@/components/dashboard/RecentPatients'
-import { EmergencyAlerts } from '@/components/dashboard/EmergencyAlerts'
 import { QuickActions } from '@/components/dashboard/QuickActions'
 import { listPatients } from '@/features/patients/api'
 import { listAllAppointments } from '@/features/appointments/api'
@@ -125,14 +124,11 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className="animate-fade-in">
           <RecentPatients />
         </div>
         <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
-          <EmergencyAlerts />
-        </div>
-        <div className="animate-fade-in" style={{ animationDelay: '120ms' }}>
           <QuickActions />
         </div>
       </div>

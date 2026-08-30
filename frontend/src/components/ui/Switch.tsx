@@ -33,8 +33,8 @@ export function Switch({ label, description, checked, onChange }: SwitchProps) {
       >
         <span
           className={cn(
-            'absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-transform',
-            checked ? 'translate-x-5' : 'translate-x-0.5',
+            'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow-sm transition-transform',
+            checked ? 'translate-x-5' : 'translate-x-0',
           )}
         />
       </button>

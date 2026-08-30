@@ -14,9 +14,10 @@ import type { DoctorInboxPatient } from '@/types/doctorChatInbox'
 
 interface DoctorInboxPanelProps {
   patients: DoctorInboxPatient[]
+  isPatientsLoading?: boolean
 }
 
-export function DoctorInboxPanel({ patients }: DoctorInboxPanelProps) {
+export function DoctorInboxPanel({ patients, isPatientsLoading = false }: DoctorInboxPanelProps) {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -78,7 +79,7 @@ export function DoctorInboxPanel({ patients }: DoctorInboxPanelProps) {
         <CardDescription>Conversations with your patients.</CardDescription>
       </CardHeader>
       <CardContent>
-        {patients.length === 0 ? (
+        {!isPatientsLoading && patients.length === 0 ? (
           <EmptyState
             icon={MessageCircle}
             title="No conversations yet"

@@ -5,7 +5,7 @@ import { SessionCalendar } from '@/features/doctorDashboard/SessionCalendar'
 
 export function DoctorDashboardPage() {
   const { user } = useAuth()
-  const { appointments, upsertAppointment } = useDoctorAppointments()
+  const { appointments, isLoading, upsertAppointment } = useDoctorAppointments()
 
   return (
     <div className="flex flex-col gap-6">
@@ -16,7 +16,7 @@ export function DoctorDashboardPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="animate-fade-in xl:col-span-2">
-          <UpcomingSessionsCard appointments={appointments} onUpdated={upsertAppointment} />
+          <UpcomingSessionsCard appointments={appointments} isLoading={isLoading} onUpdated={upsertAppointment} />
         </div>
         <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
           <SessionCalendar appointments={appointments} />

@@ -14,6 +14,7 @@ import type { PatientAppointment } from '@/types/patientSession'
 
 interface DoctorChatPanelProps {
   appointments: PatientAppointment[]
+  isAppointmentsLoading?: boolean
 }
 
 interface DoctorOption {
@@ -22,8 +23,9 @@ interface DoctorOption {
   specialization: string
 }
 
-export function DoctorChatPanel({ appointments }: DoctorChatPanelProps) {
+export function DoctorChatPanel({ appointments, isAppointmentsLoading = false }: DoctorChatPanelProps) {
   const [inboxDoctors, setInboxDoctors] = useState<DoctorOption[]>([])
+  const [isInboxLoading, setIsInboxLoading] = useState(true)
 
   useEffect(() => {
     listChatInbox()
@@ -31,6 +33,7 @@ export function DoctorChatPanel({ appointments }: DoctorChatPanelProps) {
       .catch(() => {
         // Non-critical: falls back to appointment-derived doctors below.
       })
+      .finally(() => setIsInboxLoading(false))
   }, [])
 
   const doctorOptions = useMemo<DoctorOption[]>(() => {
@@ -121,7 +124,7 @@ export function DoctorChatPanel({ appointments }: DoctorChatPanelProps) {
         <CardDescription>Chat with your care team.</CardDescription>
       </CardHeader>
       <CardContent>
-        {doctorOptions.length === 0 ? (
+        {!isAppointmentsLoading && !isInboxLoading && doctorOptions.length === 0 ? (
           <EmptyState
             icon={MessageCircle}
             title="No conversations yet"

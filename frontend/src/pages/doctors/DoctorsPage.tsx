@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router'
 import { Search, UserPlus, Eye, Copy, Check } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
@@ -42,6 +43,8 @@ const DEPARTMENT_FILTER_OPTIONS = [
 ]
 
 export function DoctorsPage() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [doctors, setDoctors] = useState<DirectoryDoctor[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -67,6 +70,19 @@ export function DoctorsPage() {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Deep-link from the navbar's global search: open a specific doctor's
+  // profile as soon as the directory has loaded, then clear the nav state so
+  // it doesn't reopen on a later visit via the back button.
+  useEffect(() => {
+    const openDoctorId = (location.state as { openDoctorId?: string } | null)?.openDoctorId
+    if (openDoctorId && !isLoading) {
+      const match = doctors.find((doctor) => doctor.id === openDoctorId)
+      if (match) setSelectedDoctor(match)
+      navigate(location.pathname, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, doctors])
 
   function handleCreated(result: CreateStaffResponse) {
     refresh()
