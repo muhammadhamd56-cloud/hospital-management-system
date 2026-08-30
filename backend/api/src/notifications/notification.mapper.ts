@@ -3,9 +3,19 @@ import type { Notification } from '@prisma/client';
 export type ClientNotificationType =
   | 'appointment_booked'
   | 'appointment_cancelled'
+  | 'appointment_reminder'
   | 'chat_message'
   | 'medical_record_added'
-  | 'lab_result_ready';
+  | 'lab_result_ready'
+  | 'shift_scheduled'
+  | 'shift_updated'
+  | 'shift_cancelled'
+  | 'shift_application_approved'
+  | 'shift_application_rejected'
+  | 'task_assigned'
+  | 'task_due_soon'
+  | 'task_overdue'
+  | 'announcement_published';
 
 export interface NotificationResponse {
   id: string;
@@ -20,9 +30,19 @@ export interface NotificationResponse {
 const TYPE_TO_CLIENT: Record<Notification['type'], ClientNotificationType> = {
   APPOINTMENT_BOOKED: 'appointment_booked',
   APPOINTMENT_CANCELLED: 'appointment_cancelled',
+  APPOINTMENT_REMINDER: 'appointment_reminder',
   CHAT_MESSAGE: 'chat_message',
   MEDICAL_RECORD_ADDED: 'medical_record_added',
   LAB_RESULT_READY: 'lab_result_ready',
+  SHIFT_SCHEDULED: 'shift_scheduled',
+  SHIFT_UPDATED: 'shift_updated',
+  SHIFT_CANCELLED: 'shift_cancelled',
+  SHIFT_APPLICATION_APPROVED: 'shift_application_approved',
+  SHIFT_APPLICATION_REJECTED: 'shift_application_rejected',
+  TASK_ASSIGNED: 'task_assigned',
+  TASK_DUE_SOON: 'task_due_soon',
+  TASK_OVERDUE: 'task_overdue',
+  ANNOUNCEMENT_PUBLISHED: 'announcement_published',
 };
 
 export function toNotificationResponse(notification: Notification): NotificationResponse {
