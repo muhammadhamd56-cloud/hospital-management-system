@@ -23,6 +23,7 @@ const doctorSchema = z.object({
     .int()
     .min(0, 'Must be positive')
     .max(60, 'Enter a valid number of years'),
+  consultationFee: z.coerce.number().min(0, 'Must be 0 or more').optional(),
 })
 
 type DoctorFormInput = z.input<typeof doctorSchema>
@@ -101,6 +102,15 @@ export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalPro
             {...register('experienceYears')}
           />
         </div>
+        <Input
+          label="Consultation fee (USD)"
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder="0 for no charge"
+          error={errors.consultationFee?.message}
+          {...register('consultationFee')}
+        />
         <Textarea
           label="Bio"
           placeholder="A short summary patients will see on this doctor's profile"

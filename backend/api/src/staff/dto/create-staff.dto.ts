@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsEmail, IsIn, IsInt, IsString, Max, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min, MinLength, ValidateIf } from 'class-validator';
 import { normalizeEmail } from '../../common/normalize-email';
 
 /** Roles an admin may provision directly. Never 'admin' (out-of-band only)
@@ -47,4 +47,12 @@ export class CreateStaffDto {
   @Min(0)
   @Max(80, { message: 'Enter a valid number of years' })
   experienceYears?: number;
+
+  // Optional even for a doctor -- defaults to 0 (no charge) until the admin
+  // or the doctor themself sets it via their profile.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0, { message: 'Consultation fee must be 0 or more' })
+  consultationFee?: number;
 }

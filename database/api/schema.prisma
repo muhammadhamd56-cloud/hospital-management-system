@@ -135,6 +135,8 @@ model Doctor {
   rating          Float    @default(4.5)
   acceptsOnline   Boolean  @default(true)
   isAvailable     Boolean  @default(true)
+  /** Charged to the patient as an invoice when they book a session with this doctor. 0 = no charge. */
+  consultationFee Float    @default(0)
   createdAt       DateTime @default(now())
 
   userId String @unique

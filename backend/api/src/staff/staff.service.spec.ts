@@ -161,9 +161,32 @@ describe('StaffService', () => {
           departmentId: 'dept-1',
           bio: 'Heart stuff',
           experienceYears: 10,
+          consultationFee: 0,
           userId: created.id,
         },
       });
+    });
+
+    it('passes through an explicit consultation fee for a doctor', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(buildUser({ role: Role.DOCTOR }));
+      prisma.department.upsert.mockResolvedValue({ id: 'dept-1', name: 'Cardiology' });
+
+      await service.create({
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        email: 'doc@example.com',
+        role: 'doctor',
+        specialization: 'Cardiology',
+        department: 'Cardiology',
+        bio: 'Heart stuff',
+        experienceYears: 10,
+        consultationFee: 150,
+      });
+
+      expect(prisma.doctor.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ consultationFee: 150 }) }),
+      );
     });
 
     it('generates a different temp password on each call', async () => {

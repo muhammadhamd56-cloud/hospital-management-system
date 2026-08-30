@@ -8,5 +8,6 @@ export interface DirectoryDoctor {
   rating: number
   acceptsOnline: boolean
   isAvailable: boolean
+  consultationFee: number
   email: string | null
 }

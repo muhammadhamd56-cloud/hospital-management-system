@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
 import { bookAppointment } from '@/features/patientDashboard/api'
 import { ApiError } from '@/lib/apiClient'
+import { formatCurrency } from '@/utils/currency'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 import type { PatientAppointment } from '@/types/patientSession'
 
@@ -55,7 +56,11 @@ export function BookSessionModal({ doctor, onClose, onBooked }: BookSessionModal
         mode: values.mode,
         reason: values.reason,
       })
-      toast.success(`Session booked with ${doctor.fullName}`)
+      toast.success(
+        doctor.consultationFee > 0
+          ? `Session booked with ${doctor.fullName} — an invoice for ${formatCurrency(doctor.consultationFee)} is waiting in Billing`
+          : `Session booked with ${doctor.fullName}`,
+      )
       onBooked(appointment)
       handleClose()
     } catch (error) {
@@ -72,6 +77,12 @@ export function BookSessionModal({ doctor, onClose, onBooked }: BookSessionModal
       description={doctor ? `${doctor.fullName} — ${doctor.specialization}` : undefined}
     >
       <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+        {doctor && doctor.consultationFee > 0 && (
+          <p className="rounded-md bg-surface-alt px-3 py-2 text-sm text-ink-muted">
+            This doctor charges a {formatCurrency(doctor.consultationFee)} consultation fee. An invoice will
+            be added to your Billing page after booking.
+          </p>
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input label="Date" type="date" error={errors.date?.message} {...register('date')} />
           <Input label="Time" type="time" error={errors.time?.message} {...register('time')} />

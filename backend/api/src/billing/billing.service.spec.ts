@@ -19,6 +19,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
     rating: 4.5,
     acceptsOnline: true,
     isAvailable: true,
+    consultationFee: 0,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'doctor-user-1',
     departmentId: 'dept-1',
@@ -356,6 +357,43 @@ describe('BillingService', () => {
 
       await expect(service.create(doctorCaller, dto)).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createConsultationInvoice', () => {
+    it('creates a single-item invoice for the consultation fee, due at the appointment time', async () => {
+      const dueDate = new Date('2099-01-01T10:00:00.000Z');
+      const created = buildInvoice({
+        id: 'inv-consult',
+        description: 'Consultation with Dr. Grace Hopper',
+        amount: 150,
+        dueDate,
+        items: [
+          buildItem({
+            id: 'item-consult',
+            description: 'Consultation with Dr. Grace Hopper',
+            quantity: 1,
+            unitPrice: 150,
+          }),
+        ],
+      });
+      prisma.invoice.create.mockResolvedValue(created);
+
+      const result = await service.createConsultationInvoice('patient-1', 'Grace Hopper', 150, dueDate);
+
+      expect(prisma.invoice.create).toHaveBeenCalledWith({
+        data: {
+          patientId: 'patient-1',
+          description: 'Consultation with Dr. Grace Hopper',
+          amount: 150,
+          dueDate,
+          items: {
+            create: [{ description: 'Consultation with Dr. Grace Hopper', quantity: 1, unitPrice: 150 }],
+          },
+        },
+        include: INVOICE_INCLUDE,
+      });
+      expect(result).toMatchObject({ id: 'inv-consult', amount: 150 });
     });
   });
 

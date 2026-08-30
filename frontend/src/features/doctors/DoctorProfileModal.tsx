@@ -2,6 +2,7 @@ import { Mail, Star, Stethoscope } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
+import { formatCurrency } from '@/utils/currency'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 
 interface DoctorProfileModalProps {
@@ -43,6 +44,12 @@ export function DoctorProfileModal({ doctor, onClose }: DoctorProfileModalProps)
               <p className="flex items-center gap-1 font-medium text-ink">
                 <Star className="size-3.5 fill-warning-500 text-warning-500" aria-hidden="true" />
                 {doctor.rating.toFixed(1)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Consultation fee</p>
+              <p className="font-medium text-ink">
+                {doctor.consultationFee > 0 ? formatCurrency(doctor.consultationFee) : 'Free'}
               </p>
             </div>
           </div>

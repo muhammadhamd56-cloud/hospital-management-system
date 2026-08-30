@@ -4,6 +4,7 @@ import { AppointmentMode, AppointmentStatus, NotificationType, Role, type Appoin
 import { AppointmentsService } from './appointments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BillingService } from '../billing/billing.service';
 import type { BookAppointmentDto } from './dto/book-appointment.dto';
 import type { AppointmentWithDoctorAndPatient } from './appointment.mapper';
 
@@ -16,6 +17,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
     rating: 4.5,
     acceptsOnline: true,
     isAvailable: true,
+    consultationFee: 0,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'doctor-user-1',
     departmentId: 'dept-1',
@@ -99,6 +101,7 @@ describe('AppointmentsService', () => {
     user: { findUnique: jest.Mock };
   };
   let notificationsService: { create: jest.Mock };
+  let billingService: { createConsultationInvoice: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -114,12 +117,14 @@ describe('AppointmentsService', () => {
     };
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+    billingService = { createConsultationInvoice: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AppointmentsService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notificationsService },
+        { provide: BillingService, useValue: billingService },
       ],
     }).compile();
 
@@ -313,6 +318,34 @@ describe('AppointmentsService', () => {
         status: 'scheduled',
         reason: 'Follow-up',
       });
+
+      expect(billingService.createConsultationInvoice).not.toHaveBeenCalled();
+    });
+
+    it('creates a consultation invoice when the doctor charges a fee', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ consultationFee: 150 }));
+      const created = buildAppointmentWithDoctorAndPatient({
+        scheduledAt: new Date('2099-01-01T10:00:00.000Z'),
+      });
+      prisma.appointment.create.mockResolvedValue(created);
+
+      await service.book('patient-1', dto);
+
+      expect(billingService.createConsultationInvoice).toHaveBeenCalledWith(
+        'patient-1',
+        'Grace Hopper',
+        150,
+        created.scheduledAt,
+      );
+    });
+
+    it('does not create a consultation invoice when the doctor has no fee set', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ consultationFee: 0 }));
+      prisma.appointment.create.mockResolvedValue(buildAppointmentWithDoctorAndPatient());
+
+      await service.book('patient-1', dto);
+
+      expect(billingService.createConsultationInvoice).not.toHaveBeenCalled();
     });
 
     it('maps an in-person mode to the Prisma IN_PERSON enum value', async () => {

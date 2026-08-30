@@ -63,6 +63,7 @@ export class DoctorPortalService {
       departmentId: department.id,
       bio: dto.bio,
       experienceYears: dto.experienceYears,
+      consultationFee: dto.consultationFee,
     };
 
     const doctor = existing

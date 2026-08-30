@@ -20,6 +20,7 @@ function buildDoctor(overrides: Partial<DoctorWithUser> = {}): DoctorWithUser {
     rating: 4.5,
     acceptsOnline: true,
     isAvailable: true,
+    consultationFee: 0,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'user-1',
     departmentId: 'dept-1',
@@ -119,6 +120,7 @@ describe('DoctorPortalService', () => {
       department: 'Neurology',
       bio: 'Brain stuff',
       experienceYears: 5,
+      consultationFee: 100,
     };
 
     it('creates a new Doctor row when the user has no existing profile', async () => {
@@ -140,6 +142,7 @@ describe('DoctorPortalService', () => {
           departmentId: 'dept-2',
           bio: 'Brain stuff',
           experienceYears: 5,
+          consultationFee: 100,
           userId: 'user-1',
         },
         include: expect.anything(),
@@ -164,6 +167,7 @@ describe('DoctorPortalService', () => {
           departmentId: 'dept-2',
           bio: 'Brain stuff',
           experienceYears: 5,
+          consultationFee: 100,
         },
         include: expect.anything(),
       });

@@ -13,6 +13,7 @@ export interface DirectoryDoctorResponse {
   rating: number;
   acceptsOnline: boolean;
   isAvailable: boolean;
+  consultationFee: number;
   email: string | null;
 }
 
@@ -32,6 +33,7 @@ export function toDirectoryDoctor(doctor: DoctorWithUser): DirectoryDoctorRespon
     rating: doctor.rating,
     acceptsOnline: doctor.acceptsOnline,
     isAvailable: doctor.isAvailable,
+    consultationFee: doctor.consultationFee,
     email: doctor.user.email,
   };
 }

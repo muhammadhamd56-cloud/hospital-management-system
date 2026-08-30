@@ -14,6 +14,7 @@ export interface CreateStaffInput {
   department?: string
   bio?: string
   experienceYears?: number
+  consultationFee?: number
 }
 
 export interface CreateStaffResponse {

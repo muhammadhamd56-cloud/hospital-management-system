@@ -7,5 +7,6 @@ import { StripeService } from './stripe.service';
 @Module({
   controllers: [BillingController, StripeWebhookController],
   providers: [BillingService, StripeService],
+  exports: [BillingService],
 })
 export class BillingModule {}

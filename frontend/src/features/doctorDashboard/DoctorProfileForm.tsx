@@ -21,6 +21,12 @@ const profileSchema = z.object({
     .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
       message: 'Enter a valid number of years',
     }),
+  consultationFee: z
+    .string()
+    .min(1, 'Consultation fee is required')
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+      message: 'Enter a valid amount, or 0 for no charge',
+    }),
 })
 
 type ProfileFormValues = z.infer<typeof profileSchema>
@@ -43,6 +49,7 @@ export function DoctorProfileForm() {
             department: res.profile.department,
             bio: res.profile.bio,
             experienceYears: String(res.profile.experienceYears),
+            consultationFee: String(res.profile.consultationFee),
           })
         }
       })
@@ -60,6 +67,7 @@ export function DoctorProfileForm() {
         department: values.department,
         bio: values.bio,
         experienceYears: Number(values.experienceYears),
+        consultationFee: Number(values.consultationFee),
       })
       toast.success('Profile saved')
     } catch (error) {
@@ -101,6 +109,15 @@ export function DoctorProfileForm() {
         min={0}
         error={errors.experienceYears?.message}
         {...register('experienceYears')}
+      />
+      <Input
+        label="Consultation fee (USD)"
+        type="number"
+        min={0}
+        step="0.01"
+        placeholder="0 for no charge"
+        error={errors.consultationFee?.message}
+        {...register('consultationFee')}
       />
       <Button type="submit" isLoading={isSubmitting} className="w-fit">
         Save profile

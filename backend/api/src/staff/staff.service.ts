@@ -73,6 +73,7 @@ export class StaffService {
             departmentId: department.id,
             bio: dto.bio!,
             experienceYears: dto.experienceYears!,
+            consultationFee: dto.consultationFee ?? 0,
             userId: user.id,
           },
         });

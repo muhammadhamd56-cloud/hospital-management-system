@@ -109,6 +109,29 @@ export class BillingService {
     return this.stripeService.createCheckoutSession(invoice);
   }
 
+  /** Called when a patient books a session with a doctor who charges a consultation fee. */
+  async createConsultationInvoice(
+    patientId: string,
+    doctorName: string,
+    fee: number,
+    dueDate: Date,
+  ): Promise<InvoiceResponse> {
+    const description = `Consultation with Dr. ${doctorName}`;
+
+    const invoice = await this.prisma.invoice.create({
+      data: {
+        patientId,
+        description,
+        amount: fee,
+        dueDate,
+        items: { create: [{ description, quantity: 1, unitPrice: fee }] },
+      },
+      include: INVOICE_INCLUDE,
+    });
+
+    return toInvoiceResponse(invoice);
+  }
+
   async create(caller: AuthenticatedUser, dto: CreateInvoiceDto): Promise<InvoiceResponse> {
     const patient = await this.prisma.user.findUnique({ where: { id: dto.patientId } });
 

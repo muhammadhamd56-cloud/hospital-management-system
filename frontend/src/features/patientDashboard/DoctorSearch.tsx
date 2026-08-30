@@ -12,6 +12,7 @@ import { BookSessionModal } from '@/features/patientDashboard/BookSessionModal'
 import { DoctorChatModal } from '@/features/patientDashboard/DoctorChatModal'
 import { listDoctors } from '@/features/patientDashboard/api'
 import { ApiError } from '@/lib/apiClient'
+import { formatCurrency } from '@/utils/currency'
 import { DEPARTMENTS } from '@/types/doctor'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 import type { PatientAppointment } from '@/types/patientSession'
@@ -110,9 +111,14 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
                   {doctor.rating.toFixed(1)}
                 </span>
               </div>
-              <Badge variant={doctor.isAvailable ? 'success' : 'neutral'} className="w-fit">
-                {doctor.isAvailable ? 'Available' : 'Unavailable'}
-              </Badge>
+              <div className="flex items-center justify-between">
+                <Badge variant={doctor.isAvailable ? 'success' : 'neutral'} className="w-fit">
+                  {doctor.isAvailable ? 'Available' : 'Unavailable'}
+                </Badge>
+                <span className="text-xs font-medium text-ink-muted">
+                  {doctor.consultationFee > 0 ? `${formatCurrency(doctor.consultationFee)} / visit` : 'Free'}
+                </span>
+              </div>
               <div className="flex gap-2">
                 <Button
                   size="sm"

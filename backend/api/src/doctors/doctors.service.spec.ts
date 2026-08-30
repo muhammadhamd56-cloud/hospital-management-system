@@ -13,6 +13,7 @@ function buildDoctor(overrides: Partial<DoctorWithUser> = {}): DoctorWithUser {
     rating: 4.5,
     acceptsOnline: true,
     isAvailable: true,
+    consultationFee: 0,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'user-1',
     departmentId: 'dept-1',
@@ -92,6 +93,7 @@ describe('DoctorsService', () => {
           rating: 4.5,
           acceptsOnline: true,
           isAvailable: true,
+          consultationFee: 0,
           email: 'ada@example.com',
         },
       ]);

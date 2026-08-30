@@ -3,6 +3,7 @@ import { AppointmentStatus, NotificationType, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPrismaMode } from '../common/session.mapper';
 import { NotificationsService } from '../notifications/notifications.service';
+import { BillingService } from '../billing/billing.service';
 import { BookAppointmentDto } from './dto/book-appointment.dto';
 import {
   AdminAppointmentResponse,
@@ -35,6 +36,7 @@ export class AppointmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly billingService: BillingService,
   ) {}
 
   async findAllForAdmin(): Promise<AdminAppointmentResponse[]> {
@@ -112,6 +114,16 @@ export class AppointmentsService {
       'New appointment booked',
       `${patientName} booked a session with you on ${appointment.scheduledAt.toLocaleString()}.`,
     );
+
+    if (doctor.consultationFee > 0) {
+      const doctorName = `${appointment.doctor.user.firstName} ${appointment.doctor.user.lastName}`.trim();
+      await this.billingService.createConsultationInvoice(
+        patientId,
+        doctorName,
+        doctor.consultationFee,
+        appointment.scheduledAt,
+      );
+    }
 
     return toPatientAppointmentResponse(appointment);
   }
