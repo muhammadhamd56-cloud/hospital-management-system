@@ -71,11 +71,11 @@ export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalPro
       description="Creates the account with a temporary password you'll relay to them."
     >
       <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
           <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="Specialization"
             error={errors.specialization?.message}
@@ -87,7 +87,7 @@ export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalPro
             {...register('department')}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="Email"
             type="email"

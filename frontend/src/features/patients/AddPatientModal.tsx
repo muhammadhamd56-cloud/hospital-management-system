@@ -1,41 +1,50 @@
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
-import type { Patient } from '@/types/patient'
+import { PhoneInput } from '@/components/ui/PhoneInput'
+import { createPatient, type CreatePatientResponse } from '@/features/patients/api'
+import { ApiError } from '@/lib/apiClient'
+import { detectDefaultCountry, phoneErrorMessage, toE164, validatePhone, type CountryCode } from '@/lib/phone'
 
-const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
+const schema = z
+  .object({
+    firstName: z.string().min(1, 'First name is required'),
+    lastName: z.string().min(1, 'Last name is required'),
+    email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
+    phone: z.object({
+      country: z.custom<CountryCode>(() => true),
+      nationalNumber: z.string(),
+    }),
+  })
+  .superRefine((values, ctx) => {
+    const result = validatePhone(values.phone, { required: false })
+    if (!result.valid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phone'], message: phoneErrorMessage(values.phone, result) })
+    }
+  })
 
-const patientSchema = z.object({
-  name: z.string().min(2, 'Enter the patient’s full name'),
-  email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
-  phone: z.string().min(7, 'Enter a valid phone number'),
-  age: z.coerce.number().int().min(0, 'Age must be positive').max(120, 'Enter a valid age'),
-  gender: z.enum(['male', 'female', 'other']),
-  bloodGroup: z.enum(BLOOD_GROUPS as [string, ...string[]]),
-})
-
-type PatientFormInput = z.input<typeof patientSchema>
+type FormValues = z.infer<typeof schema>
 
 interface AddPatientModalProps {
   isOpen: boolean
   onClose: () => void
-  onAdd: (patient: Patient) => void
+  onCreated: (result: CreatePatientResponse) => void
 }
 
-export function AddPatientModal({ isOpen, onClose, onAdd }: AddPatientModalProps) {
+export function AddPatientModal({ isOpen, onClose, onCreated }: AddPatientModalProps) {
   const {
+    control,
     register,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<PatientFormInput>({
-    resolver: zodResolver(patientSchema),
-    defaultValues: { gender: 'female', bloodGroup: 'O+' },
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { phone: { country: detectDefaultCountry(), nationalNumber: '' } },
   })
 
   function handleClose() {
@@ -43,17 +52,20 @@ export function AddPatientModal({ isOpen, onClose, onAdd }: AddPatientModalProps
     onClose()
   }
 
-  async function onSubmit(values: PatientFormInput) {
-    const parsed = patientSchema.parse(values)
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    onAdd({
-      id: `P-${crypto.randomUUID().slice(0, 8)}`,
-      lastVisit: new Date().toISOString().slice(0, 10),
-      status: 'active',
-      ...parsed,
-    })
-    toast.success(`${parsed.name} was added`)
-    handleClose()
+  async function onSubmit(values: FormValues) {
+    try {
+      const result = await createPatient({
+        firstName: values.firstName,
+        lastName: values.lastName,
+        email: values.email,
+        phone: values.phone.nationalNumber ? toE164(values.phone) ?? undefined : undefined,
+      })
+      onCreated(result)
+      handleClose()
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : 'Failed to create account'
+      toast.error(message)
+    }
   }
 
   return (
@@ -61,41 +73,33 @@ export function AddPatientModal({ isOpen, onClose, onAdd }: AddPatientModalProps
       isOpen={isOpen}
       onClose={handleClose}
       title="Add Patient"
-      description="Register a new patient record."
+      description="Creates the account with a temporary password you'll relay to them."
     >
       <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-        <Input label="Full name" error={errors.name?.message} {...register('name')} />
-        <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="Email"
-            type="email"
-            error={errors.email?.message}
-            {...register('email')}
-          />
-          <Input label="Phone" error={errors.phone?.message} {...register('phone')} />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
+          <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />
         </div>
-        <div className="grid grid-cols-3 gap-4">
-          <Input
-            label="Age"
-            type="number"
-            error={errors.age?.message}
-            {...register('age')}
-          />
-          <Select
-            label="Gender"
-            options={[
-              { label: 'Female', value: 'female' },
-              { label: 'Male', value: 'male' },
-              { label: 'Other', value: 'other' },
-            ]}
-            {...register('gender')}
-          />
-          <Select
-            label="Blood group"
-            options={BLOOD_GROUPS.map((group) => ({ label: group, value: group }))}
-            {...register('bloodGroup')}
-          />
-        </div>
+        <Input
+          label="Email"
+          type="email"
+          autoComplete="email"
+          placeholder="patient@example.com"
+          error={errors.email?.message}
+          {...register('email')}
+        />
+        <Controller
+          control={control}
+          name="phone"
+          render={({ field }) => (
+            <PhoneInput
+              label="Phone number (optional)"
+              value={field.value}
+              onChange={field.onChange}
+              error={errors.phone?.message as string | undefined}
+            />
+          )}
+        />
         <div className="mt-2 flex justify-end gap-3">
           <Button type="button" variant="secondary" onClick={handleClose}>
             Cancel
