@@ -8,7 +8,7 @@ import { AssignBedDto } from './dto/assign-bed.dto';
 
 @Controller('beds')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN)
+@Roles(Role.ADMIN, Role.DOCTOR)
 export class BedsController {
   constructor(private readonly bedsService: BedsService) {}
 

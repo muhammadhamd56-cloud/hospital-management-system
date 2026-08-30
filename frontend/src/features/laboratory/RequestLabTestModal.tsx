@@ -97,7 +97,7 @@ export function RequestLabTestModal({ isOpen, onClose, onRequest }: RequestLabTe
             ...doctors.map((doctor) => ({ label: doctor.fullName, value: doctor.id })),
           ]}
         />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="Test name"
             error={errors.testName?.message}

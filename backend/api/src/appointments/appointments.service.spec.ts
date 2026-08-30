@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { AppointmentMode, AppointmentStatus, NotificationType, type Appointment, type Doctor } from '@prisma/client';
+import { AppointmentMode, AppointmentStatus, NotificationType, Role, type Appointment, type Doctor, type User } from '@prisma/client';
 import { AppointmentsService } from './appointments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -34,6 +34,39 @@ function buildAppointment(overrides: Partial<Appointment> = {}): Appointment {
     reason: 'Checkup',
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    reminderSentAt: null,
+    ...overrides,
+  };
+}
+
+function buildPatientUser(overrides: Partial<User> = {}): User {
+  return {
+    id: 'patient-1',
+    googleId: null,
+    email: 'ada@example.com',
+    password: null,
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+    phone: null,
+    picture: null,
+    role: Role.PATIENT,
+    roleSelected: true,
+    emailVerified: true,
+    otpCodeHash: null,
+    otpExpiresAt: null,
+    otpAttempts: 0,
+    otpLastSentAt: null,
+    passwordResetCodeHash: null,
+    passwordResetExpiresAt: null,
+    passwordResetAttempts: 0,
+    passwordResetLastSentAt: null,
+    tokenVersion: 0,
+    mustChangePassword: false,
+    mfaEnabled: false,
+    mfaSecret: null,
+    mfaBackupCodeHashes: [],
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
   };
 }
@@ -63,6 +96,7 @@ describe('AppointmentsService', () => {
       update: jest.Mock;
     };
     doctor: { findUnique: jest.Mock };
+    user: { findUnique: jest.Mock };
   };
   let notificationsService: { create: jest.Mock };
 
@@ -76,6 +110,7 @@ describe('AppointmentsService', () => {
         update: jest.fn(),
       },
       doctor: { findUnique: jest.fn() },
+      user: { findUnique: jest.fn() },
     };
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
@@ -290,6 +325,49 @@ describe('AppointmentsService', () => {
 
       const createArgs = prisma.appointment.create.mock.calls[0][0];
       expect(createArgs.data.mode).toBe(AppointmentMode.IN_PERSON);
+    });
+  });
+
+  describe('bookForPatient', () => {
+    const dto: BookAppointmentDto = {
+      doctorId: 'doctor-1',
+      scheduledAt: '2099-01-01T10:00:00.000Z',
+      mode: 'online',
+      reason: 'Front-desk booking',
+    };
+
+    it('throws BadRequestException when the patient does not exist', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.bookForPatient('patient-1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.doctor.findUnique).not.toHaveBeenCalled();
+      expect(prisma.appointment.create).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when the given id belongs to a non-patient account', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildPatientUser({ role: Role.DOCTOR }));
+
+      await expect(service.bookForPatient('patient-1', dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.appointment.create).not.toHaveBeenCalled();
+    });
+
+    it('books the appointment for the given patient once validated', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildPatientUser());
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor());
+      const created = buildAppointmentWithDoctorAndPatient({
+        scheduledAt: new Date('2099-01-01T10:00:00.000Z'),
+        mode: AppointmentMode.ONLINE,
+        reason: 'Front-desk booking',
+      });
+      prisma.appointment.create.mockResolvedValue(created);
+
+      const result = await service.bookForPatient('patient-1', dto);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'patient-1' } });
+      expect(prisma.appointment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ patientId: 'patient-1' }) }),
+      );
+      expect(result.id).toBe(created.id);
     });
   });
 

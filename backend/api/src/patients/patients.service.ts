@@ -1,8 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { randomBytes } from 'crypto';
+import { hashPassword } from '../auth/password.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { PatientAppointmentResponse, toPatientAppointmentResponse } from '../appointments/appointment.mapper';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
+import { CreatePatientDto } from './dto/create-patient.dto';
 
 export interface PatientListItemResponse {
   id: string;
@@ -16,6 +19,12 @@ export interface PatientListItemResponse {
 
 export interface PatientDetailResponse extends PatientListItemResponse {
   appointments: PatientAppointmentResponse[];
+}
+
+export interface CreatePatientResult {
+  patient: PatientListItemResponse;
+  /** Plaintext temp password -- returned exactly once for the admin to relay. Never stored or logged. */
+  tempPassword: string;
 }
 
 const DOCTOR_INCLUDE = {
@@ -138,4 +147,53 @@ export class PatientsService {
       throw new NotFoundException('Patient not found');
     }
   }
+
+  /**
+   * Admin-provisions a patient account (intake, front-desk registration).
+   * Mirrors StaffService.create(): pre-verified, no OTP step, a
+   * server-generated temp password the admin relays, mustChangePassword so
+   * the patient sets their own on first login.
+   */
+  async create(dto: CreatePatientDto): Promise<CreatePatientResult> {
+    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+    if (existing) {
+      throw new ConflictException('An account with this email already exists');
+    }
+
+    const tempPassword = generateTempPassword();
+    const password = await hashPassword(tempPassword);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        password,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        phone: dto.phone || null,
+        role: Role.PATIENT,
+        roleSelected: true,
+        emailVerified: true,
+        mustChangePassword: true,
+      },
+    });
+
+    return {
+      patient: {
+        id: user.id,
+        fullName: `${user.firstName} ${user.lastName}`.trim(),
+        email: user.email,
+        picture: user.picture,
+        joinedAt: user.createdAt.toISOString(),
+        appointmentCount: 0,
+        lastVisit: null,
+      },
+      tempPassword,
+    };
+  }
+}
+
+/** 16-char URL-safe random temp password -- e.g. "kX9m2Qw_p7ZbN3aR". */
+function generateTempPassword(): string {
+  return randomBytes(12).toString('base64url');
 }

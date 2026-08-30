@@ -15,6 +15,9 @@ import {
   FileText,
   UserCog,
   UserSearch,
+  CalendarRange,
+  ListTodo,
+  Megaphone,
 } from 'lucide-react'
 import { ROUTES } from '@/constants/routes'
 import type { NavItem } from '@/types/nav'
@@ -37,29 +40,31 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ['patient', 'doctor'],
   },
   { label: 'Prescriptions', icon: Pill, path: ROUTES.prescriptions, roles: ['patient'] },
-  { label: 'Patients', icon: Users, path: ROUTES.patients, roles: [...OPS_ONLY!, 'receptionist'] },
-  { label: 'Doctors', icon: Stethoscope, path: ROUTES.doctors, roles: OPS_ONLY },
+  { label: 'My Shifts', icon: CalendarClock, path: ROUTES.myShifts, roles: ['staff'] },
+  { label: 'Available Shifts', icon: CalendarPlus, path: ROUTES.availableShifts, roles: ['staff'] },
+  { label: 'My Tasks', icon: ListTodo, path: ROUTES.myTasks, roles: ['staff'] },
   {
-    label: 'Appointments',
-    icon: CalendarClock,
-    path: ROUTES.appointments,
-    roles: [...OPS_ONLY!, 'receptionist'],
+    label: 'Announcements',
+    icon: Megaphone,
+    path: ROUTES.announcements,
+    roles: ['admin', 'doctor', 'staff'],
   },
+  { label: 'Patients', icon: Users, path: ROUTES.patients, roles: OPS_ONLY },
+  { label: 'Doctors', icon: Stethoscope, path: ROUTES.doctors, roles: OPS_ONLY },
+  { label: 'Appointments', icon: CalendarClock, path: ROUTES.appointments, roles: OPS_ONLY },
   { label: 'Beds', icon: BedDouble, path: ROUTES.beds, roles: OPS_ONLY },
   {
     label: 'Laboratory',
     icon: FlaskConical,
     path: ROUTES.laboratory,
-    roles: [...OPS_ONLY!, 'lab_staff'],
+    roles: [...OPS_ONLY!, 'staff'],
+    // Role.STAFF is shared by every non-doctor staff type -- only show this
+    // to the ones actually working the lab.
+    visible: (user) => user.role !== 'staff' || user.staffType === 'lab_technician',
   },
-  {
-    label: 'Pharmacy',
-    icon: Pill,
-    path: ROUTES.pharmacy,
-    roles: [...OPS_ONLY!, 'pharmacist'],
-  },
-  { label: 'Billing', icon: Receipt, path: ROUTES.billing, roles: OPS_ONLY },
+  { label: 'Billing', icon: Receipt, path: ROUTES.billing, roles: [...OPS_ONLY!, 'patient'] },
   { label: 'Reports', icon: FileBarChart, path: ROUTES.reports, roles: OPS_ONLY },
   { label: 'Staff', icon: UserCog, path: ROUTES.staff, roles: ['admin'] },
+  { label: 'Staff Scheduling', icon: CalendarRange, path: ROUTES.staffScheduling, roles: ['admin'] },
   { label: 'Settings', icon: Settings, path: ROUTES.settings },
 ]

@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { StaffResponse, toStaffResponse } from './staff.mapper';
 
-const STAFF_ROLES = [Role.DOCTOR, Role.RECEPTIONIST, Role.LAB_STAFF, Role.PHARMACIST];
+const STAFF_ROLES = [Role.DOCTOR, Role.STAFF];
 
 export interface CreateStaffResult {
   staff: StaffResponse;
@@ -29,7 +29,7 @@ export class StaffService {
   }
 
   /**
-   * Admin-provisions a staff account (doctor/receptionist/lab_staff/pharmacist
+   * Admin-provisions a staff account (doctor/staff
    * -- never admin or patient, see CreateStaffDto). Unlike self-signup, there's
    * no OTP step: the admin has already vetted this person, so the account is
    * created pre-verified with a server-generated temp password that must be

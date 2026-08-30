@@ -1,7 +1,7 @@
 # Hospital Management System
 
 A production-oriented Hospital Management System covering patients, doctors,
-appointments, billing, laboratory, and pharmacy workflows.
+appointments, billing, and laboratory workflows.
 
 ## Status
 
@@ -57,10 +57,10 @@ hospital-management-system/
 
 ## Roles
 
-Admin, Doctor, Receptionist, Patient, Laboratory Staff, Pharmacist.
+Admin, Doctor, Patient, Laboratory Staff.
 
 ## Roadmap
 
 Built module by module — auth, admin, doctor, patient, appointments, billing,
-laboratory, pharmacy, reports, notifications — with the backend following once
-the UI is in place.
+laboratory, reports, notifications — with the backend following once the UI
+is in place.

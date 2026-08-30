@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AppointmentMode, AppointmentStatus, Role } from '@prisma/client';
 import { PatientsService } from './patients.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
+import type { CreatePatientDto } from './dto/create-patient.dto';
 
 const admin: AuthenticatedUser = { id: 'admin-1', email: 'admin@example.com', role: Role.ADMIN };
 const doctorCaller: AuthenticatedUser = { id: 'doctor-user-1', email: 'doc@example.com', role: Role.DOCTOR };
@@ -58,7 +59,7 @@ function buildPatientDetailRow(overrides: Record<string, unknown> = {}) {
 describe('PatientsService', () => {
   let service: PatientsService;
   let prisma: {
-    user: { findMany: jest.Mock; findFirst: jest.Mock };
+    user: { findMany: jest.Mock; findFirst: jest.Mock; findUnique: jest.Mock; create: jest.Mock };
     doctor: { findUnique: jest.Mock };
     appointment: { findMany: jest.Mock; findFirst: jest.Mock };
     chatMessage: { findMany: jest.Mock; findFirst: jest.Mock };
@@ -66,7 +67,7 @@ describe('PatientsService', () => {
 
   beforeEach(async () => {
     prisma = {
-      user: { findMany: jest.fn(), findFirst: jest.fn() },
+      user: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
       doctor: { findUnique: jest.fn() },
       appointment: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn() },
       chatMessage: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn() },
@@ -312,6 +313,59 @@ describe('PatientsService', () => {
 
       await expect(service.findOne(doctorCaller, 'patient-1')).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('create', () => {
+    const dto: CreatePatientDto = {
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      email: 'ada@example.com',
+    };
+
+    it('throws ConflictException when an account with that email already exists', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildPatientListRow());
+
+      await expect(service.create(dto)).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a pre-verified patient account with a temp password and mustChangePassword set', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({
+        id: 'patient-2',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@example.com',
+        picture: null,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      const result = await service.create(dto);
+
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          email: 'ada@example.com',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          phone: null,
+          role: Role.PATIENT,
+          roleSelected: true,
+          emailVerified: true,
+          mustChangePassword: true,
+        }),
+      });
+      expect(result.patient).toEqual({
+        id: 'patient-2',
+        fullName: 'Ada Lovelace',
+        email: 'ada@example.com',
+        picture: null,
+        joinedAt: '2026-01-01T00:00:00.000Z',
+        appointmentCount: 0,
+        lastVisit: null,
+      });
+      expect(typeof result.tempPassword).toBe('string');
+      expect(result.tempPassword.length).toBeGreaterThan(0);
     });
   });
 });

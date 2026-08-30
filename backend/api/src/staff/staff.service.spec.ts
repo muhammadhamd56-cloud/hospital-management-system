@@ -15,15 +15,22 @@ function buildUser(overrides: Partial<User> = {}): User {
     lastName: 'Hopper',
     phone: null,
     picture: null,
-    role: Role.RECEPTIONIST,
+    role: Role.STAFF,
     roleSelected: true,
     emailVerified: true,
     otpCodeHash: null,
     otpExpiresAt: null,
     otpAttempts: 0,
     otpLastSentAt: null,
+    passwordResetCodeHash: null,
+    passwordResetExpiresAt: null,
+    passwordResetAttempts: 0,
+    passwordResetLastSentAt: null,
     tokenVersion: 0,
     mustChangePassword: true,
+    mfaEnabled: false,
+    mfaSecret: null,
+    mfaBackupCodeHashes: [],
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -55,13 +62,13 @@ describe('StaffService', () => {
   });
 
   describe('findAll', () => {
-    it('queries only staff roles (doctor/receptionist/lab_staff/pharmacist), newest first', async () => {
+    it('queries only staff roles (doctor/staff), newest first', async () => {
       prisma.user.findMany.mockResolvedValue([]);
 
       await service.findAll();
 
       expect(prisma.user.findMany).toHaveBeenCalledWith({
-        where: { role: { in: [Role.DOCTOR, Role.RECEPTIONIST, Role.LAB_STAFF, Role.PHARMACIST] } },
+        where: { role: { in: [Role.DOCTOR, Role.STAFF] } },
         orderBy: { createdAt: 'desc' },
       });
     });
@@ -76,7 +83,7 @@ describe('StaffService', () => {
           id: 'user-1',
           fullName: 'Grace Hopper',
           email: 'staff@example.com',
-          role: 'receptionist',
+          role: 'staff',
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ]);
@@ -84,17 +91,17 @@ describe('StaffService', () => {
   });
 
   describe('create', () => {
-    const receptionistDto: CreateStaffDto = {
+    const staffDto: CreateStaffDto = {
       firstName: 'Grace',
       lastName: 'Hopper',
       email: 'staff@example.com',
-      role: 'receptionist',
+      role: 'staff',
     };
 
     it('throws ConflictException when the email is already taken', async () => {
       prisma.user.findUnique.mockResolvedValue(buildUser());
 
-      await expect(service.create(receptionistDto)).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.create(staffDto)).rejects.toBeInstanceOf(ConflictException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -103,19 +110,19 @@ describe('StaffService', () => {
       const created = buildUser();
       prisma.user.create.mockResolvedValue(created);
 
-      const result = await service.create(receptionistDto);
+      const result = await service.create(staffDto);
 
       expect(prisma.user.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           email: 'staff@example.com',
-          role: Role.RECEPTIONIST,
+          role: Role.STAFF,
           roleSelected: true,
           emailVerified: true,
           mustChangePassword: true,
         }),
       });
       expect(prisma.doctor.create).not.toHaveBeenCalled();
-      expect(result.staff.role).toBe('receptionist');
+      expect(result.staff.role).toBe('staff');
       expect(typeof result.tempPassword).toBe('string');
       expect(result.tempPassword.length).toBeGreaterThanOrEqual(12);
       // The returned password must be the plaintext temp password, not the hash persisted to the DB.
@@ -163,8 +170,8 @@ describe('StaffService', () => {
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue(buildUser());
 
-      const first = await service.create(receptionistDto);
-      const second = await service.create(receptionistDto);
+      const first = await service.create(staffDto);
+      const second = await service.create(staffDto);
 
       expect(first.tempPassword).not.toBe(second.tempPassword);
     });

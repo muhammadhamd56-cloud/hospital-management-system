@@ -7,7 +7,7 @@ import { CreateStaffDto } from './dto/create-staff.dto';
 import { StaffResponse } from './staff.mapper';
 import { CreateStaffResult, StaffService } from './staff.service';
 
-/** Admin-only staff directory + provisioning (doctor/receptionist/lab_staff/pharmacist). */
+/** Admin-only staff directory + provisioning (doctor/staff). */
 @Controller('staff')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.ADMIN)

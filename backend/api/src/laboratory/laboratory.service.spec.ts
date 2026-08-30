@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { LabTestCategory, LabTestStatus, NotificationType, Role, type Doctor, type LabTest } from '@prisma/client';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { LabTestCategory, LabTestStatus, NotificationType, Role, StaffType, type Doctor, type LabTest } from '@prisma/client';
 import { LaboratoryService } from './laboratory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -9,7 +9,8 @@ import type { RequestLabTestDto } from './dto/request-lab-test.dto';
 import type { UpdateLabTestStatusDto } from './dto/update-lab-test-status.dto';
 
 const admin: AuthenticatedUser = { id: 'admin-1', email: 'admin@example.com', role: Role.ADMIN };
-const labStaff: AuthenticatedUser = { id: 'lab-user-1', email: 'lab@example.com', role: Role.LAB_STAFF };
+const labStaff: AuthenticatedUser = { id: 'lab-user-1', email: 'lab@example.com', role: Role.STAFF };
+const nonLabStaff: AuthenticatedUser = { id: 'staff-user-1', email: 'staff@example.com', role: Role.STAFF };
 const doctorCaller: AuthenticatedUser = { id: 'doctor-user-1', email: 'doc@example.com', role: Role.DOCTOR };
 
 function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
@@ -63,6 +64,7 @@ describe('LaboratoryService', () => {
     labTest: { findMany: jest.Mock; findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
     doctor: { findUnique: jest.Mock };
     user: { findUnique: jest.Mock };
+    staff: { findUnique: jest.Mock };
     appointment: { findMany: jest.Mock };
     chatMessage: { findMany: jest.Mock };
   };
@@ -73,6 +75,7 @@ describe('LaboratoryService', () => {
       labTest: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
       doctor: { findUnique: jest.fn() },
       user: { findUnique: jest.fn() },
+      staff: { findUnique: jest.fn() },
       appointment: { findMany: jest.fn().mockResolvedValue([]) },
       chatMessage: { findMany: jest.fn().mockResolvedValue([]) },
     };
@@ -104,13 +107,29 @@ describe('LaboratoryService', () => {
       expect(result[0].patientName).toBe('Ada Lovelace');
     });
 
-    it('returns every test, unfiltered, for a lab_staff caller', async () => {
+    it('returns every test, unfiltered, for a STAFF caller who is a lab technician', async () => {
+      prisma.staff.findUnique.mockResolvedValue({ staffType: StaffType.LAB_TECHNICIAN });
       prisma.labTest.findMany.mockResolvedValue([]);
 
       await service.findAll(labStaff);
 
+      expect(prisma.staff.findUnique).toHaveBeenCalledWith({ where: { userId: labStaff.id } });
       expect(prisma.doctor.findUnique).not.toHaveBeenCalled();
       expect(prisma.labTest.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+    });
+
+    it('rejects a STAFF caller who is not a lab technician', async () => {
+      prisma.staff.findUnique.mockResolvedValue({ staffType: StaffType.RECEPTIONIST });
+
+      await expect(service.findAll(nonLabStaff)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.labTest.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a STAFF caller with no linked roster entry at all', async () => {
+      prisma.staff.findUnique.mockResolvedValue(null);
+
+      await expect(service.findAll(nonLabStaff)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.labTest.findMany).not.toHaveBeenCalled();
     });
 
     it('scopes a doctor caller to patients they have an appointment or chat relationship with', async () => {
@@ -225,7 +244,7 @@ describe('LaboratoryService', () => {
       prisma.labTest.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.updateStatus('missing', { status: 'in-progress' }),
+        service.updateStatus(admin, 'missing', { status: 'in-progress' }),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -234,7 +253,7 @@ describe('LaboratoryService', () => {
       prisma.labTest.update.mockResolvedValue(buildLabTestWithRelations({ status: LabTestStatus.IN_PROGRESS }));
 
       const dto: UpdateLabTestStatusDto = { status: 'in-progress' };
-      const result = await service.updateStatus('test-1', dto);
+      const result = await service.updateStatus(admin, 'test-1', dto);
 
       expect(prisma.labTest.update).toHaveBeenCalledWith({
         where: { id: 'test-1' },
@@ -251,7 +270,7 @@ describe('LaboratoryService', () => {
       prisma.labTest.update.mockResolvedValue(updated);
 
       const dto: UpdateLabTestStatusDto = { status: 'completed', resultSummary: 'Normal' };
-      const result = await service.updateStatus('test-1', dto);
+      const result = await service.updateStatus(admin, 'test-1', dto);
 
       const updateArgs = prisma.labTest.update.mock.calls[0][0];
       expect(updateArgs.data.status).toBe(LabTestStatus.COMPLETED);
@@ -280,7 +299,7 @@ describe('LaboratoryService', () => {
       );
       prisma.labTest.update.mockResolvedValue(buildLabTestWithRelations({ status: LabTestStatus.COMPLETED }));
 
-      await service.updateStatus('test-1', { status: 'completed' });
+      await service.updateStatus(admin, 'test-1', { status: 'completed' });
 
       expect(notificationsService.create).not.toHaveBeenCalled();
       const updateArgs = prisma.labTest.update.mock.calls[0][0];
@@ -291,7 +310,7 @@ describe('LaboratoryService', () => {
       prisma.labTest.findUnique.mockResolvedValue(buildLabTest({ resultSummary: 'Existing note' }));
       prisma.labTest.update.mockResolvedValue(buildLabTestWithRelations());
 
-      await service.updateStatus('test-1', { status: 'in-progress' });
+      await service.updateStatus(admin, 'test-1', { status: 'in-progress' });
 
       const updateArgs = prisma.labTest.update.mock.calls[0][0];
       expect(updateArgs.data.resultSummary).toBe('Existing note');

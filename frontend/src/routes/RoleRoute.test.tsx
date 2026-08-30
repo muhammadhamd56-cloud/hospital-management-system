@@ -25,6 +25,8 @@ function baseUser(overrides: Partial<AuthUser> = {}): AuthUser {
     hasPassword: true,
     emailVerified: true,
     mustChangePassword: false,
+    mfaEnabled: false,
+    staffType: null,
     ...overrides,
   }
 }

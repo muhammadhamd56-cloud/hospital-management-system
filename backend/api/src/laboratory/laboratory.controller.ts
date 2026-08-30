@@ -16,7 +16,7 @@ export class LaboratoryController {
   constructor(private readonly laboratoryService: LaboratoryService) {}
 
   @Get('tests')
-  @Roles(Role.ADMIN, Role.DOCTOR, Role.LAB_STAFF)
+  @Roles(Role.ADMIN, Role.DOCTOR, Role.STAFF)
   async findAll(@CurrentUser() user: AuthenticatedUser): Promise<{ tests: LabTestResponse[] }> {
     const tests = await this.laboratoryService.findAll(user);
     return { tests };
@@ -33,12 +33,13 @@ export class LaboratoryController {
   }
 
   @Patch('tests/:id/status')
-  @Roles(Role.ADMIN, Role.LAB_STAFF)
+  @Roles(Role.ADMIN, Role.STAFF)
   async updateStatus(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdateLabTestStatusDto,
   ): Promise<{ test: LabTestResponse }> {
-    const test = await this.laboratoryService.updateStatus(id, dto);
+    const test = await this.laboratoryService.updateStatus(user, id, dto);
     return { test };
   }
 }

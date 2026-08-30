@@ -16,7 +16,7 @@ const schema = z.object({
   firstName: z.string().min(1, 'First name is required'),
   lastName: z.string().min(1, 'Last name is required'),
   email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
-  role: z.enum(['doctor', 'receptionist', 'lab_staff', 'pharmacist']),
+  role: z.enum(['doctor', 'staff']),
   specialization: z.string().trim().optional(),
   department: z.string().trim().optional(),
   bio: z.string().trim().optional(),
@@ -38,7 +38,7 @@ export function AddStaffModal({ isOpen, onClose, onCreated }: AddStaffModalProps
     watch,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { role: 'receptionist' } })
+  } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { role: 'staff' } })
   const role = watch('role') as StaffRole
 
   function handleClose() {
@@ -96,7 +96,7 @@ export function AddStaffModal({ isOpen, onClose, onCreated }: AddStaffModalProps
           {...register('role')}
           options={STAFF_ROLE_OPTIONS}
         />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
           <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />
         </div>

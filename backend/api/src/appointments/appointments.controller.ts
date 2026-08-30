@@ -6,6 +6,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { AppointmentsService } from './appointments.service';
+import { AdminBookAppointmentDto } from './dto/admin-book-appointment.dto';
 import { BookAppointmentDto } from './dto/book-appointment.dto';
 import type { AdminAppointmentResponse, PatientAppointmentResponse } from './appointment.mapper';
 
@@ -16,9 +17,9 @@ import type { AdminAppointmentResponse, PatientAppointmentResponse } from './app
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
 
-  /** Admin/front-desk-wide view across all doctors/patients — overrides the class-level PATIENT-only role. */
+  /** Ops-wide view across all doctors/patients — overrides the class-level PATIENT-only role. */
   @Get()
-  @Roles(Role.ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.ADMIN, Role.DOCTOR)
   async findAllForAdmin(): Promise<{ appointments: AdminAppointmentResponse[] }> {
     const appointments = await this.appointmentsService.findAllForAdmin();
     return { appointments };
@@ -38,6 +39,17 @@ export class AppointmentsController {
     @Body() dto: BookAppointmentDto,
   ): Promise<{ appointment: PatientAppointmentResponse }> {
     const appointment = await this.appointmentsService.book(user.id, dto);
+    return { appointment };
+  }
+
+  /** Front-desk/admin booking on a patient's behalf -- overrides the class-level PATIENT-only role. */
+  @Post('admin')
+  @Roles(Role.ADMIN)
+  async bookForPatient(
+    @Body() dto: AdminBookAppointmentDto,
+  ): Promise<{ appointment: PatientAppointmentResponse }> {
+    const { patientId, ...rest } = dto;
+    const appointment = await this.appointmentsService.bookForPatient(patientId, rest);
     return { appointment };
   }
 

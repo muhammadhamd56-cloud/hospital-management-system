@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { LabTestStatus, NotificationType, Role } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { LabTestStatus, NotificationType, Role, StaffType } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,14 +32,16 @@ export class LaboratoryService {
   ) {}
 
   /**
-   * ADMIN/LAB_STAFF see every test -- lab staff serve the whole hospital.
-   * DOCTOR is scoped to patients they have a real relationship with (an
-   * appointment or chat message), matching PatientsService.scopedPatientIds
-   * -- NOT just tests they personally requested, since a treating doctor
-   * needs to see results for their patients regardless of which colleague
-   * ordered the test.
+   * ADMIN/lab-technician STAFF see every test -- lab staff serve the whole
+   * hospital. DOCTOR is scoped to patients they have a real relationship
+   * with (an appointment or chat message), matching
+   * PatientsService.scopedPatientIds -- NOT just tests they personally
+   * requested, since a treating doctor needs to see results for their
+   * patients regardless of which colleague ordered the test.
    */
   async findAll(caller: AuthenticatedUser): Promise<LabTestResponse[]> {
+    await this.requireLabAccess(caller);
+
     const where = caller.role === Role.DOCTOR ? await this.scopedPatientWhere(caller.id) : {};
 
     if (where === null) {
@@ -90,7 +92,9 @@ export class LaboratoryService {
   }
 
   /** Updates status/result; fires LAB_RESULT_READY to the patient and requesting doctor on the transition into COMPLETED. */
-  async updateStatus(id: string, dto: UpdateLabTestStatusDto): Promise<LabTestResponse> {
+  async updateStatus(caller: AuthenticatedUser, id: string, dto: UpdateLabTestStatusDto): Promise<LabTestResponse> {
+    await this.requireLabAccess(caller);
+
     const existing = await this.prisma.labTest.findUnique({ where: { id } });
 
     if (!existing) {
@@ -130,6 +134,25 @@ export class LaboratoryService {
     }
 
     return toLabTestResponse(updated as LabTestWithRelations);
+  }
+
+  /**
+   * ADMIN and DOCTOR always pass. A STAFF caller only passes when their
+   * linked roster row is specifically a lab technician -- Role.STAFF is
+   * shared by every non-doctor staff type now, so a receptionist or nurse
+   * holding that same login role must not get lab-test access just because
+   * the class-level @Roles(...) guard admits Role.STAFF in general.
+   */
+  private async requireLabAccess(caller: AuthenticatedUser): Promise<void> {
+    if (caller.role === Role.ADMIN || caller.role === Role.DOCTOR) {
+      return;
+    }
+
+    const staff = await this.prisma.staff.findUnique({ where: { userId: caller.id } });
+
+    if (!staff || staff.staffType !== StaffType.LAB_TECHNICIAN) {
+      throw new ForbiddenException('Only lab technicians can access laboratory tests');
+    }
   }
 
   private async requireOwnDoctorId(userId: string): Promise<string> {

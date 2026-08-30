@@ -1,33 +1,29 @@
 import { Role } from '@prisma/client';
 
 /**
- * The frontend's `ClientRole` type is lowercase/underscored ('lab_staff', not
- * 'LAB_STAFF'). Prisma's `Role` enum is uppercase to match standard Postgres
- * enum convention. This is the single seam between the two.
+ * The frontend's `ClientRole` type is lowercase ('staff', not 'STAFF').
+ * Prisma's `Role` enum is uppercase to match standard Postgres enum
+ * convention. This is the single seam between the two.
  *
  * Uses an explicit lookup table rather than blind .toUpperCase()/.toLowerCase()
- * case-conversion -- that worked while every role was a single word, but is a
- * silent footgun for multi-word roles (a stray dash vs. underscore mismatch
- * would round-trip to the wrong enum value with no type error).
+ * case-conversion -- a future multi-word role (a stray dash vs. underscore
+ * mismatch) would otherwise round-trip to the wrong enum value with no type
+ * error.
  */
-export type ClientRole = 'admin' | 'doctor' | 'patient' | 'receptionist' | 'lab_staff' | 'pharmacist';
+export type ClientRole = 'admin' | 'doctor' | 'patient' | 'staff';
 
 const CLIENT_TO_PRISMA: Record<ClientRole, Role> = {
   admin: Role.ADMIN,
   doctor: Role.DOCTOR,
   patient: Role.PATIENT,
-  receptionist: Role.RECEPTIONIST,
-  lab_staff: Role.LAB_STAFF,
-  pharmacist: Role.PHARMACIST,
+  staff: Role.STAFF,
 };
 
 const PRISMA_TO_CLIENT: Record<Role, ClientRole> = {
   [Role.ADMIN]: 'admin',
   [Role.DOCTOR]: 'doctor',
   [Role.PATIENT]: 'patient',
-  [Role.RECEPTIONIST]: 'receptionist',
-  [Role.LAB_STAFF]: 'lab_staff',
-  [Role.PHARMACIST]: 'pharmacist',
+  [Role.STAFF]: 'staff',
 };
 
 export function toClientRole(role: Role): ClientRole {

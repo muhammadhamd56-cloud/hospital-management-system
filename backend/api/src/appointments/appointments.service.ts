@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AppointmentStatus, NotificationType } from '@prisma/client';
+import { AppointmentStatus, NotificationType, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPrismaMode } from '../common/session.mapper';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -54,6 +54,19 @@ export class AppointmentsService {
     });
 
     return appointments.map(toPatientAppointmentResponse);
+  }
+
+  /** Front-desk/admin booking on a patient's behalf -- patientId comes from
+   *  the request body instead of the caller's own session, so unlike book()
+   *  it must be validated before use. */
+  async bookForPatient(patientId: string, dto: BookAppointmentDto): Promise<PatientAppointmentResponse> {
+    const patient = await this.prisma.user.findUnique({ where: { id: patientId } });
+
+    if (!patient || patient.role !== Role.PATIENT) {
+      throw new BadRequestException('Patient not found');
+    }
+
+    return this.book(patientId, dto);
   }
 
   async book(patientId: string, dto: BookAppointmentDto): Promise<PatientAppointmentResponse> {

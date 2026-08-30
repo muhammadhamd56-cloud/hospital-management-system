@@ -12,3 +12,22 @@ export function RoleRoute({ allow }: { allow: Role[] }) {
 
   return <Outlet />
 }
+
+/** Admin/doctor always pass. Role.STAFF is shared by every non-doctor staff
+ *  type, so a STAFF caller only passes when their linked roster row is
+ *  specifically a lab technician -- mirrors the backend's
+ *  LaboratoryService.requireLabAccess check. */
+export function LaboratoryRoute() {
+  const { user } = useAuth()
+
+  const allowed =
+    user?.role === 'admin' ||
+    user?.role === 'doctor' ||
+    (user?.role === 'staff' && user.staffType === 'lab_technician')
+
+  if (!allowed) {
+    return <Navigate to={ROUTES.dashboard} replace />
+  }
+
+  return <Outlet />
+}

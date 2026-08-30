@@ -5,9 +5,7 @@ const PAIRS: [ClientRole, Role][] = [
   ['admin', Role.ADMIN],
   ['doctor', Role.DOCTOR],
   ['patient', Role.PATIENT],
-  ['receptionist', Role.RECEPTIONIST],
-  ['lab_staff', Role.LAB_STAFF],
-  ['pharmacist', Role.PHARMACIST],
+  ['staff', Role.STAFF],
 ];
 
 describe('role.mapper', () => {

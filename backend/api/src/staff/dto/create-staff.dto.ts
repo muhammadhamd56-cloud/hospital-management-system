@@ -3,8 +3,11 @@ import { IsEmail, IsIn, IsInt, IsString, Max, Min, MinLength, ValidateIf } from 
 import { normalizeEmail } from '../../common/normalize-email';
 
 /** Roles an admin may provision directly. Never 'admin' (out-of-band only)
- *  or 'patient' (self-registers). */
-export type StaffRole = 'doctor' | 'receptionist' | 'lab_staff' | 'pharmacist';
+ *  or 'patient' (self-registers). 'staff' covers every non-doctor staff
+ *  member -- nurse, receptionist, pharmacist, lab technician, other -- which
+ *  specific one they are is set later via their Staff.staffType on the
+ *  scheduling roster, not here. */
+export type StaffRole = 'doctor' | 'staff';
 
 export class CreateStaffDto {
   @IsString()
@@ -19,7 +22,7 @@ export class CreateStaffDto {
   @IsEmail({}, { message: 'Enter a valid email address' })
   email!: string;
 
-  @IsIn(['doctor', 'receptionist', 'lab_staff', 'pharmacist'])
+  @IsIn(['doctor', 'staff'])
   role!: StaffRole;
 
   // Only required/validated when role is 'doctor' -- see StaffService.create.

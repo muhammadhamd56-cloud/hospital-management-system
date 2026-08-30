@@ -37,8 +37,13 @@ const CATEGORY_FILTER_OPTIONS = [
   ...LAB_TEST_CATEGORIES.map((category) => ({ label: category, value: category })),
 ]
 
-/** Roles allowed to progress a test's status -- matches @Roles(ADMIN, LAB_STAFF) on the backend. */
-const CAN_UPDATE_STATUS = new Set(['admin', 'lab_staff'])
+/** Who's allowed to progress a test's status -- matches
+ *  LaboratoryService.requireLabAccess on the backend: admin always, or a
+ *  STAFF user whose linked roster row is specifically a lab technician. */
+function canUpdateLabTestStatus(user: ReturnType<typeof useAuth>['user']): boolean {
+  if (!user) return false
+  return user.role === 'admin' || (user.role === 'staff' && user.staffType === 'lab_technician')
+}
 
 export function LaboratoryPage() {
   const { user } = useAuth()
@@ -85,7 +90,7 @@ export function LaboratoryPage() {
   }, [labTests, search, statusFilter, categoryFilter])
 
   const { page, totalPages, pageItems, setPage } = usePagination(filteredTests, PAGE_SIZE)
-  const canUpdateStatus = user ? CAN_UPDATE_STATUS.has(user.role) : false
+  const canUpdateStatus = canUpdateLabTestStatus(user)
 
   return (
     <div className="flex flex-col gap-6">
