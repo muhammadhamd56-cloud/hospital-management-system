@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAuth } from '@/features/auth/useAuth'
 import { AccountInfoForm } from '@/features/auth/AccountInfoForm'
 import { SetPasswordCard } from '@/features/auth/SetPasswordCard'
+import { MfaCard } from '@/features/mfa/MfaCard'
 import { DoctorProfileForm } from '@/features/doctorDashboard/DoctorProfileForm'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
@@ -50,6 +51,10 @@ export function DoctorSettingsPage() {
 
       <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
         <SetPasswordCard />
+      </div>
+
+      <div className="animate-fade-in" style={{ animationDelay: '90ms' }}>
+        <MfaCard />
       </div>
 
       <Card className="animate-fade-in" style={{ animationDelay: '120ms' }}>

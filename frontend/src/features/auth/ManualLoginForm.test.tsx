@@ -7,10 +7,11 @@ import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
 
 const mockLogin = vi.fn()
+const mockVerifyMfa = vi.fn()
 const mockNavigate = vi.fn()
 
 vi.mock('@/features/auth/useAuth', () => ({
-  useAuth: () => ({ login: mockLogin }),
+  useAuth: () => ({ login: mockLogin, verifyMfa: mockVerifyMfa }),
 }))
 
 vi.mock('react-router', async () => {
@@ -24,6 +25,7 @@ vi.mock('react-hot-toast', () => ({
 
 beforeEach(() => {
   mockLogin.mockReset()
+  mockVerifyMfa.mockReset()
   mockNavigate.mockReset()
   vi.mocked(toast.success).mockClear()
   vi.mocked(toast.error).mockClear()
@@ -54,7 +56,7 @@ describe('ManualLoginForm', () => {
   })
 
   it('calls login with the entered credentials and the default role, then navigates on success', async () => {
-    mockLogin.mockResolvedValue(undefined)
+    mockLogin.mockResolvedValue({ mfaRequired: false })
     const user = userEvent.setup()
     render(<ManualLoginForm />)
 
@@ -88,7 +90,11 @@ describe('ManualLoginForm', () => {
 
   it('disables the submit button while the login request is pending', async () => {
     let resolveLogin!: () => void
-    mockLogin.mockReturnValue(new Promise<void>((resolve) => (resolveLogin = resolve)))
+    mockLogin.mockReturnValue(
+      new Promise((resolve) => {
+        resolveLogin = () => resolve({ mfaRequired: false })
+      }),
+    )
     const user = userEvent.setup()
     render(<ManualLoginForm />)
 
@@ -101,5 +107,45 @@ describe('ManualLoginForm', () => {
 
     resolveLogin()
     await waitFor(() => expect(button).not.toBeDisabled())
+  })
+
+  it('shows an authentication-code step instead of navigating when login requires MFA, then completes sign-in on a correct code', async () => {
+    mockLogin.mockResolvedValue({ mfaRequired: true, mfaToken: 'challenge-token' })
+    mockVerifyMfa.mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(<ManualLoginForm />)
+
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test')
+    await user.type(screen.getByLabelText('Password'), 'longenough1')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    expect(await screen.findByLabelText('Authentication code')).toBeInTheDocument()
+    expect(mockNavigate).not.toHaveBeenCalled()
+
+    await user.type(screen.getByLabelText('Authentication code'), '123456')
+    await user.click(screen.getByRole('button', { name: /verify/i }))
+
+    await waitFor(() => expect(mockVerifyMfa).toHaveBeenCalledWith('challenge-token', '123456'))
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(ROUTES.dashboard))
+    expect(toast.success).toHaveBeenCalled()
+  })
+
+  it('shows the server error and stays on the code step when the MFA code is wrong', async () => {
+    mockLogin.mockResolvedValue({ mfaRequired: true, mfaToken: 'challenge-token' })
+    mockVerifyMfa.mockRejectedValue(new ApiError('Incorrect code', { status: 401 }))
+    const user = userEvent.setup()
+    render(<ManualLoginForm />)
+
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test')
+    await user.type(screen.getByLabelText('Password'), 'longenough1')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    await screen.findByLabelText('Authentication code')
+    await user.type(screen.getByLabelText('Authentication code'), '000000')
+    await user.click(screen.getByRole('button', { name: /verify/i }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Incorrect code'))
+    expect(mockNavigate).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Authentication code')).toBeInTheDocument()
   })
 })

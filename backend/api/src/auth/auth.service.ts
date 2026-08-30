@@ -18,11 +18,16 @@ import type { JwtPayload } from './types/jwt-payload.interface';
 import type { SignupDto } from './dto/signup.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { VerifyOtpDto } from './dto/verify-otp.dto';
+import type { ResetPasswordDto } from './dto/reset-password.dto';
 import { hashPassword, verifyPassword } from './password.util';
 
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
+
+const PASSWORD_RESET_EXPIRY_MINUTES = 15;
+const PASSWORD_RESET_RESEND_COOLDOWN_SECONDS = 60;
+const PASSWORD_RESET_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
@@ -246,6 +251,100 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  /**
+   * Always resolves the same way regardless of whether the email belongs to
+   * an account (or the resend cooldown is still active) — a "forgot
+   * password" endpoint that reveals account existence via its response is a
+   * classic enumeration vector, so the controller always returns the same
+   * generic message no matter what happens in here.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      this.logger.log(`Password reset requested for an email with no account: ${email}`);
+      return;
+    }
+
+    if (user.passwordResetLastSentAt) {
+      const secondsSinceLastSend = (Date.now() - user.passwordResetLastSentAt.getTime()) / 1000;
+      if (secondsSinceLastSend < PASSWORD_RESET_RESEND_COOLDOWN_SECONDS) {
+        return;
+      }
+    }
+
+    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const codeHash = await hashPassword(code);
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_MINUTES * 60_000);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetCodeHash: codeHash,
+        passwordResetExpiresAt: expiresAt,
+        passwordResetAttempts: 0,
+        passwordResetLastSentAt: new Date(),
+      },
+    });
+
+    try {
+      await this.emailService.sendPasswordResetEmail(user.email, code);
+    } catch (error) {
+      // Same reasoning as signupLocal's OTP send: the reset code is already
+      // committed, so a delivery failure doesn't change what the caller
+      // should be told (nothing, either way) -- just log it for ops.
+      this.logger.error(
+        `Password reset requested for ${user.email} but the email failed to send`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  /** Unlike requestPasswordReset, this DOES throw on a bad email/code/state
+   *  — by this point the caller already has a code, which only a real
+   *  account holder could have received, so there's nothing left to hide. */
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+    if (!user || !user.passwordResetCodeHash || !user.passwordResetExpiresAt) {
+      throw new BadRequestException('Invalid or expired reset code');
+    }
+
+    if (user.passwordResetAttempts >= PASSWORD_RESET_MAX_ATTEMPTS) {
+      throw new ForbiddenException('Too many incorrect attempts. Please request a new code.');
+    }
+
+    if (user.passwordResetExpiresAt.getTime() < Date.now()) {
+      throw new BadRequestException('This code has expired. Please request a new one.');
+    }
+
+    const isValid = await verifyPassword(dto.code, user.passwordResetCodeHash);
+
+    if (!isValid) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordResetAttempts: { increment: 1 } },
+      });
+      throw new UnauthorizedException('Incorrect code');
+    }
+
+    const password = await hashPassword(dto.newPassword);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password,
+        passwordResetCodeHash: null,
+        passwordResetExpiresAt: null,
+        passwordResetAttempts: 0,
+        passwordResetLastSentAt: null,
+        // A successful reset should also sign out every existing session --
+        // including an attacker's, if that's who has this account's inbox.
+        tokenVersion: { increment: 1 },
+      },
+    });
   }
 
   issueAccessToken(user: User): string {

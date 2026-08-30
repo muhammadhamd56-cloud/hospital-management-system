@@ -15,6 +15,7 @@ import { hashPassword } from './password.util';
 import type { SignupDto } from './dto/signup.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { VerifyOtpDto } from './dto/verify-otp.dto';
+import type { ResetPasswordDto } from './dto/reset-password.dto';
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -33,8 +34,15 @@ function buildUser(overrides: Partial<User> = {}): User {
     otpExpiresAt: null,
     otpAttempts: 0,
     otpLastSentAt: null,
+    passwordResetCodeHash: null,
+    passwordResetExpiresAt: null,
+    passwordResetAttempts: 0,
+    passwordResetLastSentAt: null,
     tokenVersion: 0,
     mustChangePassword: false,
+    mfaEnabled: false,
+    mfaSecret: null,
+    mfaBackupCodeHashes: [],
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -48,7 +56,7 @@ describe('AuthService', () => {
     $transaction: jest.Mock;
   };
   let jwtService: { sign: jest.Mock };
-  let emailService: { sendOtpEmail: jest.Mock };
+  let emailService: { sendOtpEmail: jest.Mock; sendPasswordResetEmail: jest.Mock };
   let tx: { user: { create: jest.Mock }; doctor: { create: jest.Mock }; department: { upsert: jest.Mock } };
 
   beforeEach(async () => {
@@ -64,7 +72,10 @@ describe('AuthService', () => {
     };
 
     jwtService = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
-    emailService = { sendOtpEmail: jest.fn().mockResolvedValue(undefined) };
+    emailService = {
+      sendOtpEmail: jest.fn().mockResolvedValue(undefined),
+      sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -371,6 +382,142 @@ describe('AuthService', () => {
       await service.resendOtp(email);
 
       expect(emailService.sendOtpEmail).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('requestPasswordReset', () => {
+    const email = 'ada@example.com';
+
+    it('resolves without error and never emails when the account does not exist -- must not reveal that', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.requestPasswordReset(email)).resolves.toBeUndefined();
+      expect(emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('resolves without error and never emails again when still within the resend cooldown', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ email, passwordResetLastSentAt: new Date() }));
+
+      await expect(service.requestPasswordReset(email)).resolves.toBeUndefined();
+      expect(emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+    });
+
+    it('generates a 6-digit code, stores its hash, and emails it once the cooldown has elapsed', async () => {
+      const user = buildUser({ email, passwordResetLastSentAt: new Date(Date.now() - 61_000) });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.update.mockResolvedValue(user);
+
+      await service.requestPasswordReset(email);
+
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      const updateArgs = prisma.user.update.mock.calls[0][0];
+      expect(updateArgs.data.passwordResetCodeHash).toBeDefined();
+      expect(updateArgs.data.passwordResetCodeHash).not.toMatch(/^\d{6}$/); // hashed, not the raw code
+      expect(updateArgs.data.passwordResetExpiresAt).toBeInstanceOf(Date);
+      expect(updateArgs.data.passwordResetAttempts).toBe(0);
+
+      expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+      const [to, code] = emailService.sendPasswordResetEmail.mock.calls[0];
+      expect(to).toBe(email);
+      expect(code).toMatch(/^\d{6}$/);
+    });
+
+    it('sends a code immediately when no reset has ever been requested before', async () => {
+      const user = buildUser({ email, passwordResetLastSentAt: null });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.update.mockResolvedValue(user);
+
+      await service.requestPasswordReset(email);
+
+      expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves without error even when the reset email fails to send -- the code is already committed', async () => {
+      const user = buildUser({ email, passwordResetLastSentAt: null });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.update.mockResolvedValue(user);
+      emailService.sendPasswordResetEmail.mockRejectedValue(new Error('Resend rejected the recipient'));
+
+      await expect(service.requestPasswordReset(email)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('resetPassword', () => {
+    const email = 'ada@example.com';
+    const dto: ResetPasswordDto = { email, code: '123456', newPassword: 'longenough2' };
+
+    async function resetUser(rawCode: string, overrides: Partial<User> = {}) {
+      const passwordResetCodeHash = await hashPassword(rawCode);
+      return buildUser({
+        email,
+        passwordResetCodeHash,
+        passwordResetExpiresAt: new Date(Date.now() + 15 * 60_000),
+        passwordResetAttempts: 0,
+        ...overrides,
+      });
+    }
+
+    it('throws BadRequestException when the account does not exist', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws BadRequestException when no reset was ever requested', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ email, passwordResetCodeHash: null, passwordResetExpiresAt: null }),
+      );
+
+      await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws ForbiddenException after the max number of incorrect attempts', async () => {
+      const user = await resetUser('123456', { passwordResetAttempts: 5 });
+      prisma.user.findUnique.mockResolvedValue(user);
+
+      await expect(service.resetPassword({ ...dto, code: '999999' })).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('throws BadRequestException when the code has expired', async () => {
+      const user = await resetUser('123456', { passwordResetExpiresAt: new Date(Date.now() - 1000) });
+      prisma.user.findUnique.mockResolvedValue(user);
+
+      await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws UnauthorizedException and increments attempts on an incorrect code', async () => {
+      const user = await resetUser('123456');
+      prisma.user.findUnique.mockResolvedValue(user);
+
+      await expect(service.resetPassword({ ...dto, code: '000000' })).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: user.id },
+        data: { passwordResetAttempts: { increment: 1 } },
+      });
+    });
+
+    it('sets the new hashed password, clears reset fields, and bumps tokenVersion on a correct code', async () => {
+      const user = await resetUser('123456');
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.update.mockResolvedValue(buildUser({ email }));
+
+      await service.resetPassword(dto);
+
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      const updateArgs = prisma.user.update.mock.calls[0][0];
+      expect(updateArgs.where).toEqual({ id: user.id });
+      expect(updateArgs.data.password).not.toBe('longenough2'); // hashed, not plaintext
+      expect(updateArgs.data.passwordResetCodeHash).toBeNull();
+      expect(updateArgs.data.passwordResetExpiresAt).toBeNull();
+      expect(updateArgs.data.passwordResetAttempts).toBe(0);
+      expect(updateArgs.data.passwordResetLastSentAt).toBeNull();
+      expect(updateArgs.data.tokenVersion).toEqual({ increment: 1 });
     });
   });
 

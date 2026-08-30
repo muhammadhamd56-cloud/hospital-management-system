@@ -116,7 +116,7 @@ describe('SignupDto', () => {
       expect(fieldErrors(errors, 'role')).toBeDefined();
     });
 
-    it.each(['doctor', 'patient'])('accepts role %p', async (role) => {
+    it.each(['doctor', 'patient', 'staff'])('accepts role %p', async (role) => {
       const payload = role === 'doctor' ? { ...VALID_DOCTOR, role } : { ...VALID_PATIENT, role };
       const errors = await errorsFor(payload);
       expect(fieldErrors(errors, 'role')).toBeUndefined();

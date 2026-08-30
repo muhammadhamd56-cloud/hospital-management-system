@@ -82,6 +82,73 @@ describe('EmailService', () => {
         await expect(service.sendOtpEmail('ada@example.com', '123456')).rejects.toThrow('network error');
       });
     });
+
+    describe('sendAppointmentReminderEmail', () => {
+      const params = {
+        patientName: 'Ada Lovelace',
+        doctorName: 'Grace Hopper',
+        scheduledAt: new Date('2026-09-01T14:30:00.000Z'),
+        mode: 'online' as const,
+      };
+
+      it('sends a reminder email via Resend with the recipient, subject, and appointment details embedded', async () => {
+        mockSend.mockResolvedValue({ data: { id: 'email-2' }, error: null });
+
+        await service.sendAppointmentReminderEmail('ada@example.com', params);
+
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        const payload = mockSend.mock.calls[0][0];
+        expect(payload.from).toBe('no-reply@medicore.test');
+        expect(payload.to).toBe('ada@example.com');
+        expect(payload.subject).toBe('Reminder: your upcoming MediCore appointment');
+        expect(payload.html).toContain('Ada Lovelace');
+        expect(payload.html).toContain('Grace Hopper');
+      });
+
+      it('resolves without throwing when Resend returns an error — a bad recipient must not fail the batch job', async () => {
+        mockSend.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'Invalid recipient' } });
+
+        await expect(service.sendAppointmentReminderEmail('ada@example.com', params)).resolves.toBeUndefined();
+      });
+
+      it('resolves without throwing when the Resend call itself rejects', async () => {
+        mockSend.mockRejectedValue(new Error('network error'));
+
+        await expect(service.sendAppointmentReminderEmail('ada@example.com', params)).resolves.toBeUndefined();
+      });
+    });
+
+    describe('sendPasswordResetEmail', () => {
+      it('sends a reset email via Resend with the recipient, subject, and code embedded in the html', async () => {
+        mockSend.mockResolvedValue({ data: { id: 'email-3' }, error: null });
+
+        await service.sendPasswordResetEmail('ada@example.com', '654321');
+
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        const payload = mockSend.mock.calls[0][0];
+        expect(payload.from).toBe('no-reply@medicore.test');
+        expect(payload.to).toBe('ada@example.com');
+        expect(payload.subject).toBe('Reset your MediCore password');
+        expect(payload.html).toContain('654321');
+      });
+
+      it('throws InternalServerErrorException when Resend returns an error', async () => {
+        mockSend.mockResolvedValue({
+          data: null,
+          error: { name: 'validation_error', message: 'Invalid recipient' },
+        });
+
+        await expect(service.sendPasswordResetEmail('ada@example.com', '654321')).rejects.toBeInstanceOf(
+          InternalServerErrorException,
+        );
+      });
+
+      it('throws when the Resend call itself rejects', async () => {
+        mockSend.mockRejectedValue(new Error('network error'));
+
+        await expect(service.sendPasswordResetEmail('ada@example.com', '654321')).rejects.toThrow('network error');
+      });
+    });
   });
 
   describe('when RESEND_API_KEY is not configured', () => {
@@ -98,6 +165,23 @@ describe('EmailService', () => {
 
     it('degrades to logging the code instead of throwing, and never calls Resend', async () => {
       await expect(service.sendOtpEmail('ada@example.com', '123456')).resolves.toBeUndefined();
+      expect(mockSend).not.toHaveBeenCalled();
+    });
+
+    it('degrades to logging instead of emailing an appointment reminder', async () => {
+      await expect(
+        service.sendAppointmentReminderEmail('ada@example.com', {
+          patientName: 'Ada Lovelace',
+          doctorName: 'Grace Hopper',
+          scheduledAt: new Date('2026-09-01T14:30:00.000Z'),
+          mode: 'online',
+        }),
+      ).resolves.toBeUndefined();
+      expect(mockSend).not.toHaveBeenCalled();
+    });
+
+    it('degrades to logging instead of emailing a password reset code', async () => {
+      await expect(service.sendPasswordResetEmail('ada@example.com', '654321')).resolves.toBeUndefined();
       expect(mockSend).not.toHaveBeenCalled();
     });
   });

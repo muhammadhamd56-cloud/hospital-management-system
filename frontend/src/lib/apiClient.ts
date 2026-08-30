@@ -18,6 +18,15 @@ export function clearAccessToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
+type UnauthorizedHandler = () => void
+let unauthorizedHandler: UnauthorizedHandler | null = null
+
+/** AuthProvider registers this once, so an expired/revoked token can clear the
+ *  session from here without apiClient needing React context. */
+export function onUnauthorized(handler: UnauthorizedHandler): void {
+  unauthorizedHandler = handler
+}
+
 export class ApiError extends Error {
   status: number
   errors: string[]
@@ -53,6 +62,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const body = (await res.json().catch(() => null)) as ApiEnvelope<T> | null
 
   if (!res.ok || !body?.success) {
+    // Only an already-authenticated request being rejected means the session
+    // itself is invalid -- a 401 with no token attached is just a normal auth
+    // failure (e.g. wrong login password), not an expired session.
+    if (res.status === 401 && token) {
+      unauthorizedHandler?.()
+    }
+
     throw new ApiError(body?.message ?? 'Request failed', {
       status: res.status,
       errors: body?.errors,

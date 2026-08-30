@@ -47,6 +47,10 @@ export class UserResponseDto {
   @Expose()
   mustChangePassword!: boolean;
 
+  /** Whether TOTP-based two-factor auth is currently turned on. */
+  @Expose()
+  mfaEnabled!: boolean;
+
   constructor(user: User) {
     this.id = user.id;
     this.email = user.email;
@@ -60,5 +64,6 @@ export class UserResponseDto {
     this.hasPassword = user.password !== null;
     this.emailVerified = user.emailVerified;
     this.mustChangePassword = user.mustChangePassword;
+    this.mfaEnabled = user.mfaEnabled;
   }
 }

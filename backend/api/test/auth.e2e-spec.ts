@@ -74,8 +74,8 @@ describe('Auth (e2e)', () => {
 
   const server = () => app.getHttpServer();
 
-  function tokenFor(userId: string, email: string, role: Role): string {
-    return jwtService.sign({ sub: userId, email, role });
+  function tokenFor(userId: string, email: string, role: Role, tokenVersion = 0): string {
+    return jwtService.sign({ sub: userId, email, role, tokenVersion });
   }
 
   const validPatient = {
@@ -379,6 +379,115 @@ describe('Auth (e2e)', () => {
     });
   });
 
+  describe('MFA (two-factor authentication)', () => {
+    it('full lifecycle: setup requires a valid code to confirm, enables login-gating, accepts a TOTP or backup code, and can be disabled', async () => {
+      const { token } = await signupAndVerify({ ...validPatient, email: 'mfa-user@example.test' });
+
+      // Setup: get a secret + QR code.
+      const setupRes = await request(server())
+        .post('/api/users/me/mfa/setup')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+
+      const { secret, qrCodeDataUrl } = setupRes.body.data;
+      expect(typeof secret).toBe('string');
+      expect(qrCodeDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+
+      // Confirm: wrong code is rejected, MFA stays off.
+      await request(server())
+        .post('/api/users/me/mfa/confirm')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: '000000' })
+        .expect(401);
+
+      // Confirm: correct code enables MFA and returns 8 one-time backup codes.
+      const { generate } = await import('otplib');
+      const validCode = await generate({ secret });
+
+      const confirmRes = await request(server())
+        .post('/api/users/me/mfa/confirm')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: validCode })
+        .expect(201);
+
+      const backupCodes: string[] = confirmRes.body.data.backupCodes;
+      expect(backupCodes).toHaveLength(8);
+
+      const meAfterConfirm = await request(server())
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(meAfterConfirm.body.data.mfaEnabled).toBe(true);
+
+      // Login now returns an MFA challenge instead of a real token.
+      const loginRes = await request(server())
+        .post('/api/auth/login')
+        .send({ email: 'mfa-user@example.test', password: validPatient.password, role: 'patient' })
+        .expect(201);
+
+      expect(loginRes.body.data.mfaRequired).toBe(true);
+      const mfaToken = loginRes.body.data.mfaToken;
+      expect(typeof mfaToken).toBe('string');
+
+      // A wrong code at the verify step is rejected.
+      await request(server())
+        .post('/api/auth/mfa/verify')
+        .send({ mfaToken, code: '000000' })
+        .expect(401);
+
+      // The correct TOTP code completes login with a real, usable token.
+      const freshCode = await generate({ secret });
+      const verifyRes = await request(server())
+        .post('/api/auth/mfa/verify')
+        .send({ mfaToken, code: freshCode })
+        .expect(201);
+
+      const realToken = verifyRes.body.data.token;
+      await request(server())
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${realToken}`)
+        .expect(200);
+
+      // A backup code also completes login, and is consumed (single-use).
+      const secondLoginRes = await request(server())
+        .post('/api/auth/login')
+        .send({ email: 'mfa-user@example.test', password: validPatient.password, role: 'patient' })
+        .expect(201);
+      const secondMfaToken = secondLoginRes.body.data.mfaToken;
+
+      await request(server())
+        .post('/api/auth/mfa/verify')
+        .send({ mfaToken: secondMfaToken, code: backupCodes[0] })
+        .expect(201);
+
+      await request(server())
+        .post('/api/auth/mfa/verify')
+        .send({ mfaToken: secondMfaToken, code: backupCodes[0] })
+        .expect(401);
+
+      // Disable: wrong password is rejected, MFA stays on.
+      await request(server())
+        .post('/api/users/me/mfa/disable')
+        .set('Authorization', `Bearer ${realToken}`)
+        .send({ password: 'wrong-password' })
+        .expect(401);
+
+      // Disable: correct password turns MFA off, login returns a real token again.
+      await request(server())
+        .post('/api/users/me/mfa/disable')
+        .set('Authorization', `Bearer ${realToken}`)
+        .send({ password: validPatient.password })
+        .expect(204);
+
+      const loginAfterDisable = await request(server())
+        .post('/api/auth/login')
+        .send({ email: 'mfa-user@example.test', password: validPatient.password, role: 'patient' })
+        .expect(201);
+      expect(loginAfterDisable.body.data.mfaRequired).toBeUndefined();
+      expect(typeof loginAfterDisable.body.data.token).toBe('string');
+    });
+  });
+
   describe('GET /api/users/me (JwtAuthGuard)', () => {
     it('rejects with 401 when no Authorization header is sent', async () => {
       await request(server()).get('/api/users/me').expect(401);
@@ -426,10 +535,13 @@ describe('Auth (e2e)', () => {
       expect(first.body.data.role).toBe('doctor');
       expect(first.body.data.roleSelected).toBe(true);
 
+      // A second attempt is forbidden regardless of which (valid) role is
+      // requested -- 'admin' isn't used here since SelectRoleDto already
+      // rejects it as an invalid enum value (400) before this check runs.
       await request(server())
         .patch('/api/users/me/role')
         .set('Authorization', `Bearer ${token}`)
-        .send({ role: 'admin' })
+        .send({ role: 'patient' })
         .expect(403);
     });
   });
@@ -826,18 +938,29 @@ describe('Auth (e2e)', () => {
     });
 
     it('regression: deleting a patient who occupies a bed releases it back to available instead of leaving it stuck occupied', async () => {
-      const { token: adminToken } = await signupAndVerify({
-        ...validPatient,
-        email: 'bed-admin@example.test',
-        role: 'admin',
+      // Admin self-signup is deliberately blocked (see SignupDto) -- admins
+      // are provisioned out-of-band, so this test creates one directly.
+      const admin = await prisma.user.create({
+        data: {
+          email: 'bed-admin@example.test',
+          firstName: 'Bed',
+          lastName: 'Admin',
+          role: Role.ADMIN,
+          roleSelected: true,
+          emailVerified: true,
+        },
       });
+      const adminToken = tokenFor(admin.id, admin.email, admin.role);
       const { token: patientToken, email: patientEmail } = await signupAndVerify({
         ...validPatient,
         email: 'bed-patient@example.test',
       });
 
       const bed = await prisma.bed.create({
-        data: { label: 'Ward 1 - Bed 1', department: 'General Medicine' },
+        data: {
+          label: 'Ward 1 - Bed 1',
+          department: { connectOrCreate: { where: { name: 'General Medicine' }, create: { name: 'General Medicine' } } },
+        },
       });
       const patient = await prisma.user.findUniqueOrThrow({ where: { email: patientEmail } });
 

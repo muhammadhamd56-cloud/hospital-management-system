@@ -83,7 +83,7 @@ export function ManualSignupForm() {
   return (
     <form className="flex w-full flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
       <RoleSelector roles={AUTH_ROLES} value={role} onChange={setRole} />
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
         <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />
       </div>
@@ -95,7 +95,7 @@ export function ManualSignupForm() {
         error={errors.email?.message}
         {...register('email')}
       />
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Input
           label="Password"
           type="password"

@@ -22,7 +22,7 @@ export class SignupDto {
 
   // 'admin' is deliberately excluded — admin accounts are provisioned out-of-band,
   // never through self-signup.
-  @IsIn(['doctor', 'patient'])
+  @IsIn(['doctor', 'patient', 'staff'])
   role!: ClientRole;
 
   // Only required/validated when role is 'doctor' -- see AuthService.signupLocal.
