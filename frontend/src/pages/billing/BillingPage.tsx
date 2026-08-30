@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, ReceiptText, CheckCircle2, Clock, AlertTriangle } from 'lucide-react'
+import { Search, ReceiptText, CheckCircle2, Clock, AlertTriangle, ListOrdered } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -21,6 +21,7 @@ import { formatCurrency } from '@/utils/currency'
 import { listInvoices, markInvoicePaid } from '@/features/billing/api'
 import { InvoiceStatusBadge } from '@/features/billing/InvoiceStatusBadge'
 import { CreateInvoiceModal } from '@/features/billing/CreateInvoiceModal'
+import { InvoiceItemsModal } from '@/features/billing/InvoiceItemsModal'
 import { ApiError } from '@/lib/apiClient'
 import type { Invoice, InvoiceStatus } from '@/types/invoice'
 
@@ -43,6 +44,7 @@ export function BillingPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'all'>('all')
   const [isCreateOpen, setCreateOpen] = useState(false)
+  const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null)
 
   useEffect(() => {
     listInvoices()
@@ -161,6 +163,9 @@ export function BillingPage() {
                   <TableCell>{invoice.patientName}</TableCell>
                   <TableCell className="max-w-56 truncate" title={invoice.description}>
                     {invoice.description}
+                    <span className="ml-1 text-xs text-ink-muted">
+                      ({invoice.items.length} item{invoice.items.length === 1 ? '' : 's'})
+                    </span>
                   </TableCell>
                   <TableCell>{formatCurrency(invoice.amount)}</TableCell>
                   <TableCell>{formatDate(invoice.dueDate)}</TableCell>
@@ -168,11 +173,21 @@ export function BillingPage() {
                     <InvoiceStatusBadge status={invoice.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    {invoice.status !== 'paid' && (
-                      <Button size="sm" variant="secondary" onClick={() => handleMarkPaid(invoice)}>
-                        Mark as paid
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        aria-label="View line items"
+                        onClick={() => setViewingInvoice(invoice)}
+                      >
+                        <ListOrdered className="size-4" aria-hidden="true" />
                       </Button>
-                    )}
+                      {invoice.status !== 'paid' && (
+                        <Button size="sm" variant="secondary" onClick={() => handleMarkPaid(invoice)}>
+                          Mark as paid
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -193,6 +208,8 @@ export function BillingPage() {
         onClose={() => setCreateOpen(false)}
         onCreate={(invoice) => setInvoices((current) => [invoice, ...current])}
       />
+
+      <InvoiceItemsModal invoice={viewingInvoice} onClose={() => setViewingInvoice(null)} />
     </div>
   )
 }

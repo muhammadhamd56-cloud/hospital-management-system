@@ -43,6 +43,18 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   RESEND_FROM_EMAIL?: string;
+
+  /** Optional so the app still boots without it — StripeService throws a
+   *  clear error only when a patient actually tries to pay online. */
+  @IsOptional()
+  @IsString()
+  STRIPE_SECRET_KEY?: string;
+
+  /** Verifies webhook requests are really from Stripe. Required alongside
+   *  STRIPE_SECRET_KEY for online payments to actually confirm as paid. */
+  @IsOptional()
+  @IsString()
+  STRIPE_WEBHOOK_SECRET?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {

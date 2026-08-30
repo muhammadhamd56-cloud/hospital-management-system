@@ -14,6 +14,10 @@ export interface AppConfig {
     resendApiKey: string | undefined;
     fromEmail: string;
   };
+  stripe: {
+    secretKey: string | undefined;
+    webhookSecret: string | undefined;
+  };
 }
 
 export default (): AppConfig => ({
@@ -31,5 +35,9 @@ export default (): AppConfig => ({
   email: {
     resendApiKey: process.env.RESEND_API_KEY,
     fromEmail: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
+  },
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
   },
 });
