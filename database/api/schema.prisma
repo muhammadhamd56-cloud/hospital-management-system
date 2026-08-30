@@ -12,71 +12,121 @@ enum Role {
   ADMIN
   DOCTOR
   PATIENT
-  RECEPTIONIST
-  LAB_STAFF
-  PHARMACIST
+  /** Umbrella login role for every non-doctor staff member -- nurse,
+   *  receptionist, pharmacist, lab technician, other. Which specific job
+   *  they do is on their linked Staff.staffType, not this role -- see
+   *  StaffPortalController and LaboratoryService.requireLabAccess. */
+  STAFF
 }
 
 model User {
-  id        String   @id @default(cuid())
-  /** Null for accounts created via manual email/password signup. */
-  googleId  String?  @unique
-  email     String   @unique
-  /** Null for accounts created via Google — they have nothing to compare against. */
-  password  String?
-  firstName String
-  lastName  String
-  phone     String?
-  picture   String?
-  role      Role     @default(PATIENT)
-  /** True once the user has completed the one-time post-signup role picker
-   *  (Google flow) or explicitly chosen a role at manual signup. */
-  roleSelected Boolean @default(false)
-  /** Google accounts are verified by Google itself at signup. Local
-   *  accounts start false and must complete OTP email verification. */
-  emailVerified Boolean @default(false)
-  /** Hashed 6-digit OTP for email verification. Null once verified or if
-   *  no code has been requested yet. */
-  otpCodeHash   String?
-  otpExpiresAt  DateTime?
-  otpAttempts   Int       @default(0)
-  otpLastSentAt DateTime?
-  /** Bumped on logout so previously issued JWTs (which embed the version
-   *  at issue time) stop passing JwtStrategy.validate() immediately. */
-  tokenVersion Int @default(0)
-  /** True for accounts an admin just provisioned with a server-generated temp
-   *  password -- forces a password change via the existing set-password flow
-   *  before the account can do anything else. */
-  mustChangePassword Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                      String    @id @default(cuid())
+  /**
+   * Null for accounts created via manual email/password signup.
+   */
+  googleId                String?   @unique
+  email                   String    @unique
+  /**
+   * Null for accounts created via Google — they have nothing to compare against.
+   */
+  password                String?
+  firstName               String
+  lastName                String
+  phone                   String?
+  picture                 String?
+  role                    Role      @default(PATIENT)
+  /**
+   * True once the user has completed the one-time post-signup role picker
+   * (Google flow) or explicitly chosen a role at manual signup.
+   */
+  roleSelected            Boolean   @default(false)
+  /**
+   * Google accounts are verified by Google itself at signup. Local
+   * accounts start false and must complete OTP email verification.
+   */
+  emailVerified           Boolean   @default(false)
+  /**
+   * Hashed 6-digit OTP for email verification. Null once verified or if
+   * no code has been requested yet.
+   */
+  otpCodeHash             String?
+  otpExpiresAt            DateTime?
+  otpAttempts             Int       @default(0)
+  otpLastSentAt           DateTime?
+  /**
+   * Hashed 6-digit code for a pending "forgot password" request. Kept
+   * separate from the signup-verification OTP fields above -- unrelated
+   * flows; one completing shouldn't consume or invalidate the other.
+   */
+  passwordResetCodeHash   String?
+  passwordResetExpiresAt  DateTime?
+  passwordResetAttempts   Int       @default(0)
+  passwordResetLastSentAt DateTime?
+  /**
+   * Bumped on logout so previously issued JWTs (which embed the version
+   * at issue time) stop passing JwtStrategy.validate() immediately.
+   */
+  tokenVersion            Int       @default(0)
+  /**
+   * True for accounts an admin just provisioned with a server-generated temp
+   * password -- forces a password change via the existing set-password flow
+   * before the account can do anything else.
+   */
+  mustChangePassword      Boolean   @default(false)
+  /**
+   * TOTP-based two-factor auth, opt-in for admin/doctor. mfaSecret is the
+   * base32 shared secret (set as soon as setup starts, kept even before
+   * confirmation so a user can retry scanning the QR code without
+   * regenerating it -- mfaEnabled only flips true once a correct code is
+   * confirmed). mfaBackupCodeHashes are single-use recovery codes, hashed
+   * the same way as a password; each is removed from the array on use.
+   */
+  mfaEnabled              Boolean   @default(false)
+  mfaSecret               String?
+  mfaBackupCodeHashes     String[]  @default([])
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
-  doctorProfile Doctor?
-  appointments  Appointment[]
-  chatMessages  ChatMessage[]
-  beds          Bed[]
-  invoices      Invoice[]
-  notifications Notification[]
-  medicalRecords MedicalRecord[]
-  auditLogs      AuditLog[]
-  labTests         LabTest[] @relation("LabTestPatient")
-  assignedLabTests LabTest[] @relation("LabTestAssignee")
+  doctorProfile              Doctor?
+  appointments               Appointment[]
+  chatMessages               ChatMessage[]
+  beds                       Bed[]
+  invoices                   Invoice[]
+  notifications              Notification[]
+  medicalRecords             MedicalRecord[]
+  auditLogs                  AuditLog[]
+  labTests                   LabTest[]          @relation("LabTestPatient")
+  assignedLabTests           LabTest[]          @relation("LabTestAssignee")
+  staffProfile               Staff?
+  createdStaffShifts         StaffShift[]       @relation("StaffShiftCreatedBy")
+  createdShiftOpenings       ShiftOpening[]     @relation("ShiftOpeningCreatedBy")
+  respondedShiftApplications ShiftApplication[] @relation("ShiftApplicationRespondedBy")
+  assignedTasks              Task[]             @relation("TaskAssignedBy")
+  announcements              Announcement[]
 
   @@index([role])
 }
 
-/** Ward/specialty a Doctor or Bed belongs to (e.g. Cardiology, Emergency). */
+/**
+ * Ward/specialty a Doctor or Bed belongs to (e.g. Cardiology, Emergency).
+ */
 model Department {
   id          String   @id @default(cuid())
   name        String   @unique
   description String?
   createdAt   DateTime @default(now())
 
-  doctors Doctor[]
-  beds    Bed[]
+  doctors       Doctor[]
+  beds          Bed[]
+  staff         Staff[]
+  staffShifts   StaffShift[]
+  shiftOpenings ShiftOpening[]
+  tasks         Task[]
 }
 
-/** Doctor-specific profile fields, collected at manual signup when role = DOCTOR. */
+/**
+ * Doctor-specific profile fields, collected at manual signup when role = DOCTOR.
+ */
 model Doctor {
   id              String   @id @default(cuid())
   specialization  String
@@ -93,10 +143,10 @@ model Doctor {
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id])
 
-  appointments    Appointment[]
-  chatMessages    ChatMessage[]
-  medicalRecords  MedicalRecord[]
-  labTests        LabTest[]
+  appointments   Appointment[]
+  chatMessages   ChatMessage[]
+  medicalRecords MedicalRecord[]
+  labTests       LabTest[]
 
   @@index([departmentId])
 }
@@ -124,6 +174,12 @@ model Appointment {
   reason      String
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+
+  /**
+   * Stamped once the reminder cron emails/notifies the patient, so a
+   * SCHEDULED appointment inside the reminder window is only reminded once.
+   */
+  reminderSentAt DateTime?
 
   medicalRecord MedicalRecord?
 }
@@ -171,6 +227,11 @@ enum InvoiceStatus {
   PAID
 }
 
+/**
+ * amount is the sum of this invoice's InvoiceItem rows, computed and
+ * stored at write time -- reports/revenue queries read it directly
+ * instead of re-summing items on every read.
+ */
 model Invoice {
   id          String        @id @default(cuid())
   description String
@@ -180,16 +241,52 @@ model Invoice {
   paidAt      DateTime?
   createdAt   DateTime      @default(now())
 
+  /**
+   * Set when a patient starts an online payment (Stripe Checkout Session
+   * id). Lets the webhook handler confirm a `checkout.session.completed`
+   * event belongs to THIS invoice's most recent attempt -- without it, a
+   * stale/replayed webhook for an abandoned earlier session could
+   * incorrectly mark the invoice paid.
+   */
+  stripeCheckoutSessionId String? @unique
+
   patientId String
   patient   User   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  items InvoiceItem[]
+}
+
+/**
+ * One billable line on an Invoice (e.g. "Consultation" x1 @ $150).
+ */
+model InvoiceItem {
+  id        String  @id @default(cuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  description String
+  quantity    Int    @default(1)
+  unitPrice   Float
+
+  @@index([invoiceId])
 }
 
 enum NotificationType {
   APPOINTMENT_BOOKED
   APPOINTMENT_CANCELLED
+  APPOINTMENT_REMINDER
   CHAT_MESSAGE
   MEDICAL_RECORD_ADDED
   LAB_RESULT_READY
+  SHIFT_SCHEDULED
+  SHIFT_UPDATED
+  SHIFT_CANCELLED
+  SHIFT_APPLICATION_APPROVED
+  SHIFT_APPLICATION_REJECTED
+  TASK_ASSIGNED
+  TASK_DUE_SOON
+  TASK_OVERDUE
+  ANNOUNCEMENT_PUBLISHED
 }
 
 model Notification {
@@ -207,16 +304,20 @@ model Notification {
   @@index([userId, createdAt])
 }
 
-/** A clinical note a doctor writes for a patient, optionally tied to the
- *  appointment it came out of. Holds the prescriptions issued alongside it. */
+/**
+ * A clinical note a doctor writes for a patient, optionally tied to the
+ * appointment it came out of. Holds the prescriptions issued alongside it.
+ */
 model MedicalRecord {
-  id        String   @id @default(cuid())
+  id        String @id @default(cuid())
   patientId String
-  patient   User     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient   User   @relation(fields: [patientId], references: [id], onDelete: Cascade)
   doctorId  String
-  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctor    Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 
-  /** Optional -- a record can also be created outside of a booked appointment. */
+  /**
+   * Optional -- a record can also be created outside of a booked appointment.
+   */
   appointmentId String?      @unique
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 
@@ -231,9 +332,11 @@ model MedicalRecord {
   @@index([doctorId])
 }
 
-/** One prescribed medication belonging to a MedicalRecord. A record can carry several. */
+/**
+ * One prescribed medication belonging to a MedicalRecord. A record can carry several.
+ */
 model Prescription {
-  id              String   @id @default(cuid())
+  id              String        @id @default(cuid())
   medicalRecordId String
   medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
 
@@ -261,25 +364,27 @@ enum LabTestStatus {
   COMPLETED
 }
 
-/** A lab test requested for a patient by a doctor, optionally assigned to a
- *  LAB_STAFF user to process. assignedToId is SetNull (not Cascade) so
- *  removing a lab tech's account doesn't destroy test history -- same
- *  reasoning as Bed.patientId. */
+/**
+ * A lab test requested for a patient by a doctor, optionally assigned to a
+ * STAFF user (specifically one whose Staff.staffType is lab_technician) to
+ * process. assignedToId is SetNull (not Cascade) so removing a lab tech's
+ * account doesn't destroy test history -- same reasoning as Bed.patientId.
+ */
 model LabTest {
-  id        String   @id @default(cuid())
+  id        String @id @default(cuid())
   patientId String
-  patient   User     @relation("LabTestPatient", fields: [patientId], references: [id], onDelete: Cascade)
+  patient   User   @relation("LabTestPatient", fields: [patientId], references: [id], onDelete: Cascade)
   doctorId  String
-  doctor    Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctor    Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 
   assignedToId String?
   assignedTo   User?   @relation("LabTestAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
 
   testName      String
   category      LabTestCategory
-  status        LabTestStatus @default(PENDING)
+  status        LabTestStatus   @default(PENDING)
   resultSummary String?
-  requestedAt   DateTime      @default(now())
+  requestedAt   DateTime        @default(now())
   completedAt   DateTime?
 
   @@index([patientId])
@@ -287,30 +392,336 @@ model LabTest {
   @@index([assignedToId])
 }
 
-enum MedicineCategory {
-  ANALGESIC
-  ANTIBIOTIC
-  ANTIVIRAL
-  CARDIOVASCULAR
-  GASTROINTESTINAL
-  RESPIRATORY
-  VITAMINS_SUPPLEMENTS
+enum StaffType {
+  DOCTOR
+  NURSE
+  RECEPTIONIST
+  PHARMACIST
+  LAB_TECHNICIAN
+  OTHER
 }
 
-/** Pure inventory -- not linked to Prescription in this pass; real
- *  prescription-fulfillment-against-inventory is a bigger scope, deferred. */
-model Medicine {
-  id         String           @id @default(cuid())
-  name       String
-  category   MedicineCategory
-  stock      Int
-  unit       String
-  price      Float
-  expiryDate DateTime
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
+enum ShiftType {
+  MORNING
+  EVENING
+  NIGHT
+  CUSTOM
+}
 
-  @@index([category])
+enum ShiftStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  ABSENT
+}
+
+/**
+ * A person schedulable for shifts. staffType categorizes for scheduling
+ * purposes (broader than the auth Role enum). Where a login account
+ * already exists (Doctor, Lab Technician) userId links to it -- no
+ * duplicate identity is created. Other types (Nurse, Receptionist,
+ * Pharmacist, Other) are name-only roster entries -- this system doesn't
+ * provision login accounts for them.
+ */
+model Staff {
+  id        String    @id @default(cuid())
+  staffType StaffType
+  fullName  String
+  email     String?   @unique
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  shifts       StaffShift[]
+  availability StaffAvailability[]
+  leave        StaffLeave[]
+  attendance   Attendance[]
+  applications ShiftApplication[]
+  tasks        Task[]
+
+  @@index([staffType])
+  @@index([departmentId])
+}
+
+/**
+ * An admin-scheduled work shift for one staff member. Multiple staff
+ * assigned to what the UI presents as "the same shift" (e.g. an Emergency
+ * Night Shift covered by 4 people) are separate rows sharing groupId --
+ * keeps conflict detection, status, and attendance simple and per-person.
+ */
+model StaffShift {
+  id           String      @id @default(cuid())
+  staffId      String
+  staff        Staff       @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  date         DateTime
+  startTime    DateTime
+  endTime      DateTime
+  shiftType    ShiftType
+  status       ShiftStatus @default(SCHEDULED)
+  notes        String?
+  groupId      String?
+  createdById  String?
+  createdBy    User?       @relation("StaffShiftCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  attendance  Attendance?
+  application ShiftApplication?
+
+  @@index([staffId])
+  @@index([departmentId])
+  @@index([date])
+  @@index([groupId])
+  @@index([status])
+}
+
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+/**
+ * A posted opportunity staff can apply for -- distinct from StaffShift
+ * (which is always an already-assigned shift). Approving an application
+ * creates the resulting StaffShift through ShiftsService's normal
+ * conflict-checked assignment path, so an approved application can never
+ * produce a double-booking that a directly-scheduled shift would reject.
+ */
+model ShiftOpening {
+  id                  String      @id @default(cuid())
+  requiredStaffType   StaffType
+  departmentId        String?
+  department          Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  date                DateTime
+  startTime           DateTime
+  endTime             DateTime
+  shiftType           ShiftType
+  /**
+   * How many staff can be approved for this opening in total.
+   */
+  positions           Int         @default(1)
+  applicationDeadline DateTime
+  notes               String?
+  /**
+   * Admin can close early even if positions/deadline haven't been reached.
+   */
+  isOpen              Boolean     @default(true)
+  createdById         String?
+  createdBy           User?       @relation("ShiftOpeningCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  applications ShiftApplication[]
+
+  @@index([date])
+  @@index([requiredStaffType])
+  @@index([isOpen])
+}
+
+/**
+ * One staff member's application to one ShiftOpening. The unique
+ * constraint blocks a second active application to the same opening --
+ * withdraw the first one to try again.
+ */
+model ShiftApplication {
+  id               String            @id @default(cuid())
+  openingId        String
+  opening          ShiftOpening      @relation(fields: [openingId], references: [id], onDelete: Cascade)
+  staffId          String
+  staff            Staff             @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  status           ApplicationStatus @default(PENDING)
+  message          String?
+  adminNotes       String?
+  respondedById    String?
+  respondedBy      User?             @relation("ShiftApplicationRespondedBy", fields: [respondedById], references: [id], onDelete: SetNull)
+  respondedAt      DateTime?
+  /**
+   * Set once approved -- the real, conflict-checked shift this application produced.
+   */
+  resultingShiftId String?           @unique
+  resultingShift   StaffShift?       @relation(fields: [resultingShiftId], references: [id], onDelete: SetNull)
+  appliedAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([openingId, staffId])
+  @@index([staffId])
+  @@index([status])
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+/**
+ * "Overdue" is deliberately not a stored status -- it's derived from
+ * dueAt vs. now, same convention as Invoice's paid/pending/overdue, so
+ * there's nothing to keep in sync via a cron flipping a column.
+ */
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Task {
+  id             String       @id @default(cuid())
+  title          String
+  description    String?
+  dueAt          DateTime
+  priority       TaskPriority @default(MEDIUM)
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  assignedToId   String
+  assignedTo     Staff        @relation(fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignedById   String?
+  assignedBy     User?        @relation("TaskAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  status         TaskStatus   @default(PENDING)
+  completedAt    DateTime?
+  /**
+   * Stamped by the due-soon reminder cron so a task is only nudged once,
+   * same pattern as Appointment.reminderSentAt.
+   */
+  reminderSentAt DateTime?
+  /** Stamped separately once the overdue notification fires -- a distinct
+   *  one-time event from the due-soon nudge above, not just its opposite. */
+  overdueNotifiedAt DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([assignedToId])
+  @@index([dueAt])
+  @@index([status])
+}
+
+enum AnnouncementPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
+}
+
+model Announcement {
+  id          String               @id @default(cuid())
+  title       String
+  description String
+  priority    AnnouncementPriority @default(NORMAL)
+  authorId    String?
+  author      User?                @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime             @default(now())
+
+  @@index([createdAt])
+}
+
+/**
+ * A reusable set of default times an admin can apply when scheduling a
+ * shift, so they don't re-enter the same hours every time. Purely a
+ * convenience picker on the frontend -- not referenced by StaffShift.
+ */
+model ShiftTemplate {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  shiftType   ShiftType
+  /**
+   * "HH:mm", 24h, time-of-day only -- a template has no date.
+   */
+  startTime   String
+  endTime     String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+/**
+ * A staff member's recurring weekly availability. One row per day of the
+ * week (enforced by the unique constraint) -- a day with no row is treated
+ * as available with no time restriction. Checked during shift conflict
+ * detection alongside StaffLeave.
+ */
+model StaffAvailability {
+  id            String    @id @default(cuid())
+  staffId       String
+  staff         Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOfWeek     DayOfWeek
+  isAvailable   Boolean   @default(true)
+  /**
+   * "HH:mm", both null when isAvailable=false or available all day.
+   */
+  availableFrom String?
+  availableTo   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([staffId, dayOfWeek])
+  @@index([staffId])
+}
+
+/**
+ * A specific date a staff member is unavailable (e.g. annual leave) --
+ * distinct from the weekly StaffAvailability grid, which repeats.
+ */
+model StaffLeave {
+  id        String   @id @default(cuid())
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  date      DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([staffId, date])
+  @@index([staffId])
+  @@index([date])
+}
+
+enum AttendanceStatus {
+  SCHEDULED
+  PRESENT
+  LATE
+  ABSENT
+  LEAVE
+}
+
+/**
+ * Attendance is tied to exactly one shift (shiftId is unique) -- a staff
+ * member cannot have two attendance records for the same shift.
+ */
+model Attendance {
+  id        String           @id @default(cuid())
+  shiftId   String           @unique
+  shift     StaffShift       @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  staffId   String
+  staff     Staff            @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  status    AttendanceStatus @default(SCHEDULED)
+  checkIn   DateTime?
+  checkOut  DateTime?
+  notes     String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([staffId])
 }
 
 enum AuditAction {
@@ -319,8 +730,10 @@ enum AuditAction {
   DELETE
 }
 
-/** Immutable trail of who changed what. Kept even if the actor's account is
- *  later deleted -- actorId goes null rather than cascading the row away. */
+/**
+ * Immutable trail of who changed what. Kept even if the actor's account is
+ * later deleted -- actorId goes null rather than cascading the row away.
+ */
 model AuditLog {
   id         String      @id @default(cuid())
   actorId    String?
@@ -328,7 +741,9 @@ model AuditLog {
   action     AuditAction
   entityType String
   entityId   String
-  /** Free-form before/after or changed-field snapshot; shape depends on entityType. */
+  /**
+   * Free-form before/after or changed-field snapshot; shape depends on entityType.
+   */
   metadata   Json?
   createdAt  DateTime    @default(now())
 
