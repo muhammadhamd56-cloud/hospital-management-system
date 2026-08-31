@@ -52,6 +52,10 @@ export function DoctorProfileModal({ doctor, onClose }: DoctorProfileModalProps)
                 {doctor.consultationFee > 0 ? formatCurrency(doctor.consultationFee) : 'Free'}
               </p>
             </div>
+            <div>
+              <p className="text-xs text-ink-muted">Appointment duration</p>
+              <p className="font-medium text-ink">{doctor.appointmentDurationMinutes} min</p>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2">

@@ -12,10 +12,12 @@ enum Role {
   ADMIN
   DOCTOR
   PATIENT
-  /** Umbrella login role for every non-doctor staff member -- nurse,
-   *  receptionist, pharmacist, lab technician, other. Which specific job
-   *  they do is on their linked Staff.staffType, not this role -- see
-   *  StaffPortalController and LaboratoryService.requireLabAccess. */
+  /**
+   * Umbrella login role for every non-doctor staff member -- nurse,
+   * receptionist, pharmacist, lab technician, other. Which specific job
+   * they do is on their linked Staff.staffType, not this role -- see
+   * StaffPortalController and LaboratoryService.requireLabAccess.
+   */
   STAFF
 }
 
@@ -92,7 +94,7 @@ model User {
   chatMessages               ChatMessage[]
   beds                       Bed[]
   invoices                   Invoice[]
-  paymentsRecorded           Payment[]       @relation("PaymentsRecorded")
+  paymentsRecorded           Payment[]          @relation("PaymentsRecorded")
   notifications              Notification[]
   medicalRecords             MedicalRecord[]
   auditLogs                  AuditLog[]
@@ -129,16 +131,22 @@ model Department {
  * Doctor-specific profile fields, collected at manual signup when role = DOCTOR.
  */
 model Doctor {
-  id              String   @id @default(cuid())
-  specialization  String
-  bio             String
-  experienceYears Int
-  rating          Float    @default(4.5)
-  acceptsOnline   Boolean  @default(true)
-  isAvailable     Boolean  @default(true)
-  /** Charged to the patient as an invoice when they book a session with this doctor. 0 = no charge. */
-  consultationFee Float    @default(0)
-  createdAt       DateTime @default(now())
+  id                         String   @id @default(cuid())
+  specialization             String
+  bio                        String
+  experienceYears            Int
+  rating                     Float    @default(4.5)
+  acceptsOnline              Boolean  @default(true)
+  isAvailable                Boolean  @default(true)
+  /**
+   * Charged to the patient as an invoice when they book a session with this doctor. 0 = no charge.
+   */
+  consultationFee            Float    @default(0)
+  /**
+   * Informational only -- not used to generate bookable time slots (no working-hours model exists yet).
+   */
+  appointmentDurationMinutes Int      @default(30)
+  createdAt                  DateTime @default(now())
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -179,12 +187,22 @@ model Appointment {
   updatedAt   DateTime          @updatedAt
 
   /**
+   * Snapshot of Doctor.consultationFee at the moment this appointment was
+   * booked. Deliberately copied here rather than read live off the doctor's
+   * current profile -- if the doctor later changes their fee, past
+   * appointments (and the invoices they generated) must keep showing what
+   * the patient was actually charged at booking time, not the new rate.
+   */
+  consultationFee Float @default(0)
+
+  /**
    * Stamped once the reminder cron emails/notifies the patient, so a
    * SCHEDULED appointment inside the reminder window is only reminded once.
    */
   reminderSentAt DateTime?
 
   medicalRecord MedicalRecord?
+  invoice       Invoice?
 }
 
 enum ChatSender {
@@ -245,31 +263,39 @@ enum PaymentMethod {
  * instead of re-summing items on every read.
  */
 model Invoice {
-  /** Stable DB id, used in URLs/API calls. Never shown to users -- see invoiceNumber. */
-  id          String        @id @default(cuid())
-  /** Human-facing sequential number, displayed as "INV-0001". */
-  invoiceNumber Int         @default(autoincrement()) @unique
-  description String
+  /**
+   * Stable DB id, used in URLs/API calls. Never shown to users -- see invoiceNumber.
+   */
+  id            String        @id @default(cuid())
+  /**
+   * Human-facing sequential number, displayed as "INV-0001".
+   */
+  invoiceNumber Int           @unique @default(autoincrement())
+  description   String
   /**
    * Sum of item line totals (quantity * unitPrice - item discount), before
    * this invoice's own discount/tax. Recomputed and re-validated server-side
    * on every write -- never trusted from the client.
    */
-  amount      Float
-  /** Invoice-level discount, applied after summing line items. */
-  discount    Float         @default(0)
-  /** Invoice-level tax, applied after the discount. */
-  tax         Float         @default(0)
+  amount        Float
+  /**
+   * Invoice-level discount, applied after summing line items.
+   */
+  discount      Float         @default(0)
+  /**
+   * Invoice-level tax, applied after the discount.
+   */
+  tax           Float         @default(0)
   /**
    * PENDING/PARTIALLY_PAID/PAID are kept in sync with the linked Payment
    * rows whenever a payment is recorded. "Overdue" is deliberately NOT a
    * stored value -- it's derived at read time from (status, dueDate) so it
    * never needs a cron job or manual staff intervention to "become" overdue.
    */
-  status      InvoiceStatus @default(PENDING)
-  dueDate     DateTime
-  paidAt      DateTime?
-  createdAt   DateTime      @default(now())
+  status        InvoiceStatus @default(PENDING)
+  dueDate       DateTime
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
 
   /**
    * Set when a patient starts an online payment (Stripe Checkout Session
@@ -282,6 +308,12 @@ model Invoice {
 
   patientId String
   patient   User   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  /**
+   * Set for an invoice auto-generated from a consultation booking, so cancelling that appointment can cancel this invoice too (only if still unpaid).
+   */
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 
   items    InvoiceItem[]
   payments Payment[]
@@ -298,7 +330,9 @@ model InvoiceItem {
   description String
   quantity    Int    @default(1)
   unitPrice   Float
-  /** Per-line discount, subtracted from quantity * unitPrice. */
+  /**
+   * Per-line discount, subtracted from quantity * unitPrice.
+   */
   discount    Float  @default(0)
 
   @@index([invoiceId])
@@ -311,14 +345,16 @@ model InvoiceItem {
  * been paid."
  */
 model Payment {
-  id        String        @id @default(cuid())
+  id        String  @id @default(cuid())
   invoiceId String
-  invoice   Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   amount Float
   method PaymentMethod
 
-  /** Null for online (Stripe) payments -- no staff member recorded those. */
+  /**
+   * Null for online (Stripe) payments -- no staff member recorded those.
+   */
   recordedById String?
   recordedBy   User?   @relation("PaymentsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
 
@@ -635,29 +671,31 @@ enum TaskStatus {
 }
 
 model Task {
-  id             String       @id @default(cuid())
-  title          String
-  description    String?
-  dueAt          DateTime
-  priority       TaskPriority @default(MEDIUM)
-  departmentId   String?
-  department     Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  assignedToId   String
-  assignedTo     Staff        @relation(fields: [assignedToId], references: [id], onDelete: Cascade)
-  assignedById   String?
-  assignedBy     User?        @relation("TaskAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
-  status         TaskStatus   @default(PENDING)
-  completedAt    DateTime?
+  id                String       @id @default(cuid())
+  title             String
+  description       String?
+  dueAt             DateTime
+  priority          TaskPriority @default(MEDIUM)
+  departmentId      String?
+  department        Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  assignedToId      String
+  assignedTo        Staff        @relation(fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignedById      String?
+  assignedBy        User?        @relation("TaskAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  status            TaskStatus   @default(PENDING)
+  completedAt       DateTime?
   /**
    * Stamped by the due-soon reminder cron so a task is only nudged once,
    * same pattern as Appointment.reminderSentAt.
    */
-  reminderSentAt DateTime?
-  /** Stamped separately once the overdue notification fires -- a distinct
-   *  one-time event from the due-soon nudge above, not just its opposite. */
+  reminderSentAt    DateTime?
+  /**
+   * Stamped separately once the overdue notification fires -- a distinct
+   * one-time event from the due-soon nudge above, not just its opposite.
+   */
   overdueNotifiedAt DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   @@index([assignedToId])
   @@index([dueAt])

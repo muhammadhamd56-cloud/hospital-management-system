@@ -41,6 +41,7 @@ export interface DoctorProfileInput {
   bio: string
   experienceYears: number
   consultationFee: number
+  appointmentDurationMinutes: number
 }
 
 export function upsertDoctorProfile(

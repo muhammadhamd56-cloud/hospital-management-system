@@ -24,8 +24,14 @@ const profileSchema = z.object({
   consultationFee: z
     .string()
     .min(1, 'Consultation fee is required')
-    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100_000, {
       message: 'Enter a valid amount, or 0 for no charge',
+    }),
+  appointmentDurationMinutes: z
+    .string()
+    .min(1, 'Appointment duration is required')
+    .refine((value) => Number.isInteger(Number(value)) && Number(value) >= 5 && Number(value) <= 240, {
+      message: 'Enter a duration between 5 and 240 minutes',
     }),
 })
 
@@ -50,6 +56,7 @@ export function DoctorProfileForm() {
             bio: res.profile.bio,
             experienceYears: String(res.profile.experienceYears),
             consultationFee: String(res.profile.consultationFee),
+            appointmentDurationMinutes: String(res.profile.appointmentDurationMinutes),
           })
         }
       })
@@ -68,6 +75,7 @@ export function DoctorProfileForm() {
         bio: values.bio,
         experienceYears: Number(values.experienceYears),
         consultationFee: Number(values.consultationFee),
+        appointmentDurationMinutes: Number(values.appointmentDurationMinutes),
       })
       toast.success('Profile saved')
     } catch (error) {
@@ -118,6 +126,14 @@ export function DoctorProfileForm() {
         placeholder="0 for no charge"
         error={errors.consultationFee?.message}
         {...register('consultationFee')}
+      />
+      <Input
+        label="Appointment duration (minutes)"
+        type="number"
+        min={5}
+        max={240}
+        error={errors.appointmentDurationMinutes?.message}
+        {...register('appointmentDurationMinutes')}
       />
       <Button type="submit" isLoading={isSubmitting} className="w-fit">
         Save profile

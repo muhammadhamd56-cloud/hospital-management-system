@@ -9,5 +9,6 @@ export interface DirectoryDoctor {
   acceptsOnline: boolean
   isAvailable: boolean
   consultationFee: number
+  appointmentDurationMinutes: number
   email: string | null
 }

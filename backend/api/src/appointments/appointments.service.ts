@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AppointmentStatus, NotificationType, Role } from '@prisma/client';
+import { AppointmentStatus, NotificationType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPrismaMode } from '../common/session.mapper';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -88,24 +88,24 @@ export class AppointmentsService {
       throw new BadRequestException('Session must be scheduled in the future');
     }
 
-    const conflict = await this.prisma.appointment.findFirst({
-      where: { doctorId: dto.doctorId, scheduledAt, status: AppointmentStatus.SCHEDULED },
-    });
-
-    if (conflict) {
-      throw new ConflictException('This doctor already has an appointment at that time');
+    // Serializable so two concurrent bookings for the same doctor+time can't
+    // both pass the conflict check before either commits -- Postgres aborts
+    // the loser with a serialization failure (caught below) instead of
+    // silently allowing a double-booking.
+    let appointment: Awaited<ReturnType<AppointmentsService['createAppointmentRow']>>;
+    try {
+      appointment = await this.prisma.$transaction(
+        (tx) => this.createAppointmentRow(tx, patientId, dto, scheduledAt, doctor.consultationFee),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+        throw new ConflictException(
+          'Sorry, this appointment slot is no longer available. Please choose another time.',
+        );
+      }
+      throw error;
     }
-
-    const appointment = await this.prisma.appointment.create({
-      data: {
-        patientId,
-        doctorId: dto.doctorId,
-        scheduledAt,
-        mode: toPrismaMode(dto.mode),
-        reason: dto.reason,
-      },
-      include: DOCTOR_AND_PATIENT_INCLUDE,
-    });
 
     const patientName = `${appointment.patient.firstName} ${appointment.patient.lastName}`.trim();
     await this.notificationsService.create(
@@ -122,10 +122,40 @@ export class AppointmentsService {
         doctorName,
         doctor.consultationFee,
         appointment.scheduledAt,
+        appointment.id,
       );
     }
 
     return toPatientAppointmentResponse(appointment);
+  }
+
+  /** Runs inside the Serializable transaction in book() -- see the comment there. */
+  private async createAppointmentRow(
+    tx: Prisma.TransactionClient,
+    patientId: string,
+    dto: BookAppointmentDto,
+    scheduledAt: Date,
+    consultationFee: number,
+  ) {
+    const conflict = await tx.appointment.findFirst({
+      where: { doctorId: dto.doctorId, scheduledAt, status: AppointmentStatus.SCHEDULED },
+    });
+
+    if (conflict) {
+      throw new ConflictException('This doctor already has an appointment at that time');
+    }
+
+    return tx.appointment.create({
+      data: {
+        patientId,
+        doctorId: dto.doctorId,
+        scheduledAt,
+        mode: toPrismaMode(dto.mode),
+        reason: dto.reason,
+        consultationFee,
+      },
+      include: DOCTOR_AND_PATIENT_INCLUDE,
+    });
   }
 
   async cancel(patientId: string, appointmentId: string): Promise<PatientAppointmentResponse> {
@@ -148,6 +178,8 @@ export class AppointmentsService {
       'Appointment cancelled',
       `${patientName} cancelled their session on ${updated.scheduledAt.toLocaleString()}.`,
     );
+
+    await this.billingService.cancelInvoiceForAppointment(appointmentId);
 
     return toPatientAppointmentResponse(updated);
   }

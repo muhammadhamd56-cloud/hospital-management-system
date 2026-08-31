@@ -74,6 +74,7 @@ export class StaffService {
             bio: dto.bio!,
             experienceYears: dto.experienceYears!,
             consultationFee: dto.consultationFee ?? 0,
+            appointmentDurationMinutes: dto.appointmentDurationMinutes ?? 30,
             userId: user.id,
           },
         });

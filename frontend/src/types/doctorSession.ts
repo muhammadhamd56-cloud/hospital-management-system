@@ -8,4 +8,5 @@ export interface DoctorAppointment {
   mode: SessionMode
   status: SessionStatus
   reason: string
+  consultationFee: number
 }

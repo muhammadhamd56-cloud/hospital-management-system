@@ -18,6 +18,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
     acceptsOnline: true,
     isAvailable: true,
     consultationFee: 0,
+    appointmentDurationMinutes: 30,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'doctor-user-1',
     departmentId: 'dept-1',
@@ -36,6 +37,7 @@ function buildAppointment(overrides: Partial<Appointment> = {}): Appointment {
     reason: 'Checkup',
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    consultationFee: 0,
     reminderSentAt: null,
     ...overrides,
   };
@@ -99,9 +101,10 @@ describe('AppointmentsService', () => {
     };
     doctor: { findUnique: jest.Mock };
     user: { findUnique: jest.Mock };
+    $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
-  let billingService: { createConsultationInvoice: jest.Mock };
+  let billingService: { createConsultationInvoice: jest.Mock; cancelInvoiceForAppointment: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -114,10 +117,14 @@ describe('AppointmentsService', () => {
       },
       doctor: { findUnique: jest.fn() },
       user: { findUnique: jest.fn() },
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
-    billingService = { createConsultationInvoice: jest.fn().mockResolvedValue(undefined) };
+    billingService = {
+      createConsultationInvoice: jest.fn().mockResolvedValue(undefined),
+      cancelInvoiceForAppointment: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -161,6 +168,7 @@ describe('AppointmentsService', () => {
           mode: 'online',
           status: 'scheduled',
           reason: 'Checkup',
+          consultationFee: 0,
         },
       ]);
     });
@@ -204,6 +212,7 @@ describe('AppointmentsService', () => {
           mode: 'online',
           status: 'scheduled',
           reason: 'Checkup',
+          consultationFee: 0,
         },
       ]);
     });
@@ -288,6 +297,7 @@ describe('AppointmentsService', () => {
           scheduledAt: new Date(dto.scheduledAt),
           mode: AppointmentMode.ONLINE,
           reason: 'Follow-up',
+          consultationFee: 0,
         },
         include: {
           doctor: {
@@ -317,6 +327,7 @@ describe('AppointmentsService', () => {
         mode: 'online',
         status: 'scheduled',
         reason: 'Follow-up',
+        consultationFee: 0,
       });
 
       expect(billingService.createConsultationInvoice).not.toHaveBeenCalled();
@@ -326,6 +337,7 @@ describe('AppointmentsService', () => {
       prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ consultationFee: 150 }));
       const created = buildAppointmentWithDoctorAndPatient({
         scheduledAt: new Date('2099-01-01T10:00:00.000Z'),
+        consultationFee: 150,
       });
       prisma.appointment.create.mockResolvedValue(created);
 
@@ -336,6 +348,7 @@ describe('AppointmentsService', () => {
         'Grace Hopper',
         150,
         created.scheduledAt,
+        created.id,
       );
     });
 
@@ -450,6 +463,7 @@ describe('AppointmentsService', () => {
         expect.stringContaining('Ada Lovelace'),
       );
 
+      expect(billingService.cancelInvoiceForAppointment).toHaveBeenCalledWith('appt-1');
       expect(result.status).toBe('cancelled');
     });
   });

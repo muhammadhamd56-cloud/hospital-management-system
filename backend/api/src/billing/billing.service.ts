@@ -465,6 +465,7 @@ export class BillingService {
     doctorName: string,
     fee: number,
     dueDate: Date,
+    appointmentId?: string,
   ): Promise<InvoiceResponse> {
     const description = `Consultation with Dr. ${doctorName}`;
 
@@ -474,12 +475,40 @@ export class BillingService {
         description,
         amount: roundMoney(fee),
         dueDate,
+        appointmentId,
         items: { create: [{ description, quantity: 1, unitPrice: fee }] },
       },
       include: INVOICE_INCLUDE,
     });
 
     return toInvoiceResponse(invoice);
+  }
+
+  /**
+   * Called when the appointment that generated a consultation invoice is
+   * cancelled. Silently does nothing if there's no linked invoice, it's
+   * already cancelled, or it already has payments recorded (a paid/partially
+   * paid invoice needs a refund decision, not an automatic cancel).
+   */
+  async cancelInvoiceForAppointment(appointmentId: string): Promise<void> {
+    const invoice = await this.prisma.invoice.findUnique({ where: { appointmentId }, include: INVOICE_INCLUDE });
+
+    if (!invoice || invoice.status === InvoiceStatus.CANCELLED || invoice.payments.length > 0) {
+      return;
+    }
+
+    await this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { status: InvoiceStatus.CANCELLED },
+    });
+
+    await this.auditLogService.log({
+      actorId: null,
+      action: 'UPDATE',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      metadata: { status: 'CANCELLED', reason: 'appointment_cancelled' },
+    });
   }
 
   /** Actual money collected this calendar month, across every payment method (Stripe included). */

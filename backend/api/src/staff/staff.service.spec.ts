@@ -162,6 +162,7 @@ describe('StaffService', () => {
           bio: 'Heart stuff',
           experienceYears: 10,
           consultationFee: 0,
+          appointmentDurationMinutes: 30,
           userId: created.id,
         },
       });

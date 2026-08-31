@@ -30,6 +30,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
     acceptsOnline: true,
     isAvailable: true,
     consultationFee: 0,
+    appointmentDurationMinutes: 30,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'doctor-user-1',
     departmentId: 'dept-1',
@@ -89,6 +90,7 @@ function buildInvoice(overrides: Partial<InvoiceWithRelations> = {}): InvoiceWit
     dueDate: new Date('2026-09-01T00:00:00.000Z'),
     paidAt: null,
     stripeCheckoutSessionId: null,
+    appointmentId: null,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     patient: { firstName: 'Ada', lastName: 'Lovelace' },
     items: [buildItem()],
@@ -509,6 +511,57 @@ describe('BillingService', () => {
         include: INVOICE_INCLUDE,
       });
       expect(result).toMatchObject({ id: 'inv-consult', amount: 150 });
+    });
+
+    it('links the invoice to the appointment when an appointmentId is given', async () => {
+      const dueDate = new Date('2099-01-01T10:00:00.000Z');
+      prisma.invoice.create.mockResolvedValue(buildInvoice({ appointmentId: 'appt-1' }));
+
+      await service.createConsultationInvoice('patient-1', 'Grace Hopper', 150, dueDate, 'appt-1');
+
+      expect(prisma.invoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ appointmentId: 'appt-1' }) }),
+      );
+    });
+  });
+
+  describe('cancelInvoiceForAppointment', () => {
+    it('does nothing when there is no invoice linked to the appointment', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(null);
+
+      await service.cancelInvoiceForAppointment('appt-1');
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the linked invoice already has payments recorded', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ payments: [buildPayment({ amount: 50 })] }));
+
+      await service.cancelInvoiceForAppointment('appt-1');
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the linked invoice is already cancelled', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ status: InvoiceStatus.CANCELLED }));
+
+      await service.cancelInvoiceForAppointment('appt-1');
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it('cancels an unpaid invoice linked to the appointment', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ id: 'inv-1', appointmentId: 'appt-1' }));
+
+      await service.cancelInvoiceForAppointment('appt-1');
+
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: 'inv-1' },
+        data: { status: InvoiceStatus.CANCELLED },
+      });
+      expect(auditLogService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: null, entityType: 'Invoice', entityId: 'inv-1' }),
+      );
     });
   });
 

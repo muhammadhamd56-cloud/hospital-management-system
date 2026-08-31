@@ -15,6 +15,7 @@ export interface CreateStaffInput {
   bio?: string
   experienceYears?: number
   consultationFee?: number
+  appointmentDurationMinutes?: number
 }
 
 export interface CreateStaffResponse {

@@ -14,6 +14,7 @@ export interface DirectoryDoctorResponse {
   acceptsOnline: boolean;
   isAvailable: boolean;
   consultationFee: number;
+  appointmentDurationMinutes: number;
   email: string | null;
 }
 
@@ -34,6 +35,7 @@ export function toDirectoryDoctor(doctor: DoctorWithUser): DirectoryDoctorRespon
     acceptsOnline: doctor.acceptsOnline,
     isAvailable: doctor.isAvailable,
     consultationFee: doctor.consultationFee,
+    appointmentDurationMinutes: doctor.appointmentDurationMinutes,
     email: doctor.user.email,
   };
 }

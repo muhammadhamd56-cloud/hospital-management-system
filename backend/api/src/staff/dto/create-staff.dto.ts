@@ -54,5 +54,14 @@ export class CreateStaffDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0, { message: 'Consultation fee must be 0 or more' })
+  @Max(100_000, { message: 'Enter a realistic consultation fee' })
   consultationFee?: number;
+
+  // Optional -- defaults to 30 minutes until the admin or doctor sets it.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(5, { message: 'Appointment duration must be at least 5 minutes' })
+  @Max(240, { message: 'Appointment duration must be 240 minutes or less' })
+  appointmentDurationMinutes?: number;
 }

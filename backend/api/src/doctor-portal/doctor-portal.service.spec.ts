@@ -5,6 +5,8 @@ import { DoctorPortalService } from './doctor-portal.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { BillingService } from '../billing/billing.service';
 import type { DoctorWithUser } from '../doctors/doctors.service';
 import type { AppointmentWithPatient } from '../appointments/appointment.mapper';
 import type { ChatMessage } from '@prisma/client';
@@ -21,6 +23,7 @@ function buildDoctor(overrides: Partial<DoctorWithUser> = {}): DoctorWithUser {
     acceptsOnline: true,
     isAvailable: true,
     consultationFee: 0,
+    appointmentDurationMinutes: 30,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'user-1',
     departmentId: 'dept-1',
@@ -69,6 +72,8 @@ describe('DoctorPortalService', () => {
   };
   let notificationsService: { create: jest.Mock };
   let medicalRecordsService: { listForPatientByDoctor: jest.Mock; createForPatient: jest.Mock };
+  let auditLogService: { log: jest.Mock };
+  let billingService: { cancelInvoiceForAppointment: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -81,6 +86,8 @@ describe('DoctorPortalService', () => {
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     medicalRecordsService = { listForPatientByDoctor: jest.fn(), createForPatient: jest.fn() };
+    auditLogService = { log: jest.fn().mockResolvedValue(undefined) };
+    billingService = { cancelInvoiceForAppointment: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -88,6 +95,8 @@ describe('DoctorPortalService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notificationsService },
         { provide: MedicalRecordsService, useValue: medicalRecordsService },
+        { provide: AuditLogService, useValue: auditLogService },
+        { provide: BillingService, useValue: billingService },
       ],
     }).compile();
 
@@ -121,6 +130,7 @@ describe('DoctorPortalService', () => {
       bio: 'Brain stuff',
       experienceYears: 5,
       consultationFee: 100,
+      appointmentDurationMinutes: 45,
     };
 
     it('creates a new Doctor row when the user has no existing profile', async () => {
@@ -143,16 +153,19 @@ describe('DoctorPortalService', () => {
           bio: 'Brain stuff',
           experienceYears: 5,
           consultationFee: 100,
+          appointmentDurationMinutes: 45,
           userId: 'user-1',
         },
         include: expect.anything(),
       });
       expect(prisma.doctor.update).not.toHaveBeenCalled();
       expect(result.specialization).toBe('Neurology');
+      // No prior profile existed, so there's no "previous fee" to have changed.
+      expect(auditLogService.log).not.toHaveBeenCalled();
     });
 
     it('updates the existing Doctor row when the user already has a profile', async () => {
-      const existing = buildDoctor({ id: 'doctor-1' });
+      const existing = buildDoctor({ id: 'doctor-1', consultationFee: 100 });
       prisma.doctor.findUnique.mockResolvedValue(existing);
       prisma.department.upsert.mockResolvedValue({ id: 'dept-2', name: 'Neurology' });
       const updated = buildDoctor({ specialization: 'Neurology', departmentId: 'dept-2' });
@@ -168,11 +181,40 @@ describe('DoctorPortalService', () => {
           bio: 'Brain stuff',
           experienceYears: 5,
           consultationFee: 100,
+          appointmentDurationMinutes: 45,
         },
         include: expect.anything(),
       });
       expect(prisma.doctor.create).not.toHaveBeenCalled();
       expect(result.specialization).toBe('Neurology');
+    });
+
+    it('audit-logs a consultation fee change, with the previous and new amounts', async () => {
+      const existing = buildDoctor({ id: 'doctor-1', consultationFee: 50 });
+      prisma.doctor.findUnique.mockResolvedValue(existing);
+      prisma.department.upsert.mockResolvedValue({ id: 'dept-2', name: 'Neurology' });
+      prisma.doctor.update.mockResolvedValue(buildDoctor({ id: 'doctor-1', consultationFee: 100 }));
+
+      await service.upsertProfile('user-1', dto);
+
+      expect(auditLogService.log).toHaveBeenCalledWith({
+        actorId: 'user-1',
+        action: 'UPDATE',
+        entityType: 'Doctor',
+        entityId: 'doctor-1',
+        metadata: { field: 'consultationFee', previousFee: 50, newFee: 100 },
+      });
+    });
+
+    it('does not audit-log when the consultation fee is unchanged', async () => {
+      const existing = buildDoctor({ id: 'doctor-1', consultationFee: 100 });
+      prisma.doctor.findUnique.mockResolvedValue(existing);
+      prisma.department.upsert.mockResolvedValue({ id: 'dept-2', name: 'Neurology' });
+      prisma.doctor.update.mockResolvedValue(buildDoctor({ id: 'doctor-1', consultationFee: 100 }));
+
+      await service.upsertProfile('user-1', dto);
+
+      expect(auditLogService.log).not.toHaveBeenCalled();
     });
   });
 
@@ -275,6 +317,7 @@ describe('DoctorPortalService', () => {
         'Appointment cancelled',
         expect.stringContaining('Dr. Greta House cancelled your session'),
       );
+      expect(billingService.cancelInvoiceForAppointment).toHaveBeenCalledWith('appt-1');
       expect(result.status).toBe('cancelled');
     });
   });

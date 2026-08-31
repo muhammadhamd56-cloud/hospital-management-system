@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cancelDoctorAppointment, completeDoctorAppointment } from '@/features/doctorDashboard/api'
 import { formatSessionDateTime, isUpcoming } from '@/features/patientDashboard/formatSession'
+import { formatCurrency } from '@/utils/currency'
 import { ApiError } from '@/lib/apiClient'
 import type { DoctorAppointment } from '@/types/doctorSession'
 
@@ -61,6 +62,11 @@ function SessionRow({
         <p className="mt-0.5 text-xs text-ink-muted">
           {formatSessionDateTime(appointment.scheduledAt)}
         </p>
+        {appointment.consultationFee > 0 && (
+          <p className="mt-0.5 text-xs text-ink-muted">
+            Consultation: {formatCurrency(appointment.consultationFee)}
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <Badge variant={appointment.mode === 'online' ? 'info' : 'neutral'}>

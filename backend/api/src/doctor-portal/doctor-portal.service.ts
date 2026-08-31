@@ -17,6 +17,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
 import { CreateMedicalRecordDto } from '../medical-records/dto/create-medical-record.dto';
 import type { MedicalRecordResponse } from '../medical-records/medical-record.mapper';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { BillingService } from '../billing/billing.service';
 import { DoctorProfileDto } from './dto/doctor-profile.dto';
 
 const APPOINTMENT_PATIENT_INCLUDE = { patient: { select: { firstName: true, lastName: true } } } as const;
@@ -27,6 +29,8 @@ export class DoctorPortalService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly medicalRecordsService: MedicalRecordsService,
+    private readonly auditLogService: AuditLogService,
+    private readonly billingService: BillingService,
   ) {}
 
   private findLinkedDoctor(userId: string): Promise<DoctorWithUser | null> {
@@ -64,6 +68,7 @@ export class DoctorPortalService {
       bio: dto.bio,
       experienceYears: dto.experienceYears,
       consultationFee: dto.consultationFee,
+      appointmentDurationMinutes: dto.appointmentDurationMinutes,
     };
 
     const doctor = existing
@@ -76,6 +81,20 @@ export class DoctorPortalService {
           data: { ...data, userId },
           include: DOCTOR_PROFILE_INCLUDE,
         });
+
+    if (existing && existing.consultationFee !== dto.consultationFee) {
+      await this.auditLogService.log({
+        actorId: userId,
+        action: 'UPDATE',
+        entityType: 'Doctor',
+        entityId: doctor.id,
+        metadata: {
+          field: 'consultationFee',
+          previousFee: existing.consultationFee,
+          newFee: dto.consultationFee,
+        },
+      });
+    }
 
     return toDirectoryDoctor(doctor);
   }
@@ -137,6 +156,7 @@ export class DoctorPortalService {
         'Appointment cancelled',
         `Dr. ${doctorName} cancelled your session on ${updated.scheduledAt.toLocaleString()}.`,
       );
+      await this.billingService.cancelInvoiceForAppointment(appointmentId);
     }
 
     return toDoctorAppointmentResponse(updated as AppointmentWithPatient);

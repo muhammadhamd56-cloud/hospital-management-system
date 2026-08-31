@@ -15,6 +15,8 @@ export interface PatientAppointmentResponse {
   mode: 'online' | 'in-person';
   status: 'scheduled' | 'completed' | 'cancelled';
   reason: string;
+  /** Snapshot of the doctor's consultation fee at booking time -- never the doctor's current fee. */
+  consultationFee: number;
 }
 
 export function toPatientAppointmentResponse(appointment: AppointmentWithDoctor): PatientAppointmentResponse {
@@ -28,6 +30,7 @@ export function toPatientAppointmentResponse(appointment: AppointmentWithDoctor)
     mode: toClientMode(appointment.mode),
     status: toClientStatus(appointment.status),
     reason: appointment.reason,
+    consultationFee: appointment.consultationFee,
   };
 }
 
@@ -41,6 +44,8 @@ export interface DoctorAppointmentResponse {
   mode: 'online' | 'in-person';
   status: 'scheduled' | 'completed' | 'cancelled';
   reason: string;
+  /** Snapshot of the doctor's consultation fee at booking time -- never the doctor's current fee. */
+  consultationFee: number;
 }
 
 export function toDoctorAppointmentResponse(appointment: AppointmentWithPatient): DoctorAppointmentResponse {
@@ -52,6 +57,7 @@ export function toDoctorAppointmentResponse(appointment: AppointmentWithPatient)
     mode: toClientMode(appointment.mode),
     status: toClientStatus(appointment.status),
     reason: appointment.reason,
+    consultationFee: appointment.consultationFee,
   };
 }
 
@@ -70,6 +76,8 @@ export interface AdminAppointmentResponse {
   mode: 'online' | 'in-person';
   status: 'scheduled' | 'completed' | 'cancelled';
   reason: string;
+  /** Snapshot of the doctor's consultation fee at booking time -- never the doctor's current fee. */
+  consultationFee: number;
 }
 
 export function toAdminAppointmentResponse(appointment: AppointmentWithDoctorAndPatient): AdminAppointmentResponse {
@@ -83,5 +91,6 @@ export function toAdminAppointmentResponse(appointment: AppointmentWithDoctorAnd
     mode: toClientMode(appointment.mode),
     status: toClientStatus(appointment.status),
     reason: appointment.reason,
+    consultationFee: appointment.consultationFee,
   };
 }

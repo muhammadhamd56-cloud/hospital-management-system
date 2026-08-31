@@ -24,5 +24,13 @@ export class DoctorProfileDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0, { message: 'Consultation fee must be 0 or more' })
+  @Max(100_000, { message: 'Enter a realistic consultation fee' })
   consultationFee!: number;
+
+  /** Informational only -- not used to generate bookable time slots. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(5, { message: 'Appointment duration must be at least 5 minutes' })
+  @Max(240, { message: 'Appointment duration must be 240 minutes or less' })
+  appointmentDurationMinutes!: number;
 }

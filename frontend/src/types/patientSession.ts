@@ -11,4 +11,6 @@ export interface PatientAppointment {
   mode: SessionMode
   status: SessionStatus
   reason: string
+  /** Snapshot of the doctor's consultation fee at booking time -- never the doctor's current fee. */
+  consultationFee: number
 }

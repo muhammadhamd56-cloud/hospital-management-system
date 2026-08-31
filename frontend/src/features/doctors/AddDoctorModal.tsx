@@ -23,7 +23,8 @@ const doctorSchema = z.object({
     .int()
     .min(0, 'Must be positive')
     .max(60, 'Enter a valid number of years'),
-  consultationFee: z.coerce.number().min(0, 'Must be 0 or more').optional(),
+  consultationFee: z.coerce.number().min(0, 'Must be 0 or more').max(100_000, 'Enter a realistic fee').optional(),
+  appointmentDurationMinutes: z.coerce.number().int().min(5).max(240, 'Must be 240 minutes or less').optional(),
 })
 
 type DoctorFormInput = z.input<typeof doctorSchema>
@@ -102,15 +103,26 @@ export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalPro
             {...register('experienceYears')}
           />
         </div>
-        <Input
-          label="Consultation fee (USD)"
-          type="number"
-          min={0}
-          step="0.01"
-          placeholder="0 for no charge"
-          error={errors.consultationFee?.message}
-          {...register('consultationFee')}
-        />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input
+            label="Consultation fee (USD)"
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="0 for no charge"
+            error={errors.consultationFee?.message}
+            {...register('consultationFee')}
+          />
+          <Input
+            label="Appointment duration (minutes)"
+            type="number"
+            min={5}
+            max={240}
+            placeholder="30"
+            error={errors.appointmentDurationMinutes?.message}
+            {...register('appointmentDurationMinutes')}
+          />
+        </div>
         <Textarea
           label="Bio"
           placeholder="A short summary patients will see on this doctor's profile"
