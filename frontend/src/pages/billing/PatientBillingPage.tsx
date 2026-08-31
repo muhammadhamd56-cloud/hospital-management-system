@@ -83,6 +83,27 @@ export function PatientBillingPage() {
 
   const amountDue = useMemo(() => invoices.reduce((sum, i) => sum + i.remaining, 0), [invoices])
 
+  // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
+  // Same "unpaid" definition already used to decide whether "Pay now" shows.
+  const isUnpaidFilterActive = searchParams.get('filter') === 'unpaid'
+  const visibleInvoices = useMemo(
+    () =>
+      isUnpaidFilterActive
+        ? invoices.filter((invoice) => invoice.remaining > 0 && invoice.status !== 'cancelled')
+        : invoices,
+    [invoices, isUnpaidFilterActive],
+  )
+
+  function clearFilter() {
+    setSearchParams(
+      (prev) => {
+        prev.delete('filter')
+        return prev
+      },
+      { replace: true },
+    )
+  }
+
   async function handlePay(invoice: Invoice) {
     setPayingInvoiceId(invoice.id)
     try {
@@ -106,6 +127,15 @@ export function PatientBillingPage() {
         <StatCard label="Amount due" value={formatCurrency(amountDue)} icon={Wallet} />
       </div>
 
+      {isUnpaidFilterActive && (
+        <div className="flex items-center gap-2 text-sm text-ink-muted">
+          <span>Showing unpaid invoices only.</span>
+          <button type="button" onClick={clearFilter} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+            Show all
+          </button>
+        </div>
+      )}
+
       {!isLoading && invoices.length === 0 ? (
         <Card>
           <EmptyState
@@ -114,9 +144,17 @@ export function PatientBillingPage() {
             description="Invoices for your visits will appear here."
           />
         </Card>
+      ) : !isLoading && visibleInvoices.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={Receipt}
+            title="No unpaid invoices"
+            description="You're all caught up — nothing owed right now."
+          />
+        </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {invoices.map((invoice) => (
+          {visibleInvoices.map((invoice) => (
             <Card key={invoice.id}>
               <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">

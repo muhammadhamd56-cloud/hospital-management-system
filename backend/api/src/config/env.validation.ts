@@ -55,6 +55,16 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   STRIPE_WEBHOOK_SECRET?: string;
+
+  /** Optional so the app still boots without it — AssistantService throws a
+   *  clear error only when someone actually opens the AI Assistant. */
+  @IsOptional()
+  @IsString()
+  ANTHROPIC_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  ANTHROPIC_MODEL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {

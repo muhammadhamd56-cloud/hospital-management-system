@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet } from 'react-router'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Navbar } from '@/components/layout/Navbar'
+import { AssistantWidget } from '@/features/assistant/AssistantWidget'
 
 export function DashboardLayout() {
   const [isSidebarOpen, setSidebarOpen] = useState(false)
@@ -15,6 +16,7 @@ export function DashboardLayout() {
           <Outlet />
         </main>
       </div>
+      <AssistantWidget />
     </div>
   )
 }

@@ -10,5 +10,6 @@ import { AppointmentRemindersService } from './appointment-reminders.service';
   imports: [NotificationsModule, EmailModule, BillingModule],
   controllers: [AppointmentsController],
   providers: [AppointmentsService, AppointmentRemindersService],
+  exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

@@ -24,6 +24,7 @@ import { StaffSchedulingModule } from './staff-scheduling/staff-scheduling.modul
 import { StaffPortalModule } from './staff-portal/staff-portal.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
+import { AssistantModule } from './assistant/assistant.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
     StaffSchedulingModule,
     StaffPortalModule,
     AnnouncementsModule,
+    AssistantModule,
   ],
   providers: [
     // The e2e suite alone signs up dozens of accounts in a few seconds --

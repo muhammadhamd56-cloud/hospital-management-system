@@ -9,5 +9,6 @@ import { DoctorPortalService } from './doctor-portal.service';
   imports: [NotificationsModule, MedicalRecordsModule, BillingModule],
   controllers: [DoctorPortalController],
   providers: [DoctorPortalService],
+  exports: [DoctorPortalService],
 })
 export class DoctorPortalModule {}

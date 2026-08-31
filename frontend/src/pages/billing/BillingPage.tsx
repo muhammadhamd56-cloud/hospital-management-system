@@ -181,7 +181,23 @@ export function BillingPage() {
     }
   }
 
-  const isFiltering = search.trim().length > 0 || statusFilter !== 'all' || dateFilter !== 'all'
+  // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
+  // An additional predicate layered on top of the existing status/date/search
+  // filters, since "unpaid" spans several existing InvoiceStatus values
+  // rather than being one of them.
+  const isUnpaidFilterActive = searchParams.get('filter') === 'unpaid'
+
+  function clearUnpaidFilter() {
+    setSearchParams(
+      (prev) => {
+        prev.delete('filter')
+        return prev
+      },
+      { replace: true },
+    )
+  }
+
+  const isFiltering = search.trim().length > 0 || statusFilter !== 'all' || dateFilter !== 'all' || isUnpaidFilterActive
 
   const filteredInvoices = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -192,9 +208,10 @@ export function BillingPage() {
         invoice.description.toLowerCase().includes(query) ||
         invoice.invoiceNumber.toLowerCase().includes(query)
       const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter
-      return matchesQuery && matchesStatus && matchesDateFilter(invoice.issueDate, dateFilter)
+      const matchesUnpaid = !isUnpaidFilterActive || (invoice.remaining > 0 && invoice.status !== 'cancelled')
+      return matchesQuery && matchesStatus && matchesUnpaid && matchesDateFilter(invoice.issueDate, dateFilter)
     })
-  }, [invoices, search, statusFilter, dateFilter])
+  }, [invoices, search, statusFilter, dateFilter, isUnpaidFilterActive])
 
   const { page, totalPages, pageItems, setPage } = usePagination(filteredInvoices, PAGE_SIZE)
 
@@ -222,6 +239,19 @@ export function BillingPage() {
       </div>
 
       <RevenueChart />
+
+      {isUnpaidFilterActive && (
+        <div className="flex items-center gap-2 text-sm text-ink-muted">
+          <span>Showing unpaid invoices only.</span>
+          <button
+            type="button"
+            onClick={clearUnpaidFilter}
+            className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+          >
+            Show all
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
         <div className="sm:w-72">
