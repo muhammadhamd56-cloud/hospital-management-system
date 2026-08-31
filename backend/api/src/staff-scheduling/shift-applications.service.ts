@@ -221,6 +221,7 @@ export class ShiftApplicationsService {
           NotificationType.SHIFT_APPLICATION_REJECTED,
           'Shift application rejected',
           `Your application for the ${formatOpeningLabel(application.opening)} shift was not approved.`,
+          '/available-shifts',
         );
       }
 
@@ -289,6 +290,7 @@ export class ShiftApplicationsService {
         NotificationType.SHIFT_APPLICATION_APPROVED,
         'Shift application approved',
         `You're scheduled for the ${formatOpeningLabel(application.opening)} shift.`,
+        `/my-shifts?shiftId=${shift.id}`,
       );
     }
 

@@ -1,9 +1,11 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
-import { InvoiceStatus, PaymentMethod } from '@prisma/client';
+import { InvoiceStatus, NotificationType, PaymentMethod } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { roundMoney } from '../common/money.util';
+import { formatInvoiceNumber } from './invoice-number.util';
 
 @Injectable()
 export class StripeService {
@@ -15,6 +17,7 @@ export class StripeService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
   ) {
     const secretKey = this.configService.get<string>('stripe.secretKey');
     this.stripe = secretKey ? new Stripe(secretKey) : null;
@@ -138,5 +141,13 @@ export class StripeService {
     });
 
     this.logger.log(`Invoice ${invoiceId} received a $${chargedAmount} payment via Stripe session ${session.id}`);
+
+    await this.notificationsService.create(
+      invoice.patientId,
+      NotificationType.PAYMENT_RECEIVED,
+      'Payment received',
+      `Payment of ${chargedAmount.toFixed(2)} received for Invoice ${formatInvoiceNumber(invoice.invoiceNumber)}.`,
+      `/billing?invoiceId=${invoiceId}`,
+    );
   }
 }

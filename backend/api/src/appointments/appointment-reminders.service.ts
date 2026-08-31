@@ -65,6 +65,7 @@ export class AppointmentRemindersService {
           NotificationType.APPOINTMENT_REMINDER,
           'Upcoming appointment reminder',
           `You have an appointment with Dr. ${doctorName} on ${appointment.scheduledAt.toLocaleString()}.`,
+          `/my-appointments?appointmentId=${appointment.id}`,
         );
 
         await this.prisma.appointment.update({

@@ -20,9 +20,45 @@ export function PatientBillingPage() {
   const { invoices, isLoading, refresh } = useMyInvoices()
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null)
   const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null)
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const hasHandledReturn = useRef(false)
+
+  // Deep link from a notification (e.g. "Invoice INV-0001" -> Billing).
+  // Left in the URL (not stripped like ?paid= below) so refreshing the page
+  // re-opens the same invoice instead of losing it to component state.
+  useEffect(() => {
+    const invoiceId = searchParams.get('invoiceId')
+    if (!invoiceId || isLoading) return
+
+    const found = invoices.find((invoice) => invoice.id === invoiceId)
+    if (found) {
+      setViewingInvoice(found)
+    } else {
+      toast.error('This invoice is no longer available.')
+      setSearchParams(
+        (prev) => {
+          prev.delete('invoiceId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, invoices, isLoading])
+
+  function handleCloseInvoiceModal() {
+    setViewingInvoice(null)
+    if (searchParams.has('invoiceId')) {
+      setSearchParams(
+        (prev) => {
+          prev.delete('invoiceId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+  }
 
   // After returning from Stripe Checkout: the webhook (not this redirect)
   // is what actually confirms payment, so "paid=1" here means the card was
@@ -126,7 +162,7 @@ export function PatientBillingPage() {
         </div>
       )}
 
-      <InvoiceDetailsModal invoice={viewingInvoice} onClose={() => setViewingInvoice(null)} />
+      <InvoiceDetailsModal invoice={viewingInvoice} onClose={handleCloseInvoiceModal} />
     </div>
   )
 }

@@ -15,6 +15,9 @@ import type { PatientAppointment } from '@/types/patientSession'
 interface DoctorChatPanelProps {
   appointments: PatientAppointment[]
   isAppointmentsLoading?: boolean
+  /** Pre-selects this doctor's conversation once it appears in the list --
+   *  e.g. arriving here from a "New message" notification. */
+  initialDoctorId?: string | null
 }
 
 interface DoctorOption {
@@ -23,7 +26,7 @@ interface DoctorOption {
   specialization: string
 }
 
-export function DoctorChatPanel({ appointments, isAppointmentsLoading = false }: DoctorChatPanelProps) {
+export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, initialDoctorId }: DoctorChatPanelProps) {
   const [inboxDoctors, setInboxDoctors] = useState<DoctorOption[]>([])
   const [isInboxLoading, setIsInboxLoading] = useState(true)
 
@@ -63,10 +66,14 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false }:
   const [isTyping, setIsTyping] = useState(false)
 
   useEffect(() => {
-    if (!selectedDoctorId && doctorOptions.length > 0) {
+    if (selectedDoctorId || doctorOptions.length === 0) return
+
+    if (initialDoctorId && doctorOptions.some((doctor) => doctor.doctorId === initialDoctorId)) {
+      setSelectedDoctorId(initialDoctorId)
+    } else {
       setSelectedDoctorId(doctorOptions[0].doctorId)
     }
-  }, [doctorOptions, selectedDoctorId])
+  }, [doctorOptions, selectedDoctorId, initialDoctorId])
 
   useEffect(() => {
     if (!selectedDoctorId) return

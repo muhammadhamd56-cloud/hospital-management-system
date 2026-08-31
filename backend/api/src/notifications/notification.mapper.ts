@@ -15,7 +15,9 @@ export type ClientNotificationType =
   | 'task_assigned'
   | 'task_due_soon'
   | 'task_overdue'
-  | 'announcement_published';
+  | 'announcement_published'
+  | 'invoice_created'
+  | 'payment_received';
 
 export interface NotificationResponse {
   id: string;
@@ -43,6 +45,8 @@ const TYPE_TO_CLIENT: Record<Notification['type'], ClientNotificationType> = {
   TASK_DUE_SOON: 'task_due_soon',
   TASK_OVERDUE: 'task_overdue',
   ANNOUNCEMENT_PUBLISHED: 'announcement_published',
+  INVOICE_CREATED: 'invoice_created',
+  PAYMENT_RECEIVED: 'payment_received',
 };
 
 export function toNotificationResponse(notification: Notification): NotificationResponse {

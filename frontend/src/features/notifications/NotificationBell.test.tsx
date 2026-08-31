@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import toast from 'react-hot-toast'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
@@ -37,10 +38,18 @@ beforeEach(() => {
   vi.mocked(toast.error).mockClear()
 })
 
+function renderBell() {
+  return render(
+    <MemoryRouter>
+      <NotificationBell />
+    </MemoryRouter>,
+  )
+}
+
 describe('NotificationBell', () => {
   it('shows no unread dot when there are no unread notifications', async () => {
     vi.mocked(listNotifications).mockResolvedValue({ notifications: [], unreadCount: 0 })
-    render(<NotificationBell />)
+    renderBell()
 
     await waitFor(() => expect(listNotifications).toHaveBeenCalled())
     expect(screen.getByLabelText('Notifications').querySelector('span')).toBeNull()
@@ -52,7 +61,7 @@ describe('NotificationBell', () => {
       unreadCount: 1,
     })
     const user = userEvent.setup()
-    render(<NotificationBell />)
+    renderBell()
 
     await waitFor(() =>
       expect(screen.getByLabelText('Notifications').querySelector('span')).not.toBeNull(),
@@ -72,7 +81,7 @@ describe('NotificationBell', () => {
     })
     vi.mocked(markNotificationRead).mockResolvedValue({ notification: notification({ isRead: true }) })
     const user = userEvent.setup()
-    render(<NotificationBell />)
+    renderBell()
 
     await user.click(screen.getByLabelText('Notifications'))
     await user.click(await screen.findByText('New message from Dana Doctor'))
@@ -88,7 +97,7 @@ describe('NotificationBell', () => {
     })
     vi.mocked(markAllNotificationsRead).mockResolvedValue(undefined)
     const user = userEvent.setup()
-    render(<NotificationBell />)
+    renderBell()
 
     await user.click(screen.getByLabelText('Notifications'))
     await user.click(await screen.findByText('Mark all read'))
@@ -104,7 +113,7 @@ describe('NotificationBell', () => {
       .mockResolvedValueOnce({ notifications: [], unreadCount: 0 })
       .mockRejectedValueOnce(new ApiError('Failed to load notifications', { status: 500 }))
     const user = userEvent.setup()
-    render(<NotificationBell />)
+    renderBell()
 
     await waitFor(() => expect(listNotifications).toHaveBeenCalledTimes(1))
     await user.click(screen.getByLabelText('Notifications'))

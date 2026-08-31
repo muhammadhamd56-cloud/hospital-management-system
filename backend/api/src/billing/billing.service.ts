@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   InvoiceStatus,
+  NotificationType,
   PaymentMethod,
   Role,
   type Invoice,
@@ -11,10 +12,12 @@ import {
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { roundMoney } from '../common/money.util';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { RecordPaymentDto } from './dto/record-payment.dto';
 import { StripeService } from './stripe.service';
+import { formatInvoiceNumber } from './invoice-number.util';
 
 export interface InvoiceItemResponse {
   id: string;
@@ -70,9 +73,6 @@ type InvoiceWithRelations = Invoice & {
   payments: (Payment & { recordedBy: Pick<User, 'firstName' | 'lastName'> | null })[];
 };
 
-export function formatInvoiceNumber(invoiceNumber: number): string {
-  return `INV-${String(invoiceNumber).padStart(4, '0')}`;
-}
 
 function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceResponse {
   const subtotal = roundMoney(invoice.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice - item.discount), 0));
@@ -142,6 +142,7 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
     private readonly auditLogService: AuditLogService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -275,6 +276,14 @@ export class BillingService {
       metadata: { invoiceNumber: response.invoiceNumber, patientId: dto.patientId, amount: response.amount },
     });
 
+    await this.notificationsService.create(
+      dto.patientId,
+      NotificationType.INVOICE_CREATED,
+      `New invoice ${response.invoiceNumber}`,
+      `You have a new invoice for ${response.amount.toFixed(2)}.`,
+      `/billing?invoiceId=${invoice.id}`,
+    );
+
     return response;
   }
 
@@ -338,7 +347,17 @@ export class BillingService {
       metadata: { paymentAmount: amount, method: dto.method, resultingStatus: updated.status },
     });
 
-    return toInvoiceResponse(updated);
+    const response = toInvoiceResponse(updated);
+
+    await this.notificationsService.create(
+      invoice.patientId,
+      NotificationType.PAYMENT_RECEIVED,
+      'Payment received',
+      `Payment of ${amount.toFixed(2)} received for Invoice ${response.invoiceNumber}.`,
+      `/billing?invoiceId=${id}`,
+    );
+
+    return response;
   }
 
   /** Admin-only. Refuses to cancel an invoice that already has payments recorded -- refund first. */
@@ -481,7 +500,17 @@ export class BillingService {
       include: INVOICE_INCLUDE,
     });
 
-    return toInvoiceResponse(invoice);
+    const response = toInvoiceResponse(invoice);
+
+    await this.notificationsService.create(
+      patientId,
+      NotificationType.INVOICE_CREATED,
+      `New invoice ${response.invoiceNumber}`,
+      `${description} — ${response.amount.toFixed(2)}.`,
+      `/billing?invoiceId=${invoice.id}`,
+    );
+
+    return response;
   }
 
   /**

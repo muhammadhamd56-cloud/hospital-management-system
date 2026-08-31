@@ -16,15 +16,18 @@ interface UpcomingSessionsCardProps {
   appointments: PatientAppointment[]
   isLoading?: boolean
   onCancelled: (appointment: PatientAppointment) => void
+  onView?: (appointment: PatientAppointment) => void
 }
 
 function SessionRow({
   appointment,
   onCancelled,
+  onView,
   showCancel = true,
 }: {
   appointment: PatientAppointment
   onCancelled: (appointment: PatientAppointment) => void
+  onView?: (appointment: PatientAppointment) => void
   showCancel?: boolean
 }) {
   const [isCancelling, setIsCancelling] = useState(false)
@@ -44,7 +47,10 @@ function SessionRow({
   }
 
   return (
-    <li className="flex items-center justify-between gap-3 py-3">
+    <li
+      className={onView ? 'flex cursor-pointer items-center justify-between gap-3 py-3 hover:bg-surface-alt' : 'flex items-center justify-between gap-3 py-3'}
+      onClick={onView ? () => onView(appointment) : undefined}
+    >
       <div className="min-w-0">
         <p className="truncate text-sm font-medium text-ink">{appointment.doctorName}</p>
         <p className="truncate text-xs text-ink-muted">{appointment.specialization}</p>
@@ -72,7 +78,15 @@ function SessionRow({
           )}
         </Badge>
         {showCancel && (
-          <Button size="sm" variant="secondary" isLoading={isCancelling} onClick={handleCancel}>
+          <Button
+            size="sm"
+            variant="secondary"
+            isLoading={isCancelling}
+            onClick={(event) => {
+              event.stopPropagation()
+              handleCancel()
+            }}
+          >
             Cancel
           </Button>
         )}
@@ -81,7 +95,7 @@ function SessionRow({
   )
 }
 
-export function UpcomingSessionsCard({ appointments, isLoading = false, onCancelled }: UpcomingSessionsCardProps) {
+export function UpcomingSessionsCard({ appointments, isLoading = false, onCancelled, onView }: UpcomingSessionsCardProps) {
   const upcoming = appointments.filter(
     (appointment) => appointment.status === 'scheduled' && isUpcoming(appointment.scheduledAt),
   )
@@ -115,7 +129,7 @@ export function UpcomingSessionsCard({ appointments, isLoading = false, onCancel
             ) : (
               <ul className="divide-y divide-surface-border">
                 {upcoming.map((appointment) => (
-                  <SessionRow key={appointment.id} appointment={appointment} onCancelled={onCancelled} />
+                  <SessionRow key={appointment.id} appointment={appointment} onCancelled={onCancelled} onView={onView} />
                 ))}
               </ul>
             )}
@@ -130,7 +144,7 @@ export function UpcomingSessionsCard({ appointments, isLoading = false, onCancel
             ) : (
               <ul className="divide-y divide-surface-border">
                 {onlineOnly.map((appointment) => (
-                  <SessionRow key={appointment.id} appointment={appointment} onCancelled={onCancelled} />
+                  <SessionRow key={appointment.id} appointment={appointment} onCancelled={onCancelled} onView={onView} />
                 ))}
               </ul>
             )}
@@ -145,6 +159,7 @@ export function UpcomingSessionsCard({ appointments, isLoading = false, onCancel
                     key={appointment.id}
                     appointment={appointment}
                     onCancelled={onCancelled}
+                    onView={onView}
                     showCancel={false}
                   />
                 ))}

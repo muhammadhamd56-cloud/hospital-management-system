@@ -61,6 +61,7 @@ describe('ChatService', () => {
         NotificationType.CHAT_MESSAGE,
         'New message from Pat Ient',
         'Hi',
+        '/messages?patientId=patient-1',
       );
       expect(thread).toHaveLength(1);
     });

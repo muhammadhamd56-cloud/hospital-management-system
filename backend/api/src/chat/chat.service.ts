@@ -87,6 +87,7 @@ export class ChatService {
       NotificationType.CHAT_MESSAGE,
       `New message from ${patientName}`,
       body,
+      `/messages?patientId=${patientId}`,
     );
 
     const thread = await this.prisma.chatMessage.findMany({

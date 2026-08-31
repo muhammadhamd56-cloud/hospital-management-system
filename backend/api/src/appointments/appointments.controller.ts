@@ -20,8 +20,10 @@ export class AppointmentsController {
   /** Ops-wide view across all doctors/patients — overrides the class-level PATIENT-only role. */
   @Get()
   @Roles(Role.ADMIN, Role.DOCTOR)
-  async findAllForAdmin(): Promise<{ appointments: AdminAppointmentResponse[] }> {
-    const appointments = await this.appointmentsService.findAllForAdmin();
+  async findAllForAdmin(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ appointments: AdminAppointmentResponse[] }> {
+    const appointments = await this.appointmentsService.findAllForAdmin(user);
     return { appointments };
   }
 

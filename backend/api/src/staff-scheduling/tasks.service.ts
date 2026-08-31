@@ -97,6 +97,7 @@ export class TasksService {
         NotificationType.TASK_ASSIGNED,
         'New task assigned',
         `"${task.title}" is due ${task.dueAt.toLocaleString()}.`,
+        `/my-tasks?taskId=${task.id}`,
       );
     }
 
@@ -157,6 +158,7 @@ export class TasksService {
         NotificationType.TASK_ASSIGNED,
         'Task assigned to you',
         `"${task.title}" is due ${task.dueAt.toLocaleString()}.`,
+        `/my-tasks?taskId=${task.id}`,
       );
     }
 

@@ -71,8 +71,8 @@ describe('AnnouncementsService', () => {
 
       const created = buildAnnouncement();
       expect(notifications.create).toHaveBeenCalledTimes(2);
-      expect(notifications.create).toHaveBeenCalledWith('user-1', 'ANNOUNCEMENT_PUBLISHED', created.title, created.description);
-      expect(notifications.create).toHaveBeenCalledWith('user-2', 'ANNOUNCEMENT_PUBLISHED', created.title, created.description);
+      expect(notifications.create).toHaveBeenCalledWith('user-1', 'ANNOUNCEMENT_PUBLISHED', created.title, created.description, '/announcements');
+      expect(notifications.create).toHaveBeenCalledWith('user-2', 'ANNOUNCEMENT_PUBLISHED', created.title, created.description, '/announcements');
     });
 
     it('only queries active, login-linked staff -- name-only roster entries have nowhere to be notified', async () => {

@@ -62,6 +62,7 @@ export class AnnouncementsService {
             NotificationType.ANNOUNCEMENT_PUBLISHED,
             announcement.title,
             announcement.description,
+            '/announcements',
           ),
         ),
     );

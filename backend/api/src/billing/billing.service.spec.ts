@@ -14,6 +14,7 @@ import { BillingService } from './billing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from './stripe.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 
@@ -148,6 +149,7 @@ describe('BillingService', () => {
   };
   let stripeService: { createCheckoutSession: jest.Mock };
   let auditLogService: { log: jest.Mock };
+  let notificationsService: { create: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -165,6 +167,7 @@ describe('BillingService', () => {
     };
     stripeService = { createCheckoutSession: jest.fn() };
     auditLogService = { log: jest.fn().mockResolvedValue(undefined) };
+    notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -172,6 +175,7 @@ describe('BillingService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StripeService, useValue: stripeService },
         { provide: AuditLogService, useValue: auditLogService },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -445,6 +449,13 @@ describe('BillingService', () => {
       expect(auditLogService.log).toHaveBeenCalledWith(
         expect.objectContaining({ actorId: 'admin-1', action: 'CREATE', entityType: 'Invoice' }),
       );
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        'patient-1',
+        'INVOICE_CREATED',
+        expect.stringContaining('INV-'),
+        expect.any(String),
+        '/billing?invoiceId=inv-new',
+      );
     });
 
     it('applies an invoice-level discount and tax on top of the item subtotal', async () => {
@@ -511,6 +522,13 @@ describe('BillingService', () => {
         include: INVOICE_INCLUDE,
       });
       expect(result).toMatchObject({ id: 'inv-consult', amount: 150 });
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        'patient-1',
+        'INVOICE_CREATED',
+        expect.stringContaining('INV-'),
+        expect.any(String),
+        '/billing?invoiceId=inv-consult',
+      );
     });
 
     it('links the invoice to the appointment when an appointmentId is given', async () => {
@@ -634,6 +652,13 @@ describe('BillingService', () => {
         include: INVOICE_INCLUDE,
       });
       expect(result).toMatchObject({ status: 'partially_paid', amountPaid: 200, remaining: 300 });
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        'patient-1',
+        'PAYMENT_RECEIVED',
+        'Payment received',
+        expect.stringContaining('200.00'),
+        '/billing?invoiceId=inv-1',
+      );
     });
 
     it('records a payment that fully settles the remaining balance, marking the invoice PAID', async () => {

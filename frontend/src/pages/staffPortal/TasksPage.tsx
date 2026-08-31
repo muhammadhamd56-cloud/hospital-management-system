@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { AlertTriangle, ListTodo } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
@@ -8,6 +9,7 @@ import { TaskStatusBadge } from '@/features/staffPortal/TaskStatusBadge'
 import { TaskPriorityBadge } from '@/features/staffPortal/TaskPriorityBadge'
 import { listMyTasks, updateMyTaskStatus } from '@/features/staffPortal/api'
 import { ApiError } from '@/lib/apiClient'
+import { cn } from '@/utils/cn'
 import type { Task, TaskDisplayStatus } from '@/types/staffPortal'
 
 type FilterValue = TaskDisplayStatus | 'all'
@@ -30,6 +32,9 @@ export function TasksPage() {
   const [loadError, setLoadError] = useState(false)
   const [filter, setFilter] = useState<FilterValue>('all')
   const [mutatingId, setMutatingId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const highlightedTaskId = searchParams.get('taskId')
+  const taskRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   function refresh() {
     setIsLoading(true)
@@ -43,6 +48,32 @@ export function TasksPage() {
   useEffect(() => {
     refresh()
   }, [])
+
+  // Deep link from a notification (a task assignment/reminder) -> My Tasks.
+  // There's no separate task detail view -- everything is already shown
+  // inline -- so "opening" the task means switching to the "All" filter
+  // (so it isn't hidden by whatever filter is active) and scrolling to/
+  // highlighting its card. Left in the URL so a refresh re-highlights it.
+  useEffect(() => {
+    if (!highlightedTaskId || isLoading) return
+
+    const found = tasks.find((task) => task.id === highlightedTaskId)
+    if (!found) {
+      toast.error('This task is no longer available.')
+      setSearchParams(
+        (prev) => {
+          prev.delete('taskId')
+          return prev
+        },
+        { replace: true },
+      )
+      return
+    }
+
+    setFilter('all')
+    taskRefs.current.get(highlightedTaskId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightedTaskId, tasks, isLoading])
 
   const filteredTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => a.dueAt.localeCompare(b.dueAt))
@@ -113,7 +144,14 @@ export function TasksPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {filteredTasks.map((task) => (
-                <Card key={task.id}>
+                <div
+                  key={task.id}
+                  ref={(node) => {
+                    if (node) taskRefs.current.set(task.id, node)
+                    else taskRefs.current.delete(task.id)
+                  }}
+                >
+                <Card className={cn(task.id === highlightedTaskId && 'ring-2 ring-brand-500')}>
                   <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -150,6 +188,7 @@ export function TasksPage() {
                     )}
                   </CardContent>
                 </Card>
+                </div>
               ))}
             </div>
           )}

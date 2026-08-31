@@ -285,12 +285,14 @@ describe('LaboratoryService', () => {
         NotificationType.LAB_RESULT_READY,
         'Lab result ready',
         expect.stringContaining('Complete Blood Count'),
+        '/medical-records',
       );
       expect(notificationsService.create).toHaveBeenCalledWith(
         'doctor-user-1',
         NotificationType.LAB_RESULT_READY,
         'Lab result ready',
         expect.stringContaining('Ada Lovelace'),
+        '/laboratory',
       );
       expect(result.status).toBe('completed');
     });

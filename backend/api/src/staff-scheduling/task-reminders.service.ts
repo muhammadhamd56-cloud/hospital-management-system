@@ -52,6 +52,7 @@ export class TaskRemindersService {
             NotificationType.TASK_DUE_SOON,
             'Task due soon',
             `"${task.title}" is due ${task.dueAt.toLocaleString()}.`,
+            `/my-tasks?taskId=${task.id}`,
           );
         }
 
@@ -86,6 +87,7 @@ export class TaskRemindersService {
             NotificationType.TASK_OVERDUE,
             'Task overdue',
             `"${task.title}" was due ${task.dueAt.toLocaleString()}.`,
+            `/my-tasks?taskId=${task.id}`,
           );
         }
 

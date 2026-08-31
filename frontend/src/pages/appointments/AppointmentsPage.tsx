@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/Input'
@@ -17,6 +18,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { usePagination } from '@/hooks/usePagination'
 import { formatDateTime } from '@/utils/datetime'
 import { listAllAppointments, type AdminAppointment } from '@/features/appointments/api'
+import { AppointmentDetailsModal } from '@/features/appointments/AppointmentDetailsModal'
 import { ApiError } from '@/lib/apiClient'
 import type { SessionStatus } from '@/types/patientSession'
 
@@ -40,6 +42,8 @@ export function AppointmentsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<SessionStatus | 'all'>('all')
+  const [viewingAppointment, setViewingAppointment] = useState<AdminAppointment | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   useEffect(() => {
     listAllAppointments()
@@ -50,6 +54,41 @@ export function AppointmentsPage() {
       })
       .finally(() => setIsLoading(false))
   }, [])
+
+  // Deep link from a notification (e.g. "New appointment booked" -> Appointments).
+  // Left in the URL so refreshing the page re-opens the same appointment.
+  useEffect(() => {
+    const appointmentId = searchParams.get('appointmentId')
+    if (!appointmentId || isLoading) return
+
+    const found = appointments.find((appointment) => appointment.id === appointmentId)
+    if (found) {
+      setViewingAppointment(found)
+    } else {
+      toast.error('This appointment is no longer available.')
+      setSearchParams(
+        (prev) => {
+          prev.delete('appointmentId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, appointments, isLoading])
+
+  function handleCloseAppointmentModal() {
+    setViewingAppointment(null)
+    if (searchParams.has('appointmentId')) {
+      setSearchParams(
+        (prev) => {
+          prev.delete('appointmentId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+  }
 
   const filteredAppointments = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -119,7 +158,11 @@ export function AppointmentsPage() {
             </TableHeader>
             <TableBody>
               {pageItems.map((appointment) => (
-                <TableRow key={appointment.id}>
+                <TableRow
+                  key={appointment.id}
+                  className="cursor-pointer hover:bg-surface-alt"
+                  onClick={() => setViewingAppointment(appointment)}
+                >
                   <TableCell className="font-medium text-ink">{appointment.patientName}</TableCell>
                   <TableCell>{appointment.doctorName}</TableCell>
                   <TableCell>{appointment.department}</TableCell>
@@ -143,6 +186,8 @@ export function AppointmentsPage() {
           />
         </div>
       )}
+
+      <AppointmentDetailsModal appointment={viewingAppointment} onClose={handleCloseAppointmentModal} />
     </div>
   )
 }

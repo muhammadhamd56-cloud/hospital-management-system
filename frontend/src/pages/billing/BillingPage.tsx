@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { Search, ReceiptText, CheckCircle2, Clock, AlertTriangle, ListOrdered, Download, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
@@ -103,6 +104,44 @@ export function BillingPage() {
   const [payingInvoice, setPayingInvoice] = useState<Invoice | null>(null)
   const [cancellingInvoice, setCancellingInvoice] = useState<Invoice | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Deep link from a notification (e.g. "Invoice INV-0001" -> Billing).
+  // Left in the URL (not stripped like ?paid= on the patient side) so
+  // refreshing the page re-opens the same invoice instead of losing it to
+  // component state.
+  useEffect(() => {
+    const invoiceId = searchParams.get('invoiceId')
+    if (!invoiceId || isLoading) return
+
+    const found = invoices.find((invoice) => invoice.id === invoiceId)
+    if (found) {
+      setViewingInvoice(found)
+    } else {
+      toast.error('This invoice is no longer available.')
+      setSearchParams(
+        (prev) => {
+          prev.delete('invoiceId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, invoices, isLoading])
+
+  function handleCloseInvoiceModal() {
+    setViewingInvoice(null)
+    if (searchParams.has('invoiceId')) {
+      setSearchParams(
+        (prev) => {
+          prev.delete('invoiceId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+  }
 
   function loadOverview() {
     getBillingOverview()
@@ -334,7 +373,7 @@ export function BillingPage() {
 
       <InvoiceDetailsModal
         invoice={viewingInvoice}
-        onClose={() => setViewingInvoice(null)}
+        onClose={handleCloseInvoiceModal}
         onRecordPayment={(invoice) => {
           setViewingInvoice(null)
           setPayingInvoice(invoice)

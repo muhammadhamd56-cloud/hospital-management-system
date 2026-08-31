@@ -15,9 +15,12 @@ import type { DoctorInboxPatient } from '@/types/doctorChatInbox'
 interface DoctorInboxPanelProps {
   patients: DoctorInboxPatient[]
   isPatientsLoading?: boolean
+  /** Pre-selects this patient's conversation once it appears in the inbox --
+   *  e.g. arriving here from a "New message" notification. */
+  initialPatientId?: string | null
 }
 
-export function DoctorInboxPanel({ patients, isPatientsLoading = false }: DoctorInboxPanelProps) {
+export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialPatientId }: DoctorInboxPanelProps) {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -25,10 +28,14 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false }: Doctor
   const [isSending, setIsSending] = useState(false)
 
   useEffect(() => {
-    if (!selectedPatientId && patients.length > 0) {
+    if (selectedPatientId || patients.length === 0) return
+
+    if (initialPatientId && patients.some((patient) => patient.patientId === initialPatientId)) {
+      setSelectedPatientId(initialPatientId)
+    } else {
       setSelectedPatientId(patients[0].patientId)
     }
-  }, [patients, selectedPatientId])
+  }, [patients, selectedPatientId, initialPatientId])
 
   useEffect(() => {
     if (!selectedPatientId) return

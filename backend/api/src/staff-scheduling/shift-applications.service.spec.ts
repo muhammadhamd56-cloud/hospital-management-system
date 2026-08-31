@@ -249,6 +249,7 @@ describe('ShiftApplicationsService', () => {
         'SHIFT_APPLICATION_REJECTED',
         expect.any(String),
         expect.any(String),
+        '/available-shifts',
       );
     });
 
@@ -280,6 +281,7 @@ describe('ShiftApplicationsService', () => {
         'SHIFT_APPLICATION_APPROVED',
         expect.any(String),
         expect.any(String),
+        '/my-shifts?shiftId=shift-1',
       );
     });
 

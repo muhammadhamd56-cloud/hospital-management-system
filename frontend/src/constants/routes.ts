@@ -18,6 +18,7 @@ export const ROUTES = {
   reports: '/reports',
   settings: '/settings',
   messages: '/messages',
+  notifications: '/notifications',
   medicalRecords: '/medical-records',
   findDoctor: '/find-doctor',
   bookAppointment: '/book-appointment',

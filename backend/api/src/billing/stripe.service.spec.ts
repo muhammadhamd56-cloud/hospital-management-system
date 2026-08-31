@@ -17,10 +17,13 @@ import { InvoiceStatus, PaymentMethod } from '@prisma/client';
 import Stripe from 'stripe';
 import { StripeService } from './stripe.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 function buildInvoiceRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'invoice-1',
+    patientId: 'patient-1',
+    invoiceNumber: 7,
     stripeCheckoutSessionId: 'cs_test_1',
     status: InvoiceStatus.PENDING,
     discount: 0,
@@ -35,16 +38,19 @@ describe('StripeService', () => {
   let service: StripeService;
   let prisma: { invoice: { update: jest.Mock; findUnique: jest.Mock }; payment: { create: jest.Mock } };
   let configService: { get: jest.Mock };
+  let notificationsService: { create: jest.Mock };
 
   async function buildService(values: Record<string, string | undefined>) {
     configService = { get: jest.fn((key: string) => values[key]) };
     prisma = { invoice: { update: jest.fn(), findUnique: jest.fn() }, payment: { create: jest.fn() } };
+    notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StripeService,
         { provide: ConfigService, useValue: configService },
         { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -256,6 +262,13 @@ describe('StripeService', () => {
           where: { id: 'invoice-1' },
           data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
         });
+        expect(notificationsService.create).toHaveBeenCalledWith(
+          'patient-1',
+          'PAYMENT_RECEIVED',
+          'Payment received',
+          expect.stringContaining('INV-0007'),
+          '/billing?invoiceId=invoice-1',
+        );
       });
     });
   });

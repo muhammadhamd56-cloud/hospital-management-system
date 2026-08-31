@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router'
+import toast from 'react-hot-toast'
 import { AlertTriangle, CalendarClock } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -47,6 +49,7 @@ export function MyShiftsPage() {
   const [calendarMode, setCalendarMode] = useState<CalendarMode>('week')
   const [anchorDate, setAnchorDate] = useState(() => new Date())
   const [viewingShift, setViewingShift] = useState<Shift | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   function refresh() {
     setIsLoading(true)
@@ -60,6 +63,41 @@ export function MyShiftsPage() {
   useEffect(() => {
     refresh()
   }, [])
+
+  // Deep link from a notification (e.g. a shift assignment) -> My Shifts.
+  // Left in the URL so refreshing the page re-opens the same shift.
+  useEffect(() => {
+    const shiftId = searchParams.get('shiftId')
+    if (!shiftId || isLoading) return
+
+    const found = shifts.find((shift) => shift.id === shiftId)
+    if (found) {
+      setViewingShift(found)
+    } else {
+      toast.error('This shift is no longer available.')
+      setSearchParams(
+        (prev) => {
+          prev.delete('shiftId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, shifts, isLoading])
+
+  function handleCloseShiftDetail() {
+    setViewingShift(null)
+    if (searchParams.has('shiftId')) {
+      setSearchParams(
+        (prev) => {
+          prev.delete('shiftId')
+          return prev
+        },
+        { replace: true },
+      )
+    }
+  }
 
   const filteredShifts = useMemo(() => {
     const sorted = [...shifts].sort((a, b) => a.startTime.localeCompare(b.startTime))
@@ -186,7 +224,7 @@ export function MyShiftsPage() {
         </Tabs>
       )}
 
-      <ShiftDetailCard shift={viewingShift} onClose={() => setViewingShift(null)} />
+      <ShiftDetailCard shift={viewingShift} onClose={handleCloseShiftDetail} />
     </div>
   )
 }

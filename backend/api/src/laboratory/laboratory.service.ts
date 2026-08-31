@@ -123,12 +123,14 @@ export class LaboratoryService {
           NotificationType.LAB_RESULT_READY,
           'Lab result ready',
           `Your ${updated.testName} results are ready.`,
+          '/medical-records',
         ),
         this.notificationsService.create(
           updated.doctor.userId,
           NotificationType.LAB_RESULT_READY,
           'Lab result ready',
           `${patientName}'s ${updated.testName} results are ready.`,
+          '/laboratory',
         ),
       ]);
     }

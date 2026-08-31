@@ -316,6 +316,7 @@ describe('DoctorPortalService', () => {
         NotificationType.APPOINTMENT_CANCELLED,
         'Appointment cancelled',
         expect.stringContaining('Dr. Greta House cancelled your session'),
+        '/my-appointments?appointmentId=appt-1',
       );
       expect(billingService.cancelInvoiceForAppointment).toHaveBeenCalledWith('appt-1');
       expect(result.status).toBe('cancelled');
@@ -466,6 +467,7 @@ describe('DoctorPortalService', () => {
         NotificationType.CHAT_MESSAGE,
         'New message from Dr. Greta House',
         'hi',
+        '/messages?doctorId=doctor-1',
       );
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({ sender: 'doctor', body: 'hi' });
@@ -546,6 +548,7 @@ describe('DoctorPortalService', () => {
         NotificationType.MEDICAL_RECORD_ADDED,
         'New medical record added',
         expect.stringContaining('Dr. Greta House added a new diagnosis'),
+        '/medical-records',
       );
       expect(result).toBe(record);
     });

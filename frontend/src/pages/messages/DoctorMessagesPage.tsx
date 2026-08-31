@@ -1,8 +1,11 @@
+import { useSearchParams } from 'react-router'
 import { useDoctorInbox } from '@/features/doctorDashboard/useDoctorInbox'
 import { DoctorInboxPanel } from '@/features/doctorDashboard/DoctorInboxPanel'
 
 export function DoctorMessagesPage() {
   const { patients, isLoading } = useDoctorInbox()
+  const [searchParams] = useSearchParams()
+  const initialPatientId = searchParams.get('patientId')
 
   return (
     <div className="flex flex-col gap-6">
@@ -12,7 +15,7 @@ export function DoctorMessagesPage() {
       </div>
 
       <div className="animate-fade-in">
-        <DoctorInboxPanel patients={patients} isPatientsLoading={isLoading} />
+        <DoctorInboxPanel patients={patients} isPatientsLoading={isLoading} initialPatientId={initialPatientId} />
       </div>
     </div>
   )

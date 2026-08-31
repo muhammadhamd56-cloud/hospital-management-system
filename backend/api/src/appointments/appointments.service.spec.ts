@@ -7,6 +7,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { BillingService } from '../billing/billing.service';
 import type { BookAppointmentDto } from './dto/book-appointment.dto';
 import type { AppointmentWithDoctorAndPatient } from './appointment.mapper';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
+
+const admin: AuthenticatedUser = { id: 'admin-1', email: 'admin@example.com', role: Role.ADMIN };
+const doctorCaller: AuthenticatedUser = { id: 'doctor-user-1', email: 'doc@example.com', role: Role.DOCTOR };
 
 function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
   return {
@@ -139,13 +143,15 @@ describe('AppointmentsService', () => {
   });
 
   describe('findAllForAdmin', () => {
-    it('returns all appointments mapped to the admin response shape, ordered by scheduledAt', async () => {
+    it('returns every appointment for an admin caller, mapped to the admin response shape', async () => {
       const appointment = buildAppointmentWithDoctorAndPatient();
       prisma.appointment.findMany.mockResolvedValue([appointment]);
 
-      const result = await service.findAllForAdmin();
+      const result = await service.findAllForAdmin(admin);
 
+      expect(prisma.doctor.findUnique).not.toHaveBeenCalled();
       expect(prisma.appointment.findMany).toHaveBeenCalledWith({
+        where: {},
         include: {
           doctor: {
             include: {
@@ -176,9 +182,28 @@ describe('AppointmentsService', () => {
     it('returns an empty array when there are no appointments', async () => {
       prisma.appointment.findMany.mockResolvedValue([]);
 
-      const result = await service.findAllForAdmin();
+      const result = await service.findAllForAdmin(admin);
 
       expect(result).toEqual([]);
+    });
+
+    it('scopes a doctor caller to only their own appointments', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ id: 'doctor-1', userId: 'doctor-user-1' }));
+      prisma.appointment.findMany.mockResolvedValue([]);
+
+      await service.findAllForAdmin(doctorCaller);
+
+      expect(prisma.doctor.findUnique).toHaveBeenCalledWith({ where: { userId: 'doctor-user-1' } });
+      expect(prisma.appointment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { doctorId: 'doctor-1' } }),
+      );
+    });
+
+    it('returns an empty array without querying appointments when the doctor has no linked profile', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(null);
+
+      await expect(service.findAllForAdmin(doctorCaller)).resolves.toEqual([]);
+      expect(prisma.appointment.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -315,6 +340,7 @@ describe('AppointmentsService', () => {
         NotificationType.APPOINTMENT_BOOKED,
         'New appointment booked',
         expect.stringContaining('Ada Lovelace'),
+        `/appointments?appointmentId=${created.id}`,
       );
 
       expect(result).toEqual({
@@ -461,6 +487,7 @@ describe('AppointmentsService', () => {
         NotificationType.APPOINTMENT_CANCELLED,
         'Appointment cancelled',
         expect.stringContaining('Ada Lovelace'),
+        '/appointments?appointmentId=appt-1',
       );
 
       expect(billingService.cancelInvoiceForAppointment).toHaveBeenCalledWith('appt-1');

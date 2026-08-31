@@ -14,6 +14,8 @@ export type NotificationType =
   | 'task_due_soon'
   | 'task_overdue'
   | 'announcement_published'
+  | 'invoice_created'
+  | 'payment_received'
 
 export interface AppNotification {
   id: string

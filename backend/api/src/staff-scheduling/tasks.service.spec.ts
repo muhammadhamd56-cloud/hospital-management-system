@@ -97,7 +97,7 @@ describe('TasksService', () => {
       expect(prisma.task.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ title: dto.title, assignedToId: STAFF_ID }) }),
       );
-      expect(notifications.create).toHaveBeenCalledWith(USER_ID, 'TASK_ASSIGNED', expect.any(String), expect.any(String));
+      expect(notifications.create).toHaveBeenCalledWith(USER_ID, 'TASK_ASSIGNED', expect.any(String), expect.any(String), '/my-tasks?taskId=task-1');
       expect(auditLog.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'CREATE', entityType: 'Task' }));
       expect(result.status).toBe('pending');
     });
@@ -124,7 +124,7 @@ describe('TasksService', () => {
       expect(prisma.task.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ reminderSentAt: null, overdueNotifiedAt: null }) }),
       );
-      expect(notifications.create).toHaveBeenCalledWith(USER_ID, 'TASK_ASSIGNED', expect.any(String), expect.any(String));
+      expect(notifications.create).toHaveBeenCalledWith(USER_ID, 'TASK_ASSIGNED', expect.any(String), expect.any(String), '/my-tasks?taskId=task-1');
     });
 
     it('does not touch reminder stamps or notify when the assignee is unchanged', async () => {

@@ -155,6 +155,7 @@ export class DoctorPortalService {
         NotificationType.APPOINTMENT_CANCELLED,
         'Appointment cancelled',
         `Dr. ${doctorName} cancelled your session on ${updated.scheduledAt.toLocaleString()}.`,
+        `/my-appointments?appointmentId=${appointmentId}`,
       );
       await this.billingService.cancelInvoiceForAppointment(appointmentId);
     }
@@ -240,6 +241,7 @@ export class DoctorPortalService {
       NotificationType.CHAT_MESSAGE,
       `New message from Dr. ${doctorName}`,
       body,
+      `/messages?doctorId=${doctor.id}`,
     );
 
     const thread = await this.prisma.chatMessage.findMany({
@@ -273,6 +275,7 @@ export class DoctorPortalService {
       NotificationType.MEDICAL_RECORD_ADDED,
       'New medical record added',
       `Dr. ${doctorName} added a new diagnosis to your medical records.`,
+      '/medical-records',
     );
 
     return record;

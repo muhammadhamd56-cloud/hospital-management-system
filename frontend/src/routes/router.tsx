@@ -39,6 +39,7 @@ const reportsPage = () => import('@/pages/reports/ReportsPage').then((m) => ({ C
 const laboratoryPage = () => import('@/pages/laboratory/LaboratoryPage').then((m) => ({ Component: m.LaboratoryPage }))
 const staffPage = () => import('@/pages/staff/StaffPage').then((m) => ({ Component: m.StaffPage }))
 const staffSchedulingPage = () => import('@/pages/staffScheduling/StaffSchedulingPage').then((m) => ({ Component: m.StaffSchedulingPage }))
+const notificationsPage = () => import('@/pages/notifications/NotificationsPage').then((m) => ({ Component: m.NotificationsPage }))
 
 export const router = createBrowserRouter([
   // Unguarded: the user isn't loaded yet when Google redirects back here.
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
         element: <DashboardLayout />,
         children: [
           { path: ROUTES.dashboard, lazy: dashboardSwitch },
+          { path: ROUTES.notifications, lazy: notificationsPage },
           { path: ROUTES.settings, lazy: settingsSwitch },
           { path: ROUTES.messages, lazy: messagesSwitch },
           { path: ROUTES.medicalRecords, lazy: medicalRecordsSwitch },

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { toPrismaMode } from '../common/session.mapper';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BillingService } from '../billing/billing.service';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { BookAppointmentDto } from './dto/book-appointment.dto';
 import {
   AdminAppointmentResponse,
@@ -39,8 +40,28 @@ export class AppointmentsService {
     private readonly billingService: BillingService,
   ) {}
 
-  async findAllForAdmin(): Promise<AdminAppointmentResponse[]> {
+  /**
+   * ADMIN sees every appointment hospital-wide. DOCTOR is scoped to only
+   * their own appointments -- this endpoint used to return everyone's
+   * appointments to any doctor who called it, leaking every other doctor's
+   * patients (name, reason, schedule) to them. Mirrors the doctor-scoping
+   * pattern already used in PatientsService/BillingService/LaboratoryService.
+   */
+  async findAllForAdmin(caller: AuthenticatedUser): Promise<AdminAppointmentResponse[]> {
+    let where: { doctorId?: string } = {};
+
+    if (caller.role === Role.DOCTOR) {
+      const doctor = await this.prisma.doctor.findUnique({ where: { userId: caller.id } });
+
+      if (!doctor) {
+        return [];
+      }
+
+      where = { doctorId: doctor.id };
+    }
+
     const appointments = await this.prisma.appointment.findMany({
+      where,
       include: DOCTOR_AND_PATIENT_INCLUDE,
       orderBy: { scheduledAt: 'asc' },
     });
@@ -113,6 +134,7 @@ export class AppointmentsService {
       NotificationType.APPOINTMENT_BOOKED,
       'New appointment booked',
       `${patientName} booked a session with you on ${appointment.scheduledAt.toLocaleString()}.`,
+      `/appointments?appointmentId=${appointment.id}`,
     );
 
     if (doctor.consultationFee > 0) {
@@ -177,6 +199,7 @@ export class AppointmentsService {
       NotificationType.APPOINTMENT_CANCELLED,
       'Appointment cancelled',
       `${patientName} cancelled their session on ${updated.scheduledAt.toLocaleString()}.`,
+      `/appointments?appointmentId=${updated.id}`,
     );
 
     await this.billingService.cancelInvoiceForAppointment(appointmentId);

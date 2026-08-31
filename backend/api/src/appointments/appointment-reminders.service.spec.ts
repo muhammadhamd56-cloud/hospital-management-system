@@ -78,6 +78,7 @@ describe('AppointmentRemindersService', () => {
       'APPOINTMENT_REMINDER',
       expect.any(String),
       expect.stringContaining('Grace Hopper'),
+      '/my-appointments?appointmentId=appt-1',
     );
     expect(prisma.appointment.update).toHaveBeenCalledWith({
       where: { id: 'appt-1' },

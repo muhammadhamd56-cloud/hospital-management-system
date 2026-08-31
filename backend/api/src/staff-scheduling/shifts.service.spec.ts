@@ -225,7 +225,7 @@ describe('ShiftsService', () => {
 
       await service.create(MORNING_SHIFT_INPUT, 'admin-1');
 
-      expect(notifications.create).toHaveBeenCalledWith('user-1', 'SHIFT_SCHEDULED', expect.any(String), expect.any(String));
+      expect(notifications.create).toHaveBeenCalledWith('user-1', 'SHIFT_SCHEDULED', expect.any(String), expect.any(String), '/my-shifts?shiftId=shift-1');
     });
 
     it('rejects a shift on a date the staff member has leave', async () => {
@@ -442,7 +442,7 @@ describe('ShiftsService', () => {
 
       await service.update('shift-1', { status: 'cancelled' }, 'admin-1');
 
-      expect(notifications.create).toHaveBeenCalledWith('user-1', 'SHIFT_CANCELLED', expect.any(String), expect.any(String));
+      expect(notifications.create).toHaveBeenCalledWith('user-1', 'SHIFT_CANCELLED', expect.any(String), expect.any(String), '/my-shifts?shiftId=shift-1');
     });
 
     it('sends a generic update notification for a non-cancelling change', async () => {
@@ -454,7 +454,7 @@ describe('ShiftsService', () => {
 
       await service.update('shift-1', { notes: 'Covering for Ali' }, 'admin-1');
 
-      expect(notifications.create).toHaveBeenCalledWith('user-1', 'SHIFT_UPDATED', expect.any(String), expect.any(String));
+      expect(notifications.create).toHaveBeenCalledWith('user-1', 'SHIFT_UPDATED', expect.any(String), expect.any(String), '/my-shifts?shiftId=shift-1');
     });
   });
 

@@ -1,70 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  Bell,
-  BellRing,
-  Calendar,
-  CalendarClock,
-  CalendarPlus,
-  CalendarX,
-  FileText,
-  MessageCircle,
-  FlaskConical,
-  CheckCircle2,
-  XCircle,
-  ClipboardList,
-  AlarmClock,
-  AlertTriangle,
-  Megaphone,
-} from 'lucide-react'
-import toast from 'react-hot-toast'
+import { useNavigate } from 'react-router'
+import { Bell } from 'lucide-react'
 import { formatDateTime } from '@/utils/datetime'
 import { cn } from '@/utils/cn'
-import { ApiError } from '@/lib/apiClient'
-import type { AppNotification } from '@/types/notification'
-import { listNotifications, markAllNotificationsRead, markNotificationRead } from '@/features/notifications/api'
-
-const POLL_INTERVAL_MS = 30_000
-
-const TYPE_ICONS: Record<AppNotification['type'], typeof Bell> = {
-  appointment_booked: Calendar,
-  appointment_cancelled: CalendarX,
-  appointment_reminder: BellRing,
-  chat_message: MessageCircle,
-  medical_record_added: FileText,
-  lab_result_ready: FlaskConical,
-  shift_scheduled: CalendarPlus,
-  shift_updated: CalendarClock,
-  shift_cancelled: CalendarX,
-  shift_application_approved: CheckCircle2,
-  shift_application_rejected: XCircle,
-  task_assigned: ClipboardList,
-  task_due_soon: AlarmClock,
-  task_overdue: AlertTriangle,
-  announcement_published: Megaphone,
-}
+import { useNotificationActions } from '@/features/notifications/useNotificationActions'
+import { NOTIFICATION_TYPE_ICONS } from '@/features/notifications/notificationIcons'
+import { ROUTES } from '@/constants/routes'
 
 export function NotificationBell() {
-  const [notifications, setNotifications] = useState<AppNotification[]>([])
-  const [unreadCount, setUnreadCount] = useState(0)
+  const { notifications, unreadCount, isLoading, refresh, handleNotificationClick, handleMarkAllRead } =
+    useNotificationActions()
   const [isOpen, setIsOpen] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-
-  function refresh() {
-    listNotifications()
-      .then((res) => {
-        setNotifications(res.notifications)
-        setUnreadCount(res.unreadCount)
-      })
-      .catch(() => {
-        // Silent: polling failures shouldn't interrupt the user.
-      })
-  }
+  const navigate = useNavigate()
 
   useEffect(() => {
-    refresh()
-    const interval = setInterval(refresh, POLL_INTERVAL_MS)
+    const interval = setInterval(() => refresh({ silent: true }), 30_000)
     return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -90,49 +43,7 @@ export function NotificationBell() {
 
   function handleOpen() {
     setIsOpen((prev) => !prev)
-    if (!isOpen) {
-      setIsLoading(true)
-      listNotifications()
-        .then((res) => {
-          setNotifications(res.notifications)
-          setUnreadCount(res.unreadCount)
-        })
-        .catch((error) => {
-          const message = error instanceof ApiError ? error.message : 'Failed to load notifications'
-          toast.error(message)
-        })
-        .finally(() => setIsLoading(false))
-    }
-  }
-
-  async function handleNotificationClick(notification: AppNotification) {
-    if (notification.isRead) return
-
-    setNotifications((prev) =>
-      prev.map((item) => (item.id === notification.id ? { ...item, isRead: true } : item)),
-    )
-    setUnreadCount((prev) => Math.max(0, prev - 1))
-
-    try {
-      await markNotificationRead(notification.id)
-    } catch {
-      refresh()
-    }
-  }
-
-  async function handleMarkAllRead() {
-    if (unreadCount === 0) return
-
-    setNotifications((prev) => prev.map((item) => ({ ...item, isRead: true })))
-    setUnreadCount(0)
-
-    try {
-      await markAllNotificationsRead()
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : 'Failed to update notifications'
-      toast.error(message)
-      refresh()
-    }
+    if (!isOpen) refresh()
   }
 
   return (
@@ -176,20 +87,27 @@ export function NotificationBell() {
             ) : (
               <ul>
                 {notifications.map((notification) => {
-                  const Icon = TYPE_ICONS[notification.type]
+                  const Icon = NOTIFICATION_TYPE_ICONS[notification.type]
                   return (
                     <li key={notification.id}>
                       <button
                         type="button"
-                        onClick={() => handleNotificationClick(notification)}
+                        onClick={() => handleNotificationClick(notification, () => setIsOpen(false))}
                         className={cn(
-                          'flex w-full gap-3 border-b border-surface-border px-4 py-3 text-left last:border-b-0 hover:bg-surface-alt',
+                          'flex w-full cursor-pointer gap-3 border-b border-surface-border px-4 py-3 text-left last:border-b-0 hover:bg-surface-alt',
                           !notification.isRead && 'bg-brand-50 dark:bg-brand-500/10',
                         )}
                       >
                         <Icon className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden="true" />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-ink">{notification.title}</p>
+                          <p
+                            className={cn(
+                              'truncate text-sm text-ink',
+                              !notification.isRead ? 'font-semibold' : 'font-medium',
+                            )}
+                          >
+                            {notification.title}
+                          </p>
                           <p className="line-clamp-2 text-xs text-ink-muted">{notification.body}</p>
                           <p className="mt-1 text-[11px] text-ink-muted">
                             {formatDateTime(notification.createdAt)}
@@ -208,6 +126,17 @@ export function NotificationBell() {
               </ul>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsOpen(false)
+              navigate(ROUTES.notifications)
+            }}
+            className="block w-full border-t border-surface-border px-4 py-2.5 text-center text-xs font-medium text-brand-600 hover:bg-surface-alt hover:underline dark:text-brand-400"
+          >
+            View all notifications
+          </button>
         </div>
       )}
     </div>

@@ -470,7 +470,7 @@ export class ShiftsService {
   ): Promise<void> {
     if (!shift.staff.userId) return;
 
-    await this.notifications.create(shift.staff.userId, type, title, body);
+    await this.notifications.create(shift.staff.userId, type, title, body, `/my-shifts?shiftId=${shift.id}`);
   }
 }
 
