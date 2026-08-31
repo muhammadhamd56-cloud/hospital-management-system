@@ -1,8 +1,19 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InvoiceStatus, Role, type Invoice, type InvoiceItem, type User } from '@prisma/client';
+import {
+  InvoiceStatus,
+  PaymentMethod,
+  Role,
+  type Invoice,
+  type InvoiceItem,
+  type Payment,
+  type User,
+} from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { roundMoney } from '../common/money.util';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
+import { RecordPaymentDto } from './dto/record-payment.dto';
 import { StripeService } from './stripe.service';
 
 export interface InvoiceItemResponse {
@@ -10,48 +21,119 @@ export interface InvoiceItemResponse {
   description: string;
   quantity: number;
   unitPrice: number;
+  discount: number;
   lineTotal: number;
 }
 
+export interface PaymentResponse {
+  id: string;
+  amount: number;
+  method: PaymentMethod;
+  recordedBy: string | null;
+  createdAt: string;
+}
+
+export type InvoiceDisplayStatus = 'paid' | 'pending' | 'partially_paid' | 'overdue' | 'cancelled';
+
 export interface InvoiceResponse {
   id: string;
+  invoiceNumber: string;
   patientId: string;
   patientName: string;
   description: string;
+  /** Sum of line-item totals, before this invoice's own discount/tax. */
+  subtotal: number;
+  discount: number;
+  tax: number;
+  /** subtotal - discount + tax. */
   amount: number;
+  amountPaid: number;
+  remaining: number;
   issueDate: string;
   dueDate: string;
-  status: 'paid' | 'pending' | 'overdue';
+  status: InvoiceDisplayStatus;
   items: InvoiceItemResponse[];
+  payments: PaymentResponse[];
 }
 
-type InvoiceWithRelations = Invoice & { patient: Pick<User, 'firstName' | 'lastName'>; items: InvoiceItem[] };
+export interface BillingOverview {
+  totalRevenue: number;
+  paidAmount: number;
+  pendingAmount: number;
+  overdueAmount: number;
+  totalInvoices: number;
+}
+
+type InvoiceWithRelations = Invoice & {
+  patient: Pick<User, 'firstName' | 'lastName'>;
+  items: InvoiceItem[];
+  payments: (Payment & { recordedBy: Pick<User, 'firstName' | 'lastName'> | null })[];
+};
+
+export function formatInvoiceNumber(invoiceNumber: number): string {
+  return `INV-${String(invoiceNumber).padStart(4, '0')}`;
+}
 
 function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceResponse {
-  const isOverdue = invoice.status === InvoiceStatus.PENDING && invoice.dueDate.getTime() < Date.now();
+  const subtotal = roundMoney(invoice.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice - item.discount), 0));
+  const amount = roundMoney(subtotal - invoice.discount + invoice.tax);
+  const amountPaid = roundMoney(invoice.payments.reduce((sum, payment) => sum + payment.amount, 0));
+  const remaining = roundMoney(Math.max(0, amount - amountPaid));
+  const isPastDue = invoice.dueDate.getTime() < Date.now();
+
+  let status: InvoiceDisplayStatus;
+  if (invoice.status === InvoiceStatus.CANCELLED) {
+    status = 'cancelled';
+  } else if (remaining <= 0) {
+    status = 'paid';
+  } else if (isPastDue) {
+    status = 'overdue';
+  } else if (amountPaid > 0) {
+    status = 'partially_paid';
+  } else {
+    status = 'pending';
+  }
 
   return {
     id: invoice.id,
+    invoiceNumber: formatInvoiceNumber(invoice.invoiceNumber),
     patientId: invoice.patientId,
     patientName: `${invoice.patient.firstName} ${invoice.patient.lastName}`.trim(),
     description: invoice.description,
-    amount: invoice.amount,
+    subtotal,
+    discount: invoice.discount,
+    tax: invoice.tax,
+    amount,
+    amountPaid,
+    remaining,
     issueDate: invoice.createdAt.toISOString().slice(0, 10),
     dueDate: invoice.dueDate.toISOString().slice(0, 10),
-    status: invoice.status === InvoiceStatus.PAID ? 'paid' : isOverdue ? 'overdue' : 'pending',
+    status,
     items: invoice.items.map((item) => ({
       id: item.id,
       description: item.description,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
-      lineTotal: item.quantity * item.unitPrice,
+      discount: item.discount,
+      lineTotal: roundMoney(item.quantity * item.unitPrice - item.discount),
     })),
+    payments: invoice.payments
+      .slice()
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((payment) => ({
+        id: payment.id,
+        amount: payment.amount,
+        method: payment.method,
+        recordedBy: payment.recordedBy ? `${payment.recordedBy.firstName} ${payment.recordedBy.lastName}`.trim() : null,
+        createdAt: payment.createdAt.toISOString(),
+      })),
   };
 }
 
 const INVOICE_INCLUDE = {
   patient: { select: { firstName: true, lastName: true } },
   items: true,
+  payments: { include: { recordedBy: { select: { firstName: true, lastName: true } } } },
 } as const;
 
 @Injectable()
@@ -59,6 +141,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   /**
@@ -94,42 +177,43 @@ export class BillingService {
     return invoices.map(toInvoiceResponse);
   }
 
-  /** Starts an online payment for one of the caller's own invoices. */
+  async findOne(caller: AuthenticatedUser, id: string): Promise<InvoiceResponse> {
+    const invoice = await this.prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    if (caller.role === Role.DOCTOR) {
+      await this.assertOwnPatient(caller.id, invoice.patientId);
+    }
+
+    return toInvoiceResponse(invoice);
+  }
+
+  /** Starts an online payment for the remaining balance on one of the caller's own invoices. */
   async createCheckoutSession(patientId: string, invoiceId: string): Promise<{ url: string }> {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
+    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId }, include: INVOICE_INCLUDE });
 
     if (!invoice || invoice.patientId !== patientId) {
       throw new NotFoundException('Invoice not found');
     }
 
-    if (invoice.status === InvoiceStatus.PAID) {
+    const response = toInvoiceResponse(invoice);
+
+    if (response.status === 'cancelled') {
+      throw new BadRequestException('This invoice has been cancelled');
+    }
+
+    if (response.remaining <= 0) {
       throw new BadRequestException('Invoice is already paid');
     }
 
-    return this.stripeService.createCheckoutSession(invoice);
-  }
-
-  /** Called when a patient books a session with a doctor who charges a consultation fee. */
-  async createConsultationInvoice(
-    patientId: string,
-    doctorName: string,
-    fee: number,
-    dueDate: Date,
-  ): Promise<InvoiceResponse> {
-    const description = `Consultation with Dr. ${doctorName}`;
-
-    const invoice = await this.prisma.invoice.create({
-      data: {
-        patientId,
-        description,
-        amount: fee,
-        dueDate,
-        items: { create: [{ description, quantity: 1, unitPrice: fee }] },
-      },
-      include: INVOICE_INCLUDE,
+    return this.stripeService.createCheckoutSession({
+      id: invoice.id,
+      description: invoice.description,
+      amount: response.remaining,
     });
-
-    return toInvoiceResponse(invoice);
   }
 
   async create(caller: AuthenticatedUser, dto: CreateInvoiceDto): Promise<InvoiceResponse> {
@@ -149,30 +233,59 @@ export class BillingService {
       throw new BadRequestException('Invalid due date');
     }
 
-    const amount = dto.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    const items = dto.items.map((item) => {
+      const lineValue = item.quantity * item.unitPrice;
+      const discount = item.discount ?? 0;
+
+      if (discount > lineValue) {
+        throw new BadRequestException(`Discount for "${item.description}" cannot exceed its line total`);
+      }
+
+      return { description: item.description, quantity: item.quantity, unitPrice: item.unitPrice, discount };
+    });
+
+    const subtotal = roundMoney(items.reduce((sum, item) => sum + (item.quantity * item.unitPrice - item.discount), 0));
+    const discount = dto.discount ?? 0;
+    const tax = dto.tax ?? 0;
+
+    if (discount > subtotal) {
+      throw new BadRequestException('Invoice discount cannot exceed the subtotal');
+    }
 
     const invoice = await this.prisma.invoice.create({
       data: {
         patientId: dto.patientId,
         description: dto.description,
-        amount,
+        amount: subtotal,
+        discount,
+        tax,
         dueDate,
-        items: {
-          create: dto.items.map((item) => ({
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-          })),
-        },
+        items: { create: items },
       },
       include: INVOICE_INCLUDE,
     });
 
-    return toInvoiceResponse(invoice);
+    const response = toInvoiceResponse(invoice);
+
+    await this.auditLogService.log({
+      actorId: caller.id,
+      action: 'CREATE',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      metadata: { invoiceNumber: response.invoiceNumber, patientId: dto.patientId, amount: response.amount },
+    });
+
+    return response;
   }
 
-  async markPaid(caller: AuthenticatedUser, id: string): Promise<InvoiceResponse> {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id } });
+  /** Records a full or partial payment against an invoice. Never allows paying more than the remaining balance. */
+  async recordPayment(
+    caller: AuthenticatedUser,
+    id: string,
+    dto: RecordPaymentDto,
+    recordedById: string | null,
+  ): Promise<InvoiceResponse> {
+    const invoice = await this.prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
 
     if (!invoice) {
       throw new NotFoundException('Invoice not found');
@@ -182,17 +295,126 @@ export class BillingService {
       await this.assertOwnPatient(caller.id, invoice.patientId);
     }
 
-    if (invoice.status === InvoiceStatus.PAID) {
+    const current = toInvoiceResponse(invoice);
+
+    if (current.status === 'cancelled') {
+      throw new BadRequestException('Cannot record a payment against a cancelled invoice');
+    }
+
+    if (current.remaining <= 0) {
       throw new BadRequestException('Invoice is already paid');
+    }
+
+    const amount = roundMoney(dto.amount);
+
+    // A tiny epsilon tolerates rounding noise between the frontend's live total and this recompute.
+    if (amount > current.remaining + 0.01) {
+      throw new BadRequestException(
+        `Payment of ${amount.toFixed(2)} exceeds the remaining balance of ${current.remaining.toFixed(2)}`,
+      );
+    }
+
+    await this.prisma.payment.create({
+      data: { invoiceId: id, amount, method: dto.method, recordedById },
+    });
+
+    const newAmountPaid = roundMoney(current.amountPaid + amount);
+    const isFullyPaid = newAmountPaid >= current.amount - 0.01;
+
+    const updated = await this.prisma.invoice.update({
+      where: { id },
+      data: {
+        status: isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+        paidAt: isFullyPaid ? new Date() : null,
+      },
+      include: INVOICE_INCLUDE,
+    });
+
+    await this.auditLogService.log({
+      actorId: caller.id,
+      action: 'UPDATE',
+      entityType: 'Invoice',
+      entityId: id,
+      metadata: { paymentAmount: amount, method: dto.method, resultingStatus: updated.status },
+    });
+
+    return toInvoiceResponse(updated);
+  }
+
+  /** Admin-only. Refuses to cancel an invoice that already has payments recorded -- refund first. */
+  async cancel(caller: AuthenticatedUser, id: string): Promise<InvoiceResponse> {
+    const invoice = await this.prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    if (invoice.status === InvoiceStatus.CANCELLED) {
+      throw new BadRequestException('Invoice is already cancelled');
+    }
+
+    if (invoice.payments.length > 0) {
+      throw new BadRequestException('Cannot cancel an invoice that already has payments recorded');
     }
 
     const updated = await this.prisma.invoice.update({
       where: { id },
-      data: { status: InvoiceStatus.PAID, paidAt: new Date() },
+      data: { status: InvoiceStatus.CANCELLED },
       include: INVOICE_INCLUDE,
     });
 
+    await this.auditLogService.log({
+      actorId: caller.id,
+      action: 'UPDATE',
+      entityType: 'Invoice',
+      entityId: id,
+      metadata: { status: 'CANCELLED' },
+    });
+
     return toInvoiceResponse(updated);
+  }
+
+  /**
+   * Dashboard summary. Total Revenue is the total billed value of every
+   * non-cancelled invoice; it always equals paidAmount + pendingAmount +
+   * overdueAmount, since every invoice's remaining balance falls into
+   * exactly one of the pending/overdue buckets and its paid portion always
+   * counts toward paidAmount.
+   */
+  async overview(caller: AuthenticatedUser): Promise<BillingOverview> {
+    const where = caller.role === Role.DOCTOR ? await this.scopedPatientWhere(caller.id) : {};
+
+    if (where === null) {
+      return { totalRevenue: 0, paidAmount: 0, pendingAmount: 0, overdueAmount: 0, totalInvoices: 0 };
+    }
+
+    const invoices = await this.prisma.invoice.findMany({
+      where: { ...where, status: { not: InvoiceStatus.CANCELLED } },
+      include: INVOICE_INCLUDE,
+    });
+
+    const totals = invoices.reduce(
+      (acc, invoice) => {
+        const response = toInvoiceResponse(invoice);
+        acc.totalRevenue += response.amount;
+        acc.paidAmount += response.amountPaid;
+        if (response.status === 'overdue') {
+          acc.overdueAmount += response.remaining;
+        } else {
+          acc.pendingAmount += response.remaining;
+        }
+        return acc;
+      },
+      { totalRevenue: 0, paidAmount: 0, pendingAmount: 0, overdueAmount: 0 },
+    );
+
+    return {
+      totalRevenue: roundMoney(totals.totalRevenue),
+      paidAmount: roundMoney(totals.paidAmount),
+      pendingAmount: roundMoney(totals.pendingAmount),
+      overdueAmount: roundMoney(totals.overdueAmount),
+      totalInvoices: invoices.length,
+    };
   }
 
   /** Returns a Prisma where-clause scoped to patients this doctor has an appointment or chat relationship with, or null if there are none (caller has no matches at all). */
@@ -237,16 +459,40 @@ export class BillingService {
     return [...new Set([...fromAppointments, ...fromMessages].map((row) => row.patientId))];
   }
 
+  /** Called when a patient books a session with a doctor who charges a consultation fee. */
+  async createConsultationInvoice(
+    patientId: string,
+    doctorName: string,
+    fee: number,
+    dueDate: Date,
+  ): Promise<InvoiceResponse> {
+    const description = `Consultation with Dr. ${doctorName}`;
+
+    const invoice = await this.prisma.invoice.create({
+      data: {
+        patientId,
+        description,
+        amount: roundMoney(fee),
+        dueDate,
+        items: { create: [{ description, quantity: 1, unitPrice: fee }] },
+      },
+      include: INVOICE_INCLUDE,
+    });
+
+    return toInvoiceResponse(invoice);
+  }
+
+  /** Actual money collected this calendar month, across every payment method (Stripe included). */
   async revenueThisMonth(): Promise<{ amount: number }> {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    const result = await this.prisma.invoice.aggregate({
-      where: { status: InvoiceStatus.PAID, paidAt: { gte: start, lt: end } },
+    const result = await this.prisma.payment.aggregate({
+      where: { createdAt: { gte: start, lt: end } },
       _sum: { amount: true },
     });
 
-    return { amount: result._sum.amount ?? 0 };
+    return { amount: roundMoney(result._sum.amount ?? 0) };
   }
 }

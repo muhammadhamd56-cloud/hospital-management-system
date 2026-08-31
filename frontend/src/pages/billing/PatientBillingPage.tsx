@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { StatCard } from '@/components/ui/StatCard'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { InvoiceStatusBadge } from '@/features/billing/InvoiceStatusBadge'
-import { InvoiceItemsModal } from '@/features/billing/InvoiceItemsModal'
+import { InvoiceDetailsModal } from '@/features/billing/InvoiceDetailsModal'
 import { useMyInvoices } from '@/features/billing/useMyInvoices'
 import { createInvoiceCheckout } from '@/features/billing/api'
 import { formatDate } from '@/utils/datetime'
@@ -45,10 +45,7 @@ export function PatientBillingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  const amountDue = useMemo(
-    () => invoices.filter((invoice) => invoice.status !== 'paid').reduce((sum, i) => sum + i.amount, 0),
-    [invoices],
-  )
+  const amountDue = useMemo(() => invoices.reduce((sum, i) => sum + i.remaining, 0), [invoices])
 
   async function handlePay(invoice: Invoice) {
     setPayingInvoiceId(invoice.id)
@@ -94,17 +91,24 @@ export function PatientBillingPage() {
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-3">
-                  <span className="text-sm font-semibold text-ink">{formatCurrency(invoice.amount)}</span>
+                  <div className="text-right">
+                    <span className="block text-sm font-semibold text-ink">{formatCurrency(invoice.amount)}</span>
+                    {invoice.amountPaid > 0 && invoice.remaining > 0 && (
+                      <span className="block text-xs text-ink-muted">
+                        {formatCurrency(invoice.remaining)} remaining
+                      </span>
+                    )}
+                  </div>
                   <InvoiceStatusBadge status={invoice.status} />
                   <Button
                     size="sm"
                     variant="secondary"
-                    aria-label="View line items"
+                    aria-label="View invoice details"
                     onClick={() => setViewingInvoice(invoice)}
                   >
                     <ListOrdered className="size-4" aria-hidden="true" />
                   </Button>
-                  {invoice.status !== 'paid' && (
+                  {invoice.remaining > 0 && invoice.status !== 'cancelled' && (
                     <Button
                       size="sm"
                       isLoading={payingInvoiceId === invoice.id}
@@ -122,7 +126,7 @@ export function PatientBillingPage() {
         </div>
       )}
 
-      <InvoiceItemsModal invoice={viewingInvoice} onClose={() => setViewingInvoice(null)} />
+      <InvoiceDetailsModal invoice={viewingInvoice} onClose={() => setViewingInvoice(null)} />
     </div>
   )
 }

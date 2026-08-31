@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsNumber, IsPositive, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsPositive, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class InvoiceItemInputDto {
   @IsString()
@@ -16,4 +16,11 @@ export class InvoiceItemInputDto {
   @IsNumber()
   @IsPositive({ message: 'Unit price must be greater than 0' })
   unitPrice!: number;
+
+  /** Flat amount subtracted from quantity * unitPrice. Re-validated server-side against that line's own value. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0, { message: 'Discount cannot be negative' })
+  discount?: number;
 }

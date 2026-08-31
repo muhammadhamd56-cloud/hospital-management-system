@@ -13,19 +13,32 @@ jest.mock('stripe', () => {
 import { Test, TestingModule } from '@nestjs/testing';
 import { InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, PaymentMethod } from '@prisma/client';
 import Stripe from 'stripe';
 import { StripeService } from './stripe.service';
 import { PrismaService } from '../prisma/prisma.service';
 
+function buildInvoiceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'invoice-1',
+    stripeCheckoutSessionId: 'cs_test_1',
+    status: InvoiceStatus.PENDING,
+    discount: 0,
+    tax: 0,
+    items: [{ quantity: 1, unitPrice: 150, discount: 0 }],
+    payments: [],
+    ...overrides,
+  };
+}
+
 describe('StripeService', () => {
   let service: StripeService;
-  let prisma: { invoice: { update: jest.Mock; findUnique: jest.Mock } };
+  let prisma: { invoice: { update: jest.Mock; findUnique: jest.Mock }; payment: { create: jest.Mock } };
   let configService: { get: jest.Mock };
 
   async function buildService(values: Record<string, string | undefined>) {
     configService = { get: jest.fn((key: string) => values[key]) };
-    prisma = { invoice: { update: jest.fn(), findUnique: jest.fn() } };
+    prisma = { invoice: { update: jest.fn(), findUnique: jest.fn() }, payment: { create: jest.fn() } };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -128,18 +141,20 @@ describe('StripeService', () => {
         return {
           type,
           data: {
-            object: { id: 'cs_test_1', metadata: { invoiceId: 'invoice-1' }, payment_status: 'paid', ...overrides },
+            object: {
+              id: 'cs_test_1',
+              metadata: { invoiceId: 'invoice-1' },
+              payment_status: 'paid',
+              amount_total: 15000,
+              ...overrides,
+            },
           },
         };
       }
 
       it('verifies the signature against the raw body using the configured webhook secret', async () => {
         mockConstructEvent.mockReturnValue(buildEvent());
-        prisma.invoice.findUnique.mockResolvedValue({
-          id: 'invoice-1',
-          stripeCheckoutSessionId: 'cs_test_1',
-          status: InvoiceStatus.PENDING,
-        });
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow());
 
         const rawBody = Buffer.from('{"raw":true}');
         await service.handleWebhook(rawBody, 'sig_header');
@@ -165,17 +180,31 @@ describe('StripeService', () => {
 
       it('marks the invoice paid on checkout.session.async_payment_succeeded (delayed-notification methods)', async () => {
         mockConstructEvent.mockReturnValue(buildEvent({}, 'checkout.session.async_payment_succeeded'));
-        prisma.invoice.findUnique.mockResolvedValue({
-          id: 'invoice-1',
-          stripeCheckoutSessionId: 'cs_test_1',
-          status: InvoiceStatus.PENDING,
-        });
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow());
 
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
+        expect(prisma.payment.create).toHaveBeenCalledWith({
+          data: { invoiceId: 'invoice-1', amount: 150, method: PaymentMethod.CARD, recordedById: null },
+        });
         expect(prisma.invoice.update).toHaveBeenCalledWith({
           where: { id: 'invoice-1' },
           data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
+        });
+      });
+
+      it('marks the invoice PARTIALLY_PAID when the Stripe payment does not cover the full remaining balance', async () => {
+        mockConstructEvent.mockReturnValue(buildEvent({ amount_total: 5000 }));
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow());
+
+        await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+        expect(prisma.payment.create).toHaveBeenCalledWith({
+          data: { invoiceId: 'invoice-1', amount: 50, method: PaymentMethod.CARD, recordedById: null },
+        });
+        expect(prisma.invoice.update).toHaveBeenCalledWith({
+          where: { id: 'invoice-1' },
+          data: { status: InvoiceStatus.PARTIALLY_PAID, paidAt: null },
         });
       });
 
@@ -198,11 +227,9 @@ describe('StripeService', () => {
 
       it('ignores a stale/replayed session that does not match the invoice\'s current checkout session', async () => {
         mockConstructEvent.mockReturnValue(buildEvent());
-        prisma.invoice.findUnique.mockResolvedValue({
-          id: 'invoice-1',
-          stripeCheckoutSessionId: 'cs_a_different_session',
-          status: InvoiceStatus.PENDING,
-        });
+        prisma.invoice.findUnique.mockResolvedValue(
+          buildInvoiceRow({ stripeCheckoutSessionId: 'cs_a_different_session' }),
+        );
 
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
@@ -211,24 +238,17 @@ describe('StripeService', () => {
 
       it('is a no-op when the invoice is already paid (safe against Stripe redelivering the same webhook)', async () => {
         mockConstructEvent.mockReturnValue(buildEvent());
-        prisma.invoice.findUnique.mockResolvedValue({
-          id: 'invoice-1',
-          stripeCheckoutSessionId: 'cs_test_1',
-          status: InvoiceStatus.PAID,
-        });
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow({ status: InvoiceStatus.PAID }));
 
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
         expect(prisma.invoice.update).not.toHaveBeenCalled();
+        expect(prisma.payment.create).not.toHaveBeenCalled();
       });
 
       it('marks the invoice paid when the session matches and it is not already paid', async () => {
         mockConstructEvent.mockReturnValue(buildEvent());
-        prisma.invoice.findUnique.mockResolvedValue({
-          id: 'invoice-1',
-          stripeCheckoutSessionId: 'cs_test_1',
-          status: InvoiceStatus.PENDING,
-        });
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow());
 
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 

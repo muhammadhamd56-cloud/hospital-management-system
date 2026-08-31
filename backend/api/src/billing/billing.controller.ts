@@ -5,8 +5,9 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
-import { BillingService, InvoiceResponse } from './billing.service';
+import { BillingOverview, BillingService, InvoiceResponse } from './billing.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
+import { RecordPaymentDto } from './dto/record-payment.dto';
 
 @Controller('billing')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -28,6 +29,20 @@ export class BillingController {
     return { invoices };
   }
 
+  @Get('overview')
+  async overview(@CurrentUser() user: AuthenticatedUser): Promise<BillingOverview> {
+    return this.billingService.overview(user);
+  }
+
+  @Get('invoices/:id')
+  async findOne(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<{ invoice: InvoiceResponse }> {
+    const invoice = await this.billingService.findOne(user, id);
+    return { invoice };
+  }
+
   /** Starts an online payment for one of the caller's own invoices. */
   @Post('invoices/:id/checkout')
   @Roles(Role.PATIENT)
@@ -47,12 +62,24 @@ export class BillingController {
     return { invoice };
   }
 
-  @Patch('invoices/:id/pay')
-  async markPaid(
+  @Post('invoices/:id/payments')
+  async recordPayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: RecordPaymentDto,
+  ): Promise<{ invoice: InvoiceResponse }> {
+    const invoice = await this.billingService.recordPayment(user, id, dto, user.id);
+    return { invoice };
+  }
+
+  /** Admin-only -- overrides the class-level ADMIN/DOCTOR role. */
+  @Patch('invoices/:id/cancel')
+  @Roles(Role.ADMIN)
+  async cancel(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ): Promise<{ invoice: InvoiceResponse }> {
-    const invoice = await this.billingService.markPaid(user, id);
+    const invoice = await this.billingService.cancel(user, id);
     return { invoice };
   }
 

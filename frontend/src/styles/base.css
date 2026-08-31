@@ -44,3 +44,29 @@
     animation: none;
   }
 }
+
+/*
+ * Printing an invoice: mark the printable content with .print-area, then
+ * everything else on the page (navbar, sidebar, modal backdrop/chrome,
+ * other invoices) is hidden so only that content reaches the printed page.
+ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+
+  .print-area {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

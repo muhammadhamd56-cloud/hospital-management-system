@@ -18,13 +18,35 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
+const patients = [
+  { id: 'patient-1', fullName: 'Ada Lovelace', email: 'ada@example.test', phone: '+15551234567', picture: null, joinedAt: '2026-01-01', appointmentCount: 0, lastVisit: null },
+  { id: 'patient-2', fullName: 'Neymar Jr', email: 'neymar@example.test', phone: null, picture: null, joinedAt: '2026-01-01', appointmentCount: 0, lastVisit: null },
+]
+
 beforeEach(() => {
-  mockListPatients.mockReset().mockResolvedValue({ patients: [{ id: 'patient-1', fullName: 'Ada Lovelace' }] })
+  mockListPatients.mockReset().mockResolvedValue({ patients })
   mockCreateInvoice.mockReset()
 })
 
+async function selectPatient(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const search = await screen.findByPlaceholderText('Search patient by name...')
+  await user.type(search, name)
+  await user.click(await screen.findByText(name))
+}
+
 describe('CreateInvoiceModal', () => {
-  it('keeps focus and accepts every keystroke in a line item Description field', async () => {
+  it('searches and selects a patient, showing the selected patient card', async () => {
+    const user = userEvent.setup()
+    render(<CreateInvoiceModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />)
+
+    await selectPatient(user, 'Neymar Jr')
+
+    expect(screen.getByText('Neymar Jr')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Search patient by name...')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /change patient/i })).toBeInTheDocument()
+  })
+
+  it('keeps focus and accepts every keystroke in a service Description field', async () => {
     const onClose = vi.fn()
     const user = userEvent.setup()
     render(<CreateInvoiceModal isOpen onClose={onClose} onCreate={vi.fn()} />)
@@ -38,7 +60,7 @@ describe('CreateInvoiceModal', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('keeps focus and accepts every keystroke in Qty and Unit Price fields', async () => {
+  it('keeps focus and accepts every keystroke in Qty, Unit Price, and Discount fields', async () => {
     const onClose = vi.fn()
     const user = userEvent.setup()
     render(<CreateInvoiceModal isOpen onClose={onClose} onCreate={vi.fn()} />)
@@ -50,21 +72,27 @@ describe('CreateInvoiceModal', () => {
     expect(qty).toHaveValue(2)
     expect(document.activeElement).toBe(qty)
 
-    const unitPrice = await screen.findByLabelText('Unit price (USD)')
+    const unitPrice = await screen.findByLabelText('Unit Price')
     await user.click(unitPrice)
     await user.clear(unitPrice)
     await user.type(unitPrice, '50')
     expect(unitPrice).toHaveValue(50)
     expect(document.activeElement).toBe(unitPrice)
 
+    const discount = await screen.findByLabelText('Discount')
+    await user.click(discount)
+    await user.type(discount, '5')
+    expect(discount).toHaveValue(5)
+    expect(document.activeElement).toBe(discount)
+
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('keeps typing in the top-level Description field independent of line items', async () => {
+  it('keeps typing in the Invoice description field independent of line items', async () => {
     const user = userEvent.setup()
     render(<CreateInvoiceModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />)
 
-    const description = await screen.findByPlaceholderText('e.g. August visit charges')
+    const description = await screen.findByPlaceholderText('e.g. Consultation and laboratory services')
     await user.click(description)
     await user.type(description, 'August visit')
 
@@ -72,7 +100,24 @@ describe('CreateInvoiceModal', () => {
     expect(document.activeElement).toBe(description)
   })
 
-  it('edits two line items independently and computes the total from both', async () => {
+  it('keeps focus while typing in the invoice-level discount and tax fields', async () => {
+    const user = userEvent.setup()
+    render(<CreateInvoiceModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />)
+
+    const invoiceDiscount = await screen.findByLabelText('Invoice discount (USD)')
+    await user.click(invoiceDiscount)
+    await user.type(invoiceDiscount, '5')
+    expect(invoiceDiscount).toHaveValue(5)
+    expect(document.activeElement).toBe(invoiceDiscount)
+
+    const tax = await screen.findByLabelText('Tax (USD)')
+    await user.click(tax)
+    await user.type(tax, '10')
+    expect(tax).toHaveValue(10)
+    expect(document.activeElement).toBe(tax)
+  })
+
+  it('edits two services independently and computes subtotal/discount/tax/total correctly', async () => {
     const user = userEvent.setup()
     render(<CreateInvoiceModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />)
 
@@ -80,28 +125,41 @@ describe('CreateInvoiceModal', () => {
     await user.type(desc1, 'Consultation')
     const [qty1] = screen.getAllByLabelText('Qty')
     await user.clear(qty1)
-    await user.type(qty1, '2')
-    const [price1] = screen.getAllByLabelText('Unit price (USD)')
+    await user.type(qty1, '1')
+    const [price1] = screen.getAllByLabelText('Unit Price')
     await user.clear(price1)
     await user.type(price1, '50')
 
-    await user.click(screen.getByRole('button', { name: /add item/i }))
+    await user.click(screen.getByRole('button', { name: /add service/i }))
 
     const descriptions = await screen.findAllByPlaceholderText('e.g. Consultation')
     await user.type(descriptions[1], 'Blood Test')
     const qtys = screen.getAllByLabelText('Qty')
     await user.clear(qtys[1])
-    await user.type(qtys[1], '1')
-    const prices = screen.getAllByLabelText('Unit price (USD)')
+    await user.type(qtys[1], '2')
+    const prices = screen.getAllByLabelText('Unit Price')
     await user.clear(prices[1])
     await user.type(prices[1], '25')
 
-    // Editing item 2 must not have disturbed item 1.
+    // Editing service 2 must not have disturbed service 1.
     expect(desc1).toHaveValue('Consultation')
-    expect(qty1).toHaveValue(2)
+    expect(qty1).toHaveValue(1)
     expect(price1).toHaveValue(50)
     expect(descriptions[1]).toHaveValue('Blood Test')
 
-    await waitFor(() => expect(screen.getByText('$125.00')).toBeInTheDocument())
+    // Subtotal: 1x50 + 2x25 = 100
+    await waitFor(() => {
+      const subtotalRow = screen.getByText('Subtotal').closest('div')
+      expect(subtotalRow).toHaveTextContent('$100.00')
+    })
+
+    await user.type(screen.getByLabelText('Invoice discount (USD)'), '5')
+    await user.type(screen.getByLabelText('Tax (USD)'), '10')
+
+    // Total: 100 - 5 + 10 = 105
+    await waitFor(() => {
+      const totalRow = screen.getByText('Total').closest('div')
+      expect(totalRow).toHaveTextContent('$105.00')
+    })
   })
 })

@@ -1,8 +1,9 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
-import { InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, PaymentMethod } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { roundMoney } from '../common/money.util';
 
 @Injectable()
 export class StripeService {
@@ -107,17 +108,35 @@ export class StripeService {
       return;
     }
 
-    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
+    const invoice = await this.prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { items: true, payments: true },
+    });
 
     if (!invoice || invoice.stripeCheckoutSessionId !== session.id || invoice.status === InvoiceStatus.PAID) {
       return;
     }
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { status: InvoiceStatus.PAID, paidAt: new Date() },
+    const subtotal = invoice.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice - item.discount), 0);
+    const total = roundMoney(subtotal - invoice.discount + invoice.tax);
+    const alreadyPaid = roundMoney(invoice.payments.reduce((sum, payment) => sum + payment.amount, 0));
+    const chargedAmount = roundMoney((session.amount_total ?? 0) / 100);
+
+    await this.prisma.payment.create({
+      data: { invoiceId, amount: chargedAmount, method: PaymentMethod.CARD, recordedById: null },
     });
 
-    this.logger.log(`Invoice ${invoiceId} marked paid via Stripe session ${session.id}`);
+    const newAmountPaid = roundMoney(alreadyPaid + chargedAmount);
+    const isFullyPaid = newAmountPaid >= total - 0.01;
+
+    await this.prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+        paidAt: isFullyPaid ? new Date() : null,
+      },
+    });
+
+    this.logger.log(`Invoice ${invoiceId} received a $${chargedAmount} payment via Stripe session ${session.id}`);
   }
 }

@@ -92,6 +92,7 @@ model User {
   chatMessages               ChatMessage[]
   beds                       Bed[]
   invoices                   Invoice[]
+  paymentsRecorded           Payment[]       @relation("PaymentsRecorded")
   notifications              Notification[]
   medicalRecords             MedicalRecord[]
   auditLogs                  AuditLog[]
@@ -226,7 +227,16 @@ model Bed {
 
 enum InvoiceStatus {
   PENDING
+  PARTIALLY_PAID
   PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  OTHER
 }
 
 /**
@@ -235,9 +245,27 @@ enum InvoiceStatus {
  * instead of re-summing items on every read.
  */
 model Invoice {
+  /** Stable DB id, used in URLs/API calls. Never shown to users -- see invoiceNumber. */
   id          String        @id @default(cuid())
+  /** Human-facing sequential number, displayed as "INV-0001". */
+  invoiceNumber Int         @default(autoincrement()) @unique
   description String
+  /**
+   * Sum of item line totals (quantity * unitPrice - item discount), before
+   * this invoice's own discount/tax. Recomputed and re-validated server-side
+   * on every write -- never trusted from the client.
+   */
   amount      Float
+  /** Invoice-level discount, applied after summing line items. */
+  discount    Float         @default(0)
+  /** Invoice-level tax, applied after the discount. */
+  tax         Float         @default(0)
+  /**
+   * PENDING/PARTIALLY_PAID/PAID are kept in sync with the linked Payment
+   * rows whenever a payment is recorded. "Overdue" is deliberately NOT a
+   * stored value -- it's derived at read time from (status, dueDate) so it
+   * never needs a cron job or manual staff intervention to "become" overdue.
+   */
   status      InvoiceStatus @default(PENDING)
   dueDate     DateTime
   paidAt      DateTime?
@@ -255,7 +283,8 @@ model Invoice {
   patientId String
   patient   User   @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
-  items InvoiceItem[]
+  items    InvoiceItem[]
+  payments Payment[]
 }
 
 /**
@@ -269,6 +298,31 @@ model InvoiceItem {
   description String
   quantity    Int    @default(1)
   unitPrice   Float
+  /** Per-line discount, subtracted from quantity * unitPrice. */
+  discount    Float  @default(0)
+
+  @@index([invoiceId])
+}
+
+/**
+ * One payment (full or partial) applied to an Invoice. An invoice's paid
+ * amount is always the sum of its Payment rows -- never a separately
+ * stored/synced number -- so there is one source of truth for "how much has
+ * been paid."
+ */
+model Payment {
+  id        String        @id @default(cuid())
+  invoiceId String
+  invoice   Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  amount Float
+  method PaymentMethod
+
+  /** Null for online (Stripe) payments -- no staff member recorded those. */
+  recordedById String?
+  recordedBy   User?   @relation("PaymentsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
 
   @@index([invoiceId])
 }

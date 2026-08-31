@@ -1,16 +1,19 @@
 import { api } from '@/lib/apiClient'
-import type { Invoice } from '@/types/invoice'
+import type { BillingOverview, Invoice, PaymentMethod } from '@/types/invoice'
 
 export interface CreateInvoiceItemInput {
   description: string
   quantity: number
   unitPrice: number
+  discount?: number
 }
 
 export interface CreateInvoiceInput {
   patientId: string
   description: string
   items: CreateInvoiceItemInput[]
+  discount?: number
+  tax?: number
   dueDate: string
 }
 
@@ -22,12 +25,27 @@ export function listMyInvoices(): Promise<{ invoices: Invoice[] }> {
   return api.get('/billing/invoices/me')
 }
 
+export function getInvoice(id: string): Promise<{ invoice: Invoice }> {
+  return api.get(`/billing/invoices/${id}`)
+}
+
+export function getBillingOverview(): Promise<BillingOverview> {
+  return api.get('/billing/overview')
+}
+
 export function createInvoice(input: CreateInvoiceInput): Promise<{ invoice: Invoice }> {
   return api.post('/billing/invoices', input)
 }
 
-export function markInvoicePaid(id: string): Promise<{ invoice: Invoice }> {
-  return api.patch(`/billing/invoices/${id}/pay`)
+export function recordPayment(
+  id: string,
+  input: { amount: number; method: PaymentMethod },
+): Promise<{ invoice: Invoice }> {
+  return api.post(`/billing/invoices/${id}/payments`, input)
+}
+
+export function cancelInvoice(id: string): Promise<{ invoice: Invoice }> {
+  return api.patch(`/billing/invoices/${id}/cancel`)
 }
 
 /** Starts an online payment for one of the caller's own invoices -- redirect

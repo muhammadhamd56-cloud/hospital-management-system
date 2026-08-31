@@ -11,6 +11,7 @@ export interface PatientListItemResponse {
   id: string;
   fullName: string;
   email: string;
+  phone: string | null;
   picture: string | null;
   joinedAt: string;
   appointmentCount: number;
@@ -66,6 +67,7 @@ export class PatientsService {
       id: patient.id,
       fullName: `${patient.firstName} ${patient.lastName}`.trim(),
       email: patient.email,
+      phone: patient.phone,
       picture: patient.picture,
       joinedAt: patient.createdAt.toISOString(),
       appointmentCount: patient._count.appointments,
@@ -95,6 +97,7 @@ export class PatientsService {
       id: patient.id,
       fullName: `${patient.firstName} ${patient.lastName}`.trim(),
       email: patient.email,
+      phone: patient.phone,
       picture: patient.picture,
       joinedAt: patient.createdAt.toISOString(),
       appointmentCount: appointments.length,
@@ -183,6 +186,7 @@ export class PatientsService {
         id: user.id,
         fullName: `${user.firstName} ${user.lastName}`.trim(),
         email: user.email,
+        phone: user.phone,
         picture: user.picture,
         joinedAt: user.createdAt.toISOString(),
         appointmentCount: 0,

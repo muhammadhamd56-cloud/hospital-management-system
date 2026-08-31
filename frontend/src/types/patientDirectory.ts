@@ -4,6 +4,7 @@ export interface PatientListItem {
   id: string
   fullName: string
   email: string
+  phone: string | null
   picture: string | null
   joinedAt: string
   appointmentCount: number
