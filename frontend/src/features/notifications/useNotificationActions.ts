@@ -2,8 +2,52 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import toast from 'react-hot-toast'
 import { ApiError } from '@/lib/apiClient'
+import { ROUTES } from '@/constants/routes'
+import { useAuth } from '@/features/auth/useAuth'
 import type { AppNotification } from '@/types/notification'
+import type { Role } from '@/types/role'
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from '@/features/notifications/api'
+
+/**
+ * Only used for a notification with no `link` -- e.g. one created before
+ * server-side navigation links existed, which has no specific resource id
+ * to deep-link to. Falls back to the right section instead of doing
+ * nothing when clicked. Anything with a real `link` (every notification
+ * created from now on) always opens the exact resource instead.
+ */
+function fallbackRoute(type: AppNotification['type'], role: Role | undefined): string | null {
+  switch (type) {
+    case 'chat_message':
+      return ROUTES.messages
+    case 'appointment_booked':
+    case 'appointment_cancelled':
+      return role === 'patient' ? ROUTES.myAppointments : ROUTES.appointments
+    case 'appointment_reminder':
+      return ROUTES.myAppointments
+    case 'medical_record_added':
+      return ROUTES.medicalRecords
+    case 'lab_result_ready':
+      return role === 'patient' ? ROUTES.medicalRecords : ROUTES.laboratory
+    case 'shift_scheduled':
+    case 'shift_updated':
+    case 'shift_cancelled':
+    case 'shift_application_approved':
+      return ROUTES.myShifts
+    case 'shift_application_rejected':
+      return ROUTES.availableShifts
+    case 'task_assigned':
+    case 'task_due_soon':
+    case 'task_overdue':
+      return ROUTES.myTasks
+    case 'announcement_published':
+      return ROUTES.announcements
+    case 'invoice_created':
+    case 'payment_received':
+      return ROUTES.billing
+    default:
+      return null
+  }
+}
 
 /** Centralizes notification list state, mark-as-read, and click-to-navigate
  *  behavior so NotificationBell and the full Notifications page share one
@@ -13,6 +57,7 @@ export function useNotificationActions() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const navigate = useNavigate()
+  const { user } = useAuth()
 
   /** `silent: true` for background/polling refreshes, which shouldn't
    *  interrupt the user with a toast; omit it for a user-initiated refresh
@@ -55,8 +100,9 @@ export function useNotificationActions() {
 
     onBeforeNavigate?.()
 
-    if (notification.link) {
-      navigate(notification.link)
+    const destination = notification.link ?? fallbackRoute(notification.type, user?.role)
+    if (destination) {
+      navigate(destination)
     }
   }
 

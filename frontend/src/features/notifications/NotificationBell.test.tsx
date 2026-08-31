@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from '@/features/notifications/api'
 import { ApiError } from '@/lib/apiClient'
+import { ROUTES } from '@/constants/routes'
 import type { AppNotification } from '@/types/notification'
 
 vi.mock('@/features/notifications/api', () => ({
@@ -17,6 +18,17 @@ vi.mock('@/features/notifications/api', () => ({
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
+
+let mockRole = 'patient'
+vi.mock('@/features/auth/useAuth', () => ({
+  useAuth: () => ({ user: { role: mockRole } }),
+}))
+
+const mockNavigate = vi.fn()
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual<typeof import('react-router')>('react-router')
+  return { ...actual, useNavigate: () => mockNavigate }
+})
 
 function notification(overrides: Partial<AppNotification> = {}): AppNotification {
   return {
@@ -36,6 +48,8 @@ beforeEach(() => {
   vi.mocked(markNotificationRead).mockReset()
   vi.mocked(markAllNotificationsRead).mockReset()
   vi.mocked(toast.error).mockClear()
+  mockNavigate.mockReset()
+  mockRole = 'patient'
 })
 
 function renderBell() {
@@ -119,5 +133,52 @@ describe('NotificationBell', () => {
     await user.click(screen.getByLabelText('Notifications'))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to load notifications'))
+  })
+
+  it('navigates to the exact linked resource when the notification has a link', async () => {
+    vi.mocked(listNotifications).mockResolvedValue({
+      notifications: [notification({ link: '/billing?invoiceId=inv-1' })],
+      unreadCount: 1,
+    })
+    vi.mocked(markNotificationRead).mockResolvedValue({ notification: notification({ isRead: true }) })
+    const user = userEvent.setup()
+    renderBell()
+
+    await user.click(screen.getByLabelText('Notifications'))
+    await user.click(await screen.findByText('New message from Dana Doctor'))
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/billing?invoiceId=inv-1'))
+  })
+
+  it('falls back to the right section instead of doing nothing for a legacy notification with no link', async () => {
+    vi.mocked(listNotifications).mockResolvedValue({
+      notifications: [notification({ type: 'appointment_booked', link: null })],
+      unreadCount: 1,
+    })
+    vi.mocked(markNotificationRead).mockResolvedValue({ notification: notification({ isRead: true }) })
+    mockRole = 'patient'
+    const user = userEvent.setup()
+    renderBell()
+
+    await user.click(screen.getByLabelText('Notifications'))
+    await user.click(await screen.findByText('New message from Dana Doctor'))
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(ROUTES.myAppointments))
+  })
+
+  it('picks the doctor/admin appointments fallback (not myAppointments) for a doctor account', async () => {
+    vi.mocked(listNotifications).mockResolvedValue({
+      notifications: [notification({ type: 'appointment_booked', link: null })],
+      unreadCount: 1,
+    })
+    vi.mocked(markNotificationRead).mockResolvedValue({ notification: notification({ isRead: true }) })
+    mockRole = 'doctor'
+    const user = userEvent.setup()
+    renderBell()
+
+    await user.click(screen.getByLabelText('Notifications'))
+    await user.click(await screen.findByText('New message from Dana Doctor'))
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(ROUTES.appointments))
   })
 })
