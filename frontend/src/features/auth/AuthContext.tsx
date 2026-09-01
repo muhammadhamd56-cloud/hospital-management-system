@@ -12,6 +12,11 @@ export interface AuthUser {
   fullName: string
   phone: string | null
   picture: string | null
+  /** Patient-facing profile fields -- null for other roles. */
+  dateOfBirth: string | null
+  gender: string | null
+  address: string | null
+  emergencyContact: string | null
   role: Role
   /** False until the user completes the one-time post-signup role picker. */
   roleSelected: boolean
@@ -37,6 +42,10 @@ interface RawUser {
   lastName: string
   phone: string | null
   picture: string | null
+  dateOfBirth: string | null
+  gender: string | null
+  address: string | null
+  emergencyContact: string | null
   role: Role
   roleSelected: boolean
   hasPassword: boolean
@@ -76,6 +85,10 @@ export interface UpdateProfileInput {
   firstName?: string
   lastName?: string
   phone?: string
+  dateOfBirth?: string
+  gender?: string
+  address?: string
+  emergencyContact?: string
 }
 
 export interface SignupInput {

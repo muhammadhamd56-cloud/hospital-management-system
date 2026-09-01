@@ -64,6 +64,7 @@ export class DoctorPortalService {
     });
     const data = {
       specialization: dto.specialization,
+      qualifications: dto.qualifications?.trim() || null,
       departmentId: department.id,
       bio: dto.bio,
       experienceYears: dto.experienceYears,

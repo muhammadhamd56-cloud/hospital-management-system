@@ -16,6 +16,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
   return {
     id: 'doctor-1',
     specialization: 'Cardiology',
+    qualifications: null,
     bio: 'Heart stuff',
     experienceYears: 10,
     rating: 4.5,
@@ -57,6 +58,10 @@ function buildPatientUser(overrides: Partial<User> = {}): User {
     lastName: 'Lovelace',
     phone: null,
     picture: null,
+    dateOfBirth: null,
+    gender: null,
+    address: null,
+    emergencyContact: null,
     role: Role.PATIENT,
     roleSelected: true,
     emailVerified: true,

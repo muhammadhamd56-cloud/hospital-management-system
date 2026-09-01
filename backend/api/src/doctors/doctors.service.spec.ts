@@ -8,6 +8,7 @@ function buildDoctor(overrides: Partial<DoctorWithUser> = {}): DoctorWithUser {
   const doctor: Doctor = {
     id: 'doctor-1',
     specialization: 'Cardiology',
+    qualifications: null,
     bio: 'Heart specialist',
     experienceYears: 10,
     rating: 4.5,
@@ -88,6 +89,7 @@ describe('DoctorsService', () => {
           id: 'doctor-1',
           fullName: 'Ada Lovelace',
           specialization: 'Cardiology',
+          qualifications: null,
           department: 'Cardiology',
           bio: 'Heart specialist',
           experienceYears: 10,

@@ -149,6 +149,7 @@ describe('DoctorPortalService', () => {
       expect(prisma.doctor.create).toHaveBeenCalledWith({
         data: {
           specialization: 'Neurology',
+          qualifications: null,
           departmentId: 'dept-2',
           bio: 'Brain stuff',
           experienceYears: 5,
@@ -177,6 +178,7 @@ describe('DoctorPortalService', () => {
         where: { id: 'doctor-1' },
         data: {
           specialization: 'Neurology',
+          qualifications: null,
           departmentId: 'dept-2',
           bio: 'Brain stuff',
           experienceYears: 5,

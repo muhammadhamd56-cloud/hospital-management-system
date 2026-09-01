@@ -37,6 +37,7 @@ export function getDoctorProfile(): Promise<{ profile: DirectoryDoctor | null }>
 
 export interface DoctorProfileInput {
   specialization: string
+  qualifications?: string
   department: string
   bio: string
   experienceYears: number

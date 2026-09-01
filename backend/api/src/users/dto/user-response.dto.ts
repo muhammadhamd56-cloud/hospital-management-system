@@ -26,6 +26,19 @@ export class UserResponseDto {
   @Expose()
   picture!: string | null;
 
+  /** Patient-facing profile fields -- null for other roles. */
+  @Expose()
+  dateOfBirth!: Date | null;
+
+  @Expose()
+  gender!: string | null;
+
+  @Expose()
+  address!: string | null;
+
+  @Expose()
+  emergencyContact!: string | null;
+
   @Expose()
   role!: ClientRole;
 
@@ -58,6 +71,10 @@ export class UserResponseDto {
     this.lastName = user.lastName;
     this.phone = user.phone;
     this.picture = user.picture;
+    this.dateOfBirth = user.dateOfBirth;
+    this.gender = user.gender;
+    this.address = user.address;
+    this.emergencyContact = user.emergencyContact;
     this.role = toClientRole(user.role);
     this.roleSelected = user.roleSelected;
     this.createdAt = user.createdAt;

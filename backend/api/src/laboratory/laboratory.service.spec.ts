@@ -17,6 +17,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
   return {
     id: 'doctor-1',
     specialization: 'Cardiology',
+    qualifications: null,
     bio: 'Heart stuff',
     experienceYears: 10,
     rating: 4.5,

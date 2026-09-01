@@ -4,13 +4,14 @@ import { cn } from '@/utils/cn'
 export interface AvatarProps extends HTMLAttributes<HTMLSpanElement> {
   name: string
   src?: string
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
 const SIZE_CLASSES = {
   sm: 'size-8 text-xs',
   md: 'size-10 text-sm',
   lg: 'size-12 text-base',
+  xl: 'size-24 text-2xl',
 } as const
 
 function getInitials(name: string): string {

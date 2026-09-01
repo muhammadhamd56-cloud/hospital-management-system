@@ -30,6 +30,14 @@ export class UsersService {
         ...(dto.firstName !== undefined && { firstName: dto.firstName }),
         ...(dto.lastName !== undefined && { lastName: dto.lastName }),
         ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(dto.dateOfBirth !== undefined && {
+          dateOfBirth: dto.dateOfBirth === '' ? null : new Date(dto.dateOfBirth),
+        }),
+        ...(dto.gender !== undefined && { gender: dto.gender === '' ? null : dto.gender }),
+        ...(dto.address !== undefined && { address: dto.address === '' ? null : dto.address }),
+        ...(dto.emergencyContact !== undefined && {
+          emergencyContact: dto.emergencyContact === '' ? null : dto.emergencyContact,
+        }),
       },
     });
   }

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { Menu, Moon, Sun, CalendarDays, LogOut } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/features/auth/useAuth'
@@ -71,13 +71,19 @@ export function Navbar({ onMenuClick }: NavbarProps) {
         </button>
 
         <div className="flex items-center gap-3 border-l border-surface-border pl-4">
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-medium leading-tight text-ink">{user?.fullName}</p>
-            <p className="text-xs leading-tight text-ink-muted">
-              {user ? ROLE_LABELS[user.role] : ''}
-            </p>
-          </div>
-          <Avatar name={user?.fullName ?? ''} size="sm" />
+          <Link
+            to={ROUTES.profile}
+            className="flex items-center gap-3 rounded-lg -m-1.5 p-1.5 hover:bg-surface-alt"
+            aria-label="View your profile"
+          >
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-medium leading-tight text-ink">{user?.fullName}</p>
+              <p className="text-xs leading-tight text-ink-muted">
+                {user ? ROLE_LABELS[user.role] : ''}
+              </p>
+            </div>
+            <Avatar name={user?.fullName ?? ''} size="sm" />
+          </Link>
           <button
             type="button"
             onClick={() => setIsLogoutConfirmOpen(true)}

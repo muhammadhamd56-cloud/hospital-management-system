@@ -11,6 +11,7 @@ import {
   Receipt,
   FileBarChart,
   Settings,
+  UserCircle,
   MessageCircle,
   FileText,
   UserCog,
@@ -66,5 +67,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Reports', icon: FileBarChart, path: ROUTES.reports, roles: OPS_ONLY },
   { label: 'Staff', icon: UserCog, path: ROUTES.staff, roles: ['admin'] },
   { label: 'Staff Scheduling', icon: CalendarRange, path: ROUTES.staffScheduling, roles: ['admin'] },
+  { label: 'Profile', icon: UserCircle, path: ROUTES.profile },
   { label: 'Settings', icon: Settings, path: ROUTES.settings },
 ]

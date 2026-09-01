@@ -20,6 +20,7 @@ import { ROUTES } from '@/constants/routes'
 // layout's existing content until it resolves (no extra Suspense needed).
 const dashboardSwitch = () => import('@/pages/dashboard/DashboardRouteSwitch').then((m) => ({ Component: m.DashboardRouteSwitch }))
 const settingsSwitch = () => import('@/pages/settings/SettingsRouteSwitch').then((m) => ({ Component: m.SettingsRouteSwitch }))
+const profileSwitch = () => import('@/pages/profile/ProfileRouteSwitch').then((m) => ({ Component: m.ProfileRouteSwitch }))
 const messagesSwitch = () => import('@/pages/messages/MessagesRouteSwitch').then((m) => ({ Component: m.MessagesRouteSwitch }))
 const medicalRecordsSwitch = () => import('@/pages/medicalRecords/MedicalRecordsRouteSwitch').then((m) => ({ Component: m.MedicalRecordsRouteSwitch }))
 const announcementsPage = () => import('@/pages/announcements/AnnouncementsPage').then((m) => ({ Component: m.AnnouncementsPage }))
@@ -74,6 +75,7 @@ export const router = createBrowserRouter([
           { path: ROUTES.dashboard, lazy: dashboardSwitch },
           { path: ROUTES.notifications, lazy: notificationsPage },
           { path: ROUTES.settings, lazy: settingsSwitch },
+          { path: ROUTES.profile, lazy: profileSwitch },
           { path: ROUTES.messages, lazy: messagesSwitch },
           { path: ROUTES.medicalRecords, lazy: medicalRecordsSwitch },
           { path: ROUTES.billing, lazy: billingSwitch },

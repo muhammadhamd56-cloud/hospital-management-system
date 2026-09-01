@@ -7,6 +7,7 @@ export interface DirectoryDoctorResponse {
   id: string;
   fullName: string;
   specialization: string;
+  qualifications: string | null;
   department: string;
   bio: string;
   experienceYears: number;
@@ -28,6 +29,7 @@ export function toDirectoryDoctor(doctor: DoctorWithUser): DirectoryDoctorRespon
     id: doctor.id,
     fullName: `${doctor.user.firstName} ${doctor.user.lastName}`.trim(),
     specialization: doctor.specialization,
+    qualifications: doctor.qualifications,
     department: doctor.department.name,
     bio: doctor.bio,
     experienceYears: doctor.experienceYears,

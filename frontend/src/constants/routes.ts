@@ -17,6 +17,7 @@ export const ROUTES = {
   billing: '/billing',
   reports: '/reports',
   settings: '/settings',
+  profile: '/profile',
   messages: '/messages',
   notifications: '/notifications',
   medicalRecords: '/medical-records',

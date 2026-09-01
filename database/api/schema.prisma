@@ -36,6 +36,14 @@ model User {
   lastName                String
   phone                   String?
   picture                 String?
+  /** Patient-facing profile fields. Meaningless (left null) for other
+   *  roles -- kept on User rather than a separate table since, unlike
+   *  Doctor, nothing else in the schema references "a patient" by its own
+   *  id (Appointment.patientId etc. already point straight at User.id). */
+  dateOfBirth             DateTime?
+  gender                  String?
+  address                 String?
+  emergencyContact        String?
   role                    Role      @default(PATIENT)
   /**
    * True once the user has completed the one-time post-signup role picker
@@ -133,6 +141,8 @@ model Department {
 model Doctor {
   id                         String   @id @default(cuid())
   specialization             String
+  /** Free-text credentials, e.g. "MBBS, FCPS". Optional -- not every doctor has filled this in yet. */
+  qualifications             String?
   bio                        String
   experienceYears            Int
   rating                     Float    @default(4.5)

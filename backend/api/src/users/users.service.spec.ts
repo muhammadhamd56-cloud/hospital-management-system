@@ -15,6 +15,10 @@ function buildUser(overrides: Partial<User> = {}): User {
     lastName: 'Lovelace',
     phone: null,
     picture: null,
+    dateOfBirth: null,
+    gender: null,
+    address: null,
+    emergencyContact: null,
     role: Role.PATIENT,
     roleSelected: false,
     emailVerified: true,
@@ -105,6 +109,40 @@ describe('UsersService', () => {
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
         data: { firstName: 'Grace', lastName: 'Hopper', phone: '555-5678' },
+      });
+    });
+
+    it('updates the patient-facing fields (date of birth, gender, address, emergency contact)', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser());
+      prisma.user.update.mockResolvedValue(buildUser());
+
+      await service.updateProfile('user-1', {
+        dateOfBirth: '1990-05-12',
+        gender: 'female',
+        address: '123 Main St',
+        emergencyContact: 'Jane Doe - +923001234567',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          dateOfBirth: new Date('1990-05-12'),
+          gender: 'female',
+          address: '123 Main St',
+          emergencyContact: 'Jane Doe - +923001234567',
+        },
+      });
+    });
+
+    it('clears date of birth, gender, address, and emergency contact when sent as empty strings', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser());
+      prisma.user.update.mockResolvedValue(buildUser());
+
+      await service.updateProfile('user-1', { dateOfBirth: '', gender: '', address: '', emergencyContact: '' });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { dateOfBirth: null, gender: null, address: null, emergencyContact: null },
       });
     });
 

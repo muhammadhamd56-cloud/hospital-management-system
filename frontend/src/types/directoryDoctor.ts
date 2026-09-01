@@ -2,6 +2,7 @@ export interface DirectoryDoctor {
   id: string
   fullName: string
   specialization: string
+  qualifications: string | null
   department: string
   bio: string
   experienceYears: number
