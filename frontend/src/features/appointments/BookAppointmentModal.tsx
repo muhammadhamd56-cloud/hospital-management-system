@@ -12,17 +12,23 @@ import { bookAppointmentForPatient } from '@/features/appointments/api'
 import { listPatients } from '@/features/patients/api'
 import { listDoctors } from '@/features/patientDashboard/api'
 import { ApiError } from '@/lib/apiClient'
+import { todayLocalDateString } from '@/utils/datetime'
 import type { PatientListItem } from '@/types/patientDirectory'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 
-const appointmentSchema = z.object({
-  patientId: z.string().min(1, 'Select a patient'),
-  doctorId: z.string().min(1, 'Select a doctor'),
-  date: z.string().min(1, 'Select a date'),
-  time: z.string().min(1, 'Select a time'),
-  mode: z.enum(['online', 'in-person']),
-  reason: z.string().min(5, 'Describe the reason for the visit'),
-})
+const appointmentSchema = z
+  .object({
+    patientId: z.string().min(1, 'Select a patient'),
+    doctorId: z.string().min(1, 'Select a doctor'),
+    date: z.string().min(1, 'Select a date'),
+    time: z.string().min(1, 'Select a time'),
+    mode: z.enum(['online', 'in-person']),
+    reason: z.string().min(5, 'Describe the reason for the visit'),
+  })
+  .refine((data) => new Date(`${data.date}T${data.time}`).getTime() > Date.now(), {
+    message: 'Choose a future date and time',
+    path: ['time'],
+  })
 
 type AppointmentFormInput = z.input<typeof appointmentSchema>
 
@@ -114,6 +120,7 @@ export function BookAppointmentModal({ isOpen, onClose, onBook }: BookAppointmen
           <Input
             label="Date"
             type="date"
+            min={todayLocalDateString()}
             error={errors.date?.message}
             {...register('date')}
           />

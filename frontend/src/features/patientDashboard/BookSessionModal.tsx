@@ -10,16 +10,21 @@ import { Button } from '@/components/ui/Button'
 import { bookAppointment } from '@/features/patientDashboard/api'
 import { ApiError } from '@/lib/apiClient'
 import { formatCurrency } from '@/utils/currency'
-import { formatDate, formatTime } from '@/utils/datetime'
+import { formatDate, formatTime, todayLocalDateString } from '@/utils/datetime'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 import type { PatientAppointment } from '@/types/patientSession'
 
-const bookSessionSchema = z.object({
-  date: z.string().min(1, 'Select a date'),
-  time: z.string().min(1, 'Select a time'),
-  mode: z.enum(['online', 'in-person']),
-  reason: z.string().min(5, 'Describe the reason for the visit'),
-})
+const bookSessionSchema = z
+  .object({
+    date: z.string().min(1, 'Select a date'),
+    time: z.string().min(1, 'Select a time'),
+    mode: z.enum(['online', 'in-person']),
+    reason: z.string().min(5, 'Describe the reason for the visit'),
+  })
+  .refine((data) => new Date(`${data.date}T${data.time}`).getTime() > Date.now(), {
+    message: 'Choose a future date and time',
+    path: ['time'],
+  })
 
 type BookSessionFormValues = z.infer<typeof bookSessionSchema>
 
@@ -98,7 +103,13 @@ export function BookSessionModal({ doctor, onClose, onBooked }: BookSessionModal
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Date" type="date" error={errors.date?.message} {...register('date')} />
+            <Input
+              label="Date"
+              type="date"
+              min={todayLocalDateString()}
+              error={errors.date?.message}
+              {...register('date')}
+            />
             <Input label="Time" type="time" error={errors.time?.message} {...register('time')} />
           </div>
           <Select
