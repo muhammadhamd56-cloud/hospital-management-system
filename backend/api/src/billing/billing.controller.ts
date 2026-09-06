@@ -83,7 +83,10 @@ export class BillingController {
     return { invoice };
   }
 
+  /** Hospital-wide total, unlike overview() which scopes to the caller's own
+   *  patients for a doctor -- admin-only, overrides the class-level ADMIN/DOCTOR role. */
   @Get('revenue')
+  @Roles(Role.ADMIN)
   revenueThisMonth(): Promise<{ amount: number }> {
     return this.billingService.revenueThisMonth();
   }
