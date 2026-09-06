@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { BedStatus, Role, type Bed, type User } from '@prisma/client';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BedStatus, Prisma, Role, type Bed, type User } from '@prisma/client';
 import { BedsService } from './beds.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -185,7 +185,9 @@ describe('BedsService', () => {
     });
 
     it('assigns an available bed to a patient and returns the mapped response', async () => {
-      prisma.bed.findUnique.mockResolvedValue(buildBed({ status: BedStatus.AVAILABLE }));
+      prisma.bed.findUnique.mockImplementation(({ where }) =>
+        Promise.resolve(where.id ? buildBed({ status: BedStatus.AVAILABLE }) : null),
+      );
       prisma.user.findUnique.mockResolvedValue(buildUser({ id: 'user-1', role: Role.PATIENT }));
       const updated = buildBedWithIncludes(
         { id: 'bed-1', status: BedStatus.OCCUPIED, patientId: 'user-1' },
@@ -211,6 +213,28 @@ describe('BedsService', () => {
         patientId: 'user-1',
         patientName: 'Ada Lovelace',
       });
+    });
+
+    it('throws ConflictException when the patient already occupies another bed', async () => {
+      prisma.bed.findUnique.mockImplementation(({ where }) =>
+        Promise.resolve(where.id ? buildBed({ status: BedStatus.AVAILABLE }) : buildBed({ id: 'bed-2', patientId: 'user-1' })),
+      );
+      prisma.user.findUnique.mockResolvedValue(buildUser({ id: 'user-1', role: Role.PATIENT }));
+
+      await expect(service.assign('bed-1', 'user-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.bed.update).not.toHaveBeenCalled();
+    });
+
+    it('converts a unique constraint race (P2002) into a ConflictException', async () => {
+      prisma.bed.findUnique.mockImplementation(({ where }) =>
+        Promise.resolve(where.id ? buildBed({ status: BedStatus.AVAILABLE }) : null),
+      );
+      prisma.user.findUnique.mockResolvedValue(buildUser({ id: 'user-1', role: Role.PATIENT }));
+      prisma.bed.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '6.0.0' }),
+      );
+
+      await expect(service.assign('bed-1', 'user-1')).rejects.toBeInstanceOf(ConflictException);
     });
   });
 

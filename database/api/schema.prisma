@@ -213,6 +213,18 @@ model Appointment {
 
   medicalRecord MedicalRecord?
   invoice       Invoice?
+
+  /**
+   * Defense-in-depth against the double-booking this composite covers --
+   * AppointmentsService.book() already prevents it via a Serializable
+   * transaction (see the comment there), which is airtight on its own.
+   * This index just makes doctor-schedule/date-range reads fast; it is
+   * NOT a substitute for the transaction, since a plain (non-partial)
+   * unique constraint here would also block re-booking a slot after the
+   * original appointment was cancelled or completed.
+   */
+  @@index([doctorId, scheduledAt])
+  @@index([patientId])
 }
 
 enum ChatSender {
@@ -247,7 +259,12 @@ model Bed {
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id])
 
-  patientId String?
+  /**
+   * @unique rather than plain -- a patient occupying two beds at once is
+   * never valid. Postgres unique constraints ignore NULLs, so any number
+   * of unassigned beds can still share patientId = null.
+   */
+  patientId String? @unique
   patient   User?   @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
   @@index([departmentId])

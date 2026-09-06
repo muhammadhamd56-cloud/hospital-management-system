@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { BedStatus, Role, type Bed, type Department, type User } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BedStatus, Prisma, Role, type Bed, type Department, type User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface BedResponse {
@@ -72,13 +72,29 @@ export class BedsService {
       throw new BadRequestException('Patient not found');
     }
 
-    const updated = await this.prisma.bed.update({
-      where: { id: bedId },
-      data: { status: BedStatus.OCCUPIED, patientId },
-      include: PATIENT_INCLUDE,
-    });
+    const existingBed = await this.prisma.bed.findUnique({ where: { patientId } });
 
-    return toBedResponse(updated);
+    if (existingBed) {
+      throw new ConflictException('This patient is already assigned to a bed');
+    }
+
+    try {
+      const updated = await this.prisma.bed.update({
+        where: { id: bedId },
+        data: { status: BedStatus.OCCUPIED, patientId },
+        include: PATIENT_INCLUDE,
+      });
+
+      return toBedResponse(updated);
+    } catch (error) {
+      // Belt-and-suspenders for the check above -- Bed.patientId is @unique,
+      // so two concurrent assign() calls for the same patient can't both
+      // succeed even if both raced past the findUnique check.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('This patient is already assigned to a bed');
+      }
+      throw error;
+    }
   }
 
   async release(bedId: string): Promise<BedResponse> {
