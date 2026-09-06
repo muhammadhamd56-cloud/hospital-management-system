@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import toast from 'react-hot-toast'
 import { DoctorSettingsPage } from '@/pages/settings/DoctorSettingsPage'
@@ -41,13 +42,6 @@ vi.mock('react-router', async () => {
   return { ...actual, useNavigate: () => mockNavigate }
 })
 
-// DoctorProfileForm loads via GET /doctor-portal/profile on mount — stub it
-// out so this test stays focused on account deletion, not the form.
-vi.mock('@/features/doctorDashboard/api', () => ({
-  getDoctorProfile: vi.fn().mockResolvedValue({ profile: null }),
-  upsertDoctorProfile: vi.fn(),
-}))
-
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
@@ -61,7 +55,11 @@ beforeEach(() => {
 
 async function openConfirmDialog() {
   const user = userEvent.setup()
-  render(<DoctorSettingsPage />)
+  render(
+    <MemoryRouter>
+      <DoctorSettingsPage />
+    </MemoryRouter>,
+  )
 
   await user.click(screen.getByRole('button', { name: /delete account/i }))
   expect(await screen.findByText('Delete your account?')).toBeInTheDocument()

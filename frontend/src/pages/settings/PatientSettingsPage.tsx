@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAuth } from '@/features/auth/useAuth'
-import { AccountInfoForm } from '@/features/auth/AccountInfoForm'
 import { SetPasswordCard } from '@/features/auth/SetPasswordCard'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
@@ -34,24 +33,20 @@ export function PatientSettingsPage() {
     <div className="flex flex-col gap-6">
       <div className="animate-fade-in">
         <h1 className="text-2xl font-semibold text-ink">Settings</h1>
-        <p className="text-sm text-ink-muted">Manage your account.</p>
+        <p className="text-sm text-ink-muted">
+          Manage your account security. Update your name, phone, and personal details from{' '}
+          <Link to={ROUTES.profile} className="font-medium text-brand-600 underline underline-offset-2">
+            your Profile
+          </Link>
+          .
+        </p>
       </div>
 
-      <Card className="animate-fade-in">
-        <CardHeader>
-          <CardTitle>Account Information</CardTitle>
-          <CardDescription>Update your name and phone number.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AccountInfoForm />
-        </CardContent>
-      </Card>
-
-      <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
+      <div className="animate-fade-in">
         <SetPasswordCard />
       </div>
 
-      <Card className="animate-fade-in border-danger-500/40" style={{ animationDelay: '120ms' }}>
+      <Card className="animate-fade-in border-danger-500/40" style={{ animationDelay: '60ms' }}>
         <CardHeader>
           <CardTitle className="text-danger-600">Danger Zone</CardTitle>
           <CardDescription>Permanently delete your account and all associated data.</CardDescription>
