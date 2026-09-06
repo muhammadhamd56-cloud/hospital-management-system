@@ -10,8 +10,9 @@ services:
     runtime: node
     plan: free
     rootDir: backend/api
-    buildCommand: npm install && npx prisma generate --schema=../../database/api/schema.prisma && npm run build
+    buildCommand: npm install && npm run build
     startCommand: npx prisma migrate deploy --schema=../../database/api/schema.prisma && node dist/main
+    healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
         sync: false
