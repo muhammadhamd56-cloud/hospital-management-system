@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { ShiftStatus, ShiftType, StaffType, type Staff, type StaffShift } from '@prisma/client';
+import { Prisma, ShiftStatus, ShiftType, StaffType, type Staff, type StaffShift } from '@prisma/client';
 import { ShiftsService } from './shifts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -66,6 +66,7 @@ describe('ShiftsService', () => {
     staffLeave: { findUnique: jest.Mock };
     staffAvailability: { findUnique: jest.Mock };
     department: { upsert: jest.Mock };
+    $transaction: jest.Mock;
   };
   let notifications: { create: jest.Mock };
 
@@ -84,6 +85,7 @@ describe('ShiftsService', () => {
       staffLeave: { findUnique: jest.fn().mockResolvedValue(null) },
       staffAvailability: { findUnique: jest.fn().mockResolvedValue(null) },
       department: { upsert: jest.fn() },
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     notifications = { create: jest.fn() };
 
@@ -200,6 +202,18 @@ describe('ShiftsService', () => {
         include: { staff: { include: { user: true, department: true } }, department: true },
       });
       expect(result.status).toBe('scheduled');
+    });
+
+    it('converts a Serializable transaction conflict (P2034) into a ConflictException', async () => {
+      prisma.staff.findUnique.mockResolvedValue(buildStaff());
+      prisma.staffShift.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Transaction failed', { code: 'P2034', clientVersion: '6.0.0' }),
+      );
+
+      await expect(service.create(MORNING_SHIFT_INPUT, 'admin-1')).rejects.toThrow(
+        "You're already assigned to a shift during this time.",
+      );
     });
 
     it('skips notifying when the staff member has no linked user account', async () => {

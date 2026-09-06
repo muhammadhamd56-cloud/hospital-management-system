@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, DayOfWeek, NotificationType, ShiftStatus, ShiftType } from '@prisma/client';
+import { AuditAction, DayOfWeek, NotificationType, Prisma, ShiftStatus, ShiftType } from '@prisma/client';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,6 +37,13 @@ export interface ShiftFilters {
   dateFrom?: string;
   dateTo?: string;
 }
+
+/** Either the top-level PrismaService or a $transaction callback's client --
+ *  conflict checks must run against whichever one is also doing the
+ *  write, or Serializable isolation can't see its own in-flight read. */
+type Db = PrismaService | Prisma.TransactionClient;
+
+const CONFLICT_MESSAGE = "You're already assigned to a shift during this time.";
 
 interface AssignmentCheck {
   staffId: string;
@@ -95,24 +102,41 @@ export class ShiftsService {
     const date = parseLocalDate(dto.date);
     const localStartMinutes = parseLocalMinutes(dto.localStartTime);
 
-    await this.assertValidAssignment({ staffId: dto.staffId, startTime, endTime, date, localStartMinutes });
-
     const departmentId = await this.resolveDepartmentId(dto.department);
 
-    const shift = await this.prisma.staffShift.create({
-      data: {
-        staffId: dto.staffId,
-        departmentId,
-        date,
-        startTime,
-        endTime,
-        shiftType: toPrismaShiftType(dto.shiftType),
-        notes: dto.notes,
-        groupId: dto.groupId,
-        createdById,
-      },
-      include: INCLUDE,
-    });
+    // Serializable so two concurrent assignments for the same staff member
+    // can't both pass the conflict check before either commits -- mirrors
+    // AppointmentsService.book(); see assertNoSchedulingConflict's overlap
+    // query for what this is guarding.
+    let shift: ShiftWithStaff;
+    try {
+      shift = await this.prisma.$transaction(
+        async (tx) => {
+          await this.assertValidAssignment({ staffId: dto.staffId, startTime, endTime, date, localStartMinutes }, tx);
+
+          return tx.staffShift.create({
+            data: {
+              staffId: dto.staffId,
+              departmentId,
+              date,
+              startTime,
+              endTime,
+              shiftType: toPrismaShiftType(dto.shiftType),
+              notes: dto.notes,
+              groupId: dto.groupId,
+              createdById,
+            },
+            include: INCLUDE,
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+        throw new ConflictException(CONFLICT_MESSAGE);
+      }
+      throw error;
+    }
 
     await this.auditLog.log({
       actorId: createdById,
@@ -156,28 +180,40 @@ export class ShiftsService {
         const date = parseLocalDate(occurrence.date);
         const localStartMinutes = parseLocalMinutes(occurrence.localStartTime);
 
-        await this.assertValidAssignment({ staffId: dto.staffId, startTime, endTime, date, localStartMinutes });
+        // Serializable per-occurrence, same reasoning as create() -- each
+        // occurrence's check+create must run against the one connection
+        // that also holds its write, or two concurrent requests could both
+        // pass the check for the same occurrence before either commits.
+        const shift = await this.prisma.$transaction(
+          async (tx) => {
+            await this.assertValidAssignment({ staffId: dto.staffId, startTime, endTime, date, localStartMinutes }, tx);
 
-        const shift = await this.prisma.staffShift.create({
-          data: {
-            staffId: dto.staffId,
-            departmentId,
-            date,
-            startTime,
-            endTime,
-            shiftType: toPrismaShiftType(dto.shiftType),
-            notes: dto.notes,
-            groupId,
-            createdById,
+            return tx.staffShift.create({
+              data: {
+                staffId: dto.staffId,
+                departmentId,
+                date,
+                startTime,
+                endTime,
+                shiftType: toPrismaShiftType(dto.shiftType),
+                notes: dto.notes,
+                groupId,
+                createdById,
+              },
+              include: INCLUDE,
+            });
           },
-          include: INCLUDE,
-        });
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
 
         created.push(shift);
       }
     } catch (error) {
       if (created.length > 0) {
         await this.prisma.staffShift.deleteMany({ where: { id: { in: created.map((shift) => shift.id) } } });
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+        throw new ConflictException(CONFLICT_MESSAGE);
       }
       throw error;
     }
@@ -223,6 +259,21 @@ export class ShiftsService {
 
     const scheduleChanged = dto.staffId !== undefined || dto.startTime !== undefined || dto.endTime !== undefined;
 
+    const newStatus = dto.status ? toPrismaShiftStatus(dto.status) : existing.status;
+    const isNewlyCancelled = newStatus === ShiftStatus.CANCELLED && existing.status !== ShiftStatus.CANCELLED;
+
+    const updateData = {
+      staffId,
+      departmentId,
+      date,
+      startTime,
+      endTime,
+      shiftType: dto.shiftType ? toPrismaShiftType(dto.shiftType) : existing.shiftType,
+      status: newStatus,
+      notes: dto.notes ?? existing.notes,
+    };
+
+    let shift: ShiftWithStaff;
     if (scheduleChanged) {
       // dto.localStartTime should always accompany dto.startTime from the
       // frontend; falling back to the (less accurate) UTC hour only covers
@@ -230,26 +281,30 @@ export class ShiftsService {
       const localStartMinutes = dto.localStartTime
         ? parseLocalMinutes(dto.localStartTime)
         : startTime.getUTCHours() * 60 + startTime.getUTCMinutes();
-      await this.assertValidAssignment({ staffId, startTime, endTime, date, localStartMinutes, excludeShiftId: id });
+
+      // Serializable so this re-validation can't be raced by a concurrent
+      // assignment the same way create()'s can -- see the comment there.
+      try {
+        shift = await this.prisma.$transaction(
+          async (tx) => {
+            await this.assertValidAssignment(
+              { staffId, startTime, endTime, date, localStartMinutes, excludeShiftId: id },
+              tx,
+            );
+
+            return tx.staffShift.update({ where: { id }, data: updateData, include: INCLUDE });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+          throw new ConflictException(CONFLICT_MESSAGE);
+        }
+        throw error;
+      }
+    } else {
+      shift = await this.prisma.staffShift.update({ where: { id }, data: updateData, include: INCLUDE });
     }
-
-    const newStatus = dto.status ? toPrismaShiftStatus(dto.status) : existing.status;
-    const isNewlyCancelled = newStatus === ShiftStatus.CANCELLED && existing.status !== ShiftStatus.CANCELLED;
-
-    const shift = await this.prisma.staffShift.update({
-      where: { id },
-      data: {
-        staffId,
-        departmentId,
-        date,
-        startTime,
-        endTime,
-        shiftType: dto.shiftType ? toPrismaShiftType(dto.shiftType) : existing.shiftType,
-        status: newStatus,
-        notes: dto.notes ?? existing.notes,
-      },
-      include: INCLUDE,
-    });
 
     await this.auditLog.log({
       actorId,
@@ -307,7 +362,7 @@ export class ShiftsService {
    *  ShiftApplicationsService can run the identical overlap/leave/
    *  availability checks before approving an application, without a second
    *  StaffShift-creation path that could diverge from this one. */
-  async assertNoSchedulingConflict(params: AssignmentCheck): Promise<void> {
+  async assertNoSchedulingConflict(params: AssignmentCheck, db: Db = this.prisma): Promise<void> {
     const { staffId, startTime, endTime, date, localStartMinutes, excludeShiftId } = params;
 
     this.assertBasicShiftTiming(startTime, endTime, date);
@@ -315,8 +370,8 @@ export class ShiftsService {
     const dayOfWeek = DAY_OF_WEEK_BY_JS_INDEX[date.getUTCDay()];
 
     const [leave, availability] = await Promise.all([
-      this.prisma.staffLeave.findUnique({ where: { staffId_date: { staffId, date } } }),
-      this.prisma.staffAvailability.findUnique({ where: { staffId_dayOfWeek: { staffId, dayOfWeek } } }),
+      db.staffLeave.findUnique({ where: { staffId_date: { staffId, date } } }),
+      db.staffAvailability.findUnique({ where: { staffId_dayOfWeek: { staffId, dayOfWeek } } }),
     ]);
 
     if (leave) {
@@ -336,7 +391,7 @@ export class ShiftsService {
       }
     }
 
-    const overlapping = await this.prisma.staffShift.findFirst({
+    const overlapping = await db.staffShift.findFirst({
       where: {
         staffId,
         status: { not: ShiftStatus.CANCELLED },
@@ -347,9 +402,7 @@ export class ShiftsService {
     });
 
     if (overlapping) {
-      throw new ConflictException(
-        "You're already assigned to a shift during this time.",
-      );
+      throw new ConflictException(CONFLICT_MESSAGE);
     }
   }
 
@@ -363,13 +416,13 @@ export class ShiftsService {
     }
   }
 
-  private async assertValidAssignment(params: AssignmentCheck): Promise<void> {
+  private async assertValidAssignment(params: AssignmentCheck, db: Db = this.prisma): Promise<void> {
     // Preserves the original check order (timing, then staff existence,
     // then leave/availability/overlap) -- callers/tests rely on a
     // malformed date/time never reaching the staff lookup.
     this.assertBasicShiftTiming(params.startTime, params.endTime, params.date);
 
-    const staff = await this.prisma.staff.findUnique({ where: { id: params.staffId } });
+    const staff = await db.staff.findUnique({ where: { id: params.staffId } });
 
     if (!staff) {
       throw new NotFoundException('Staff member not found');
@@ -379,7 +432,7 @@ export class ShiftsService {
       throw new BadRequestException('This staff member is not active and cannot be scheduled');
     }
 
-    await this.assertNoSchedulingConflict(params);
+    await this.assertNoSchedulingConflict(params, db);
   }
 
   /**
@@ -404,27 +457,46 @@ export class ShiftsService {
   }): Promise<ShiftWithStaff> {
     const localStartMinutes = params.startTime.getUTCHours() * 60 + params.startTime.getUTCMinutes();
 
-    await this.assertNoSchedulingConflict({
-      staffId: params.staffId,
-      startTime: params.startTime,
-      endTime: params.endTime,
-      date: params.date,
-      localStartMinutes,
-    });
+    // Serializable, same reasoning as create() -- an approved application
+    // and a directly-scheduled shift racing for the same slot must not
+    // both be able to slip past this check.
+    let shift: ShiftWithStaff;
+    try {
+      shift = await this.prisma.$transaction(
+        async (tx) => {
+          await this.assertNoSchedulingConflict(
+            {
+              staffId: params.staffId,
+              startTime: params.startTime,
+              endTime: params.endTime,
+              date: params.date,
+              localStartMinutes,
+            },
+            tx,
+          );
 
-    const shift = await this.prisma.staffShift.create({
-      data: {
-        staffId: params.staffId,
-        departmentId: params.departmentId ?? undefined,
-        date: params.date,
-        startTime: params.startTime,
-        endTime: params.endTime,
-        shiftType: params.shiftType,
-        notes: params.notes,
-        createdById: params.createdById,
-      },
-      include: INCLUDE,
-    });
+          return tx.staffShift.create({
+            data: {
+              staffId: params.staffId,
+              departmentId: params.departmentId ?? undefined,
+              date: params.date,
+              startTime: params.startTime,
+              endTime: params.endTime,
+              shiftType: params.shiftType,
+              notes: params.notes,
+              createdById: params.createdById,
+            },
+            include: INCLUDE,
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+        throw new ConflictException(CONFLICT_MESSAGE);
+      }
+      throw error;
+    }
 
     await this.auditLog.log({
       actorId: params.createdById,
