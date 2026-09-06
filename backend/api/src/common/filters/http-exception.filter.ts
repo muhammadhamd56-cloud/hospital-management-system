@@ -6,12 +6,19 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { ThrottlerException } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 interface NestErrorBody {
   message?: string | string[];
   error?: string;
 }
+
+/** ThrottlerException's own .message is the literal string
+ *  "ThrottlerException: Too Many Requests" -- fine for logs, not something
+ *  to show a real user. This is the only message override in this filter;
+ *  every other exception's own message is already written to be user-facing. */
+const THROTTLED_MESSAGE = 'Too many attempts. Please wait a moment and try again.';
 
 /**
  * Catches everything (HttpException and unexpected errors alike) and shapes it
@@ -32,14 +39,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const body = exception instanceof HttpException ? exception.getResponse() : null;
     const parsedBody = typeof body === 'object' && body !== null ? (body as NestErrorBody) : null;
 
-    const message =
-      exception instanceof HttpException ? exception.message : 'Internal server error';
+    const message = exception instanceof ThrottlerException
+      ? THROTTLED_MESSAGE
+      : exception instanceof HttpException
+        ? exception.message
+        : 'Internal server error';
 
-    const errors = parsedBody?.message
-      ? Array.isArray(parsedBody.message)
-        ? parsedBody.message
-        : [parsedBody.message]
-      : [];
+    const errors = exception instanceof ThrottlerException
+      ? [THROTTLED_MESSAGE]
+      : parsedBody?.message
+        ? Array.isArray(parsedBody.message)
+          ? parsedBody.message
+          : [parsedBody.message]
+        : [];
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(
