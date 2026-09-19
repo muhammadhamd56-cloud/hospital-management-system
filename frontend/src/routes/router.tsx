@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router'
+import { createBrowserRouter, Navigate, Outlet } from 'react-router'
 import { AuthLayout } from '@/layouts/AuthLayout'
 import { DashboardLayout } from '@/layouts/DashboardLayout'
 import { LoginPage } from '@/pages/auth/LoginPage'
@@ -9,8 +9,10 @@ import { OAuthCallbackPage } from '@/pages/auth/OAuthCallbackPage'
 import { SelectRolePage } from '@/pages/auth/SelectRolePage'
 import { SetPasswordPage } from '@/pages/auth/SetPasswordPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
+import { PublicDoctorProfilePage } from '@/pages/doctors/PublicDoctorProfilePage'
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/ProtectedRoute'
 import { LaboratoryRoute, RoleRoute } from '@/routes/RoleRoute'
+import { RouteErrorBoundary } from '@/routes/RouteErrorBoundary'
 import { ROUTES } from '@/constants/routes'
 
 // The dashboard's own feature pages are code-split -- they're the bulk of
@@ -43,85 +45,96 @@ const staffSchedulingPage = () => import('@/pages/staffScheduling/StaffSchedulin
 const notificationsPage = () => import('@/pages/notifications/NotificationsPage').then((m) => ({ Component: m.NotificationsPage }))
 
 export const router = createBrowserRouter([
-  // Unguarded: the user isn't loaded yet when Google redirects back here.
-  { path: ROUTES.oauthCallback, element: <OAuthCallbackPage /> },
   {
-    element: <PublicOnlyRoute />,
+    // Root layout route so a single boundary catches errors from any route
+    // below, including a lazy-loaded chunk failing to fetch (e.g. after a
+    // redeploy invalidates the hashed filename this tab still has cached).
+    element: <Outlet />,
+    errorElement: <RouteErrorBoundary />,
     children: [
+      // Unguarded: the user isn't loaded yet when Google redirects back here.
+      { path: ROUTES.oauthCallback, element: <OAuthCallbackPage /> },
+      // Unguarded: a doctor's shareable profile link, viewable by anyone.
+      { path: ROUTES.publicDoctorProfile, element: <PublicDoctorProfilePage /> },
       {
-        element: <AuthLayout />,
+        element: <PublicOnlyRoute />,
         children: [
-          { path: ROUTES.login, element: <LoginPage /> },
-          { path: ROUTES.forgotPassword, element: <ForgotPasswordPage /> },
-          { path: ROUTES.resetPassword, element: <ResetPasswordPage /> },
-          { path: ROUTES.verifyEmail, element: <VerifyEmailPage /> },
+          {
+            element: <AuthLayout />,
+            children: [
+              { path: ROUTES.login, element: <LoginPage />, handle: { title: 'Sign In' } },
+              { path: ROUTES.forgotPassword, element: <ForgotPasswordPage />, handle: { title: 'Forgot Password' } },
+              { path: ROUTES.resetPassword, element: <ResetPasswordPage />, handle: { title: 'Reset Password' } },
+              { path: ROUTES.verifyEmail, element: <VerifyEmailPage />, handle: { title: 'Verify Email' } },
+            ],
+          },
         ],
       },
+      {
+        element: <ProtectedRoute />,
+        children: [
+          {
+            element: <AuthLayout />,
+            children: [
+              { path: ROUTES.selectRole, element: <SelectRolePage />, handle: { title: 'Select Role' } },
+              { path: ROUTES.setPassword, element: <SetPasswordPage />, handle: { title: 'Set Password' } },
+            ],
+          },
+          {
+            element: <DashboardLayout />,
+            children: [
+              { path: ROUTES.dashboard, lazy: dashboardSwitch, handle: { title: 'Dashboard' } },
+              { path: ROUTES.notifications, lazy: notificationsPage, handle: { title: 'Notifications' } },
+              { path: ROUTES.settings, lazy: settingsSwitch, handle: { title: 'Settings' } },
+              { path: ROUTES.profile, lazy: profileSwitch, handle: { title: 'Profile' } },
+              { path: ROUTES.messages, lazy: messagesSwitch, handle: { title: 'Messages' } },
+              { path: ROUTES.medicalRecords, lazy: medicalRecordsSwitch, handle: { title: 'Medical Records' } },
+              { path: ROUTES.billing, lazy: billingSwitch, handle: { title: 'Billing' } },
+              { path: ROUTES.announcements, lazy: announcementsPage, handle: { title: 'Announcements' } },
+              {
+                element: <RoleRoute allow={['patient']} />,
+                children: [
+                  { path: ROUTES.findDoctor, lazy: findDoctorPage, handle: { title: 'Find a Doctor' } },
+                  { path: ROUTES.bookAppointment, lazy: bookAppointmentPage, handle: { title: 'Book Appointment' } },
+                  { path: ROUTES.myAppointments, lazy: myAppointmentsPage, handle: { title: 'My Appointments' } },
+                  { path: ROUTES.prescriptions, lazy: prescriptionsPage, handle: { title: 'Prescriptions' } },
+                ],
+              },
+              {
+                element: <RoleRoute allow={['staff']} />,
+                children: [
+                  { path: ROUTES.myShifts, lazy: myShiftsPage, handle: { title: 'My Shifts' } },
+                  { path: ROUTES.availableShifts, lazy: availableShiftsPage, handle: { title: 'Available Shifts' } },
+                  { path: ROUTES.myTasks, lazy: tasksPage, handle: { title: 'My Tasks' } },
+                ],
+              },
+              {
+                element: <RoleRoute allow={['admin', 'doctor']} />,
+                children: [
+                  { path: ROUTES.patients, lazy: patientsPage, handle: { title: 'Patients' } },
+                  { path: ROUTES.appointments, lazy: appointmentsPage, handle: { title: 'Appointments' } },
+                  { path: ROUTES.doctors, lazy: doctorsPage, handle: { title: 'Doctors' } },
+                  { path: ROUTES.beds, lazy: bedsPage, handle: { title: 'Beds' } },
+                ],
+              },
+              {
+                element: <LaboratoryRoute />,
+                children: [{ path: ROUTES.laboratory, lazy: laboratoryPage, handle: { title: 'Laboratory' } }],
+              },
+              {
+                element: <RoleRoute allow={['admin']} />,
+                children: [
+                  { path: ROUTES.reports, lazy: reportsPage, handle: { title: 'Reports' } },
+                  { path: ROUTES.staff, lazy: staffPage, handle: { title: 'Staff' } },
+                  { path: ROUTES.staffScheduling, lazy: staffSchedulingPage, handle: { title: 'Staff Scheduling' } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { path: '/', element: <Navigate to={ROUTES.dashboard} replace /> },
+      { path: '*', element: <NotFoundPage />, handle: { title: 'Page Not Found' } },
     ],
   },
-  {
-    element: <ProtectedRoute />,
-    children: [
-      {
-        element: <AuthLayout />,
-        children: [
-          { path: ROUTES.selectRole, element: <SelectRolePage /> },
-          { path: ROUTES.setPassword, element: <SetPasswordPage /> },
-        ],
-      },
-      {
-        element: <DashboardLayout />,
-        children: [
-          { path: ROUTES.dashboard, lazy: dashboardSwitch },
-          { path: ROUTES.notifications, lazy: notificationsPage },
-          { path: ROUTES.settings, lazy: settingsSwitch },
-          { path: ROUTES.profile, lazy: profileSwitch },
-          { path: ROUTES.messages, lazy: messagesSwitch },
-          { path: ROUTES.medicalRecords, lazy: medicalRecordsSwitch },
-          { path: ROUTES.billing, lazy: billingSwitch },
-          { path: ROUTES.announcements, lazy: announcementsPage },
-          {
-            element: <RoleRoute allow={['patient']} />,
-            children: [
-              { path: ROUTES.findDoctor, lazy: findDoctorPage },
-              { path: ROUTES.bookAppointment, lazy: bookAppointmentPage },
-              { path: ROUTES.myAppointments, lazy: myAppointmentsPage },
-              { path: ROUTES.prescriptions, lazy: prescriptionsPage },
-            ],
-          },
-          {
-            element: <RoleRoute allow={['staff']} />,
-            children: [
-              { path: ROUTES.myShifts, lazy: myShiftsPage },
-              { path: ROUTES.availableShifts, lazy: availableShiftsPage },
-              { path: ROUTES.myTasks, lazy: tasksPage },
-            ],
-          },
-          {
-            element: <RoleRoute allow={['admin', 'doctor']} />,
-            children: [
-              { path: ROUTES.patients, lazy: patientsPage },
-              { path: ROUTES.appointments, lazy: appointmentsPage },
-              { path: ROUTES.doctors, lazy: doctorsPage },
-              { path: ROUTES.beds, lazy: bedsPage },
-              { path: ROUTES.reports, lazy: reportsPage },
-            ],
-          },
-          {
-            element: <LaboratoryRoute />,
-            children: [{ path: ROUTES.laboratory, lazy: laboratoryPage }],
-          },
-          {
-            element: <RoleRoute allow={['admin']} />,
-            children: [
-              { path: ROUTES.staff, lazy: staffPage },
-              { path: ROUTES.staffScheduling, lazy: staffSchedulingPage },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-  { path: '/', element: <Navigate to={ROUTES.dashboard} replace /> },
-  { path: '*', element: <NotFoundPage /> },
 ])
