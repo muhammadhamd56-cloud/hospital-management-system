@@ -1,3 +1,5 @@
+import type { SocialLinks } from '@/types/socialLinks'
+
 export interface DirectoryDoctor {
   id: string
   fullName: string
@@ -12,4 +14,6 @@ export interface DirectoryDoctor {
   consultationFee: number
   appointmentDurationMinutes: number
   email: string | null
+  phone: string | null
+  socialLinks: SocialLinks | null
 }

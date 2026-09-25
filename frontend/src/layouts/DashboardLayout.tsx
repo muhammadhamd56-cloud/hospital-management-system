@@ -3,9 +3,11 @@ import { Outlet } from 'react-router'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Navbar } from '@/components/layout/Navbar'
 import { AssistantWidget } from '@/features/assistant/AssistantWidget'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
 export function DashboardLayout() {
   const [isSidebarOpen, setSidebarOpen] = useState(false)
+  useDocumentTitle()
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface-alt">

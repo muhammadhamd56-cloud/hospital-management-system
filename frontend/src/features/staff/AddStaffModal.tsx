@@ -1,4 +1,4 @@
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
@@ -7,21 +7,34 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
+import { PhoneInput } from '@/components/ui/PhoneInput'
 import { createStaff, type CreateStaffResponse } from '@/features/staff/api'
 import { ApiError } from '@/lib/apiClient'
+import { detectDefaultCountry, phoneErrorMessage, toE164, validatePhone, type CountryCode } from '@/lib/phone'
 import { DEPARTMENTS } from '@/types/doctor'
 import { STAFF_ROLE_OPTIONS, type StaffRole } from '@/types/staff'
 
-const schema = z.object({
-  firstName: z.string().min(1, 'First name is required'),
-  lastName: z.string().min(1, 'Last name is required'),
-  email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
-  role: z.enum(['doctor', 'staff']),
-  specialization: z.string().trim().optional(),
-  department: z.string().trim().optional(),
-  bio: z.string().trim().optional(),
-  experienceYears: z.string().optional(),
-})
+const schema = z
+  .object({
+    firstName: z.string().min(1, 'First name is required'),
+    lastName: z.string().min(1, 'Last name is required'),
+    email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
+    role: z.enum(['doctor', 'staff']),
+    phone: z.object({
+      country: z.custom<CountryCode>(() => true),
+      nationalNumber: z.string(),
+    }),
+    specialization: z.string().trim().optional(),
+    department: z.string().trim().optional(),
+    bio: z.string().trim().optional(),
+    experienceYears: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    const result = validatePhone(values.phone, { required: false })
+    if (!result.valid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phone'], message: phoneErrorMessage(values.phone, result) })
+    }
+  })
 
 type FormValues = z.infer<typeof schema>
 
@@ -33,12 +46,16 @@ interface AddStaffModalProps {
 
 export function AddStaffModal({ isOpen, onClose, onCreated }: AddStaffModalProps) {
   const {
+    control,
     register,
     handleSubmit,
     watch,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { role: 'staff' } })
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { role: 'staff', phone: { country: detectDefaultCountry(), nationalNumber: '' } },
+  })
   const role = watch('role') as StaffRole
 
   function handleClose() {
@@ -67,6 +84,7 @@ export function AddStaffModal({ isOpen, onClose, onCreated }: AddStaffModalProps
         lastName: values.lastName,
         email: values.email,
         role: values.role,
+        phone: values.phone.nationalNumber ? toE164(values.phone) ?? undefined : undefined,
         ...(values.role === 'doctor' && {
           specialization: values.specialization,
           department: values.department,
@@ -107,6 +125,18 @@ export function AddStaffModal({ isOpen, onClose, onCreated }: AddStaffModalProps
           placeholder="staff@hospital.com"
           error={errors.email?.message}
           {...register('email')}
+        />
+        <Controller
+          control={control}
+          name="phone"
+          render={({ field }) => (
+            <PhoneInput
+              label="Phone number (optional)"
+              value={field.value}
+              onChange={field.onChange}
+              error={errors.phone?.message as string | undefined}
+            />
+          )}
         />
         {role === 'doctor' && (
           <>

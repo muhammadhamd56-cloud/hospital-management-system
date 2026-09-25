@@ -48,6 +48,14 @@ export function cancelInvoice(id: string): Promise<{ invoice: Invoice }> {
   return api.patch(`/billing/invoices/${id}/cancel`)
 }
 
+export function refundPayment(
+  invoiceId: string,
+  paymentId: string,
+  input: { amount?: number; reason?: string },
+): Promise<{ invoice: Invoice }> {
+  return api.post(`/billing/invoices/${invoiceId}/payments/${paymentId}/refund`, input)
+}
+
 /** Starts an online payment for one of the caller's own invoices -- redirect
  *  the browser to the returned url (Stripe's hosted checkout page). */
 export function createInvoiceCheckout(id: string): Promise<{ url: string }> {
@@ -56,4 +64,18 @@ export function createInvoiceCheckout(id: string): Promise<{ url: string }> {
 
 export function getRevenueThisMonth(): Promise<{ amount: number }> {
   return api.get('/billing/revenue')
+}
+
+export interface PlatformSettings {
+  consultationMargin: number
+}
+
+/** Admin-only. The flat markup folded into a booking's auto-generated
+ *  consultation invoice on top of the doctor's own fee. */
+export function getPlatformSettings(): Promise<PlatformSettings> {
+  return api.get('/platform-settings')
+}
+
+export function updatePlatformSettings(input: PlatformSettings): Promise<PlatformSettings> {
+  return api.patch('/platform-settings', input)
 }

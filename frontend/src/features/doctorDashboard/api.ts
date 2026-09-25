@@ -3,6 +3,7 @@ import type { DoctorAppointment } from '@/types/doctorSession'
 import type { DoctorInboxPatient } from '@/types/doctorChatInbox'
 import type { ChatMessage } from '@/types/chatMessage'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
+import type { SocialLinks } from '@/types/socialLinks'
 
 export function listDoctorAppointments(): Promise<{ appointments: DoctorAppointment[] }> {
   return api.get('/doctor-portal/appointments')
@@ -24,11 +25,16 @@ export function getDoctorChatThread(patientId: string): Promise<{ thread: ChatMe
   return api.get(`/doctor-portal/chat/${patientId}`)
 }
 
+export interface SendChatMessageInput {
+  body?: string
+  imageUrl?: string
+}
+
 export function sendDoctorChatMessage(
   patientId: string,
-  body: string,
+  input: SendChatMessageInput,
 ): Promise<{ thread: ChatMessage[] }> {
-  return api.post(`/doctor-portal/chat/${patientId}`, { body })
+  return api.post(`/doctor-portal/chat/${patientId}`, input)
 }
 
 export function getDoctorProfile(): Promise<{ profile: DirectoryDoctor | null }> {
@@ -43,6 +49,7 @@ export interface DoctorProfileInput {
   experienceYears: number
   consultationFee: number
   appointmentDurationMinutes: number
+  socialLinks?: SocialLinks
 }
 
 export function upsertDoctorProfile(

@@ -16,7 +16,8 @@ export interface AuthUser {
   dateOfBirth: string | null
   gender: string | null
   address: string | null
-  emergencyContact: string | null
+  emergencyContactName: string | null
+  emergencyContactPhone: string | null
   role: Role
   /** False until the user completes the one-time post-signup role picker. */
   roleSelected: boolean
@@ -45,7 +46,8 @@ interface RawUser {
   dateOfBirth: string | null
   gender: string | null
   address: string | null
-  emergencyContact: string | null
+  emergencyContactName: string | null
+  emergencyContactPhone: string | null
   role: Role
   roleSelected: boolean
   hasPassword: boolean
@@ -88,7 +90,8 @@ export interface UpdateProfileInput {
   dateOfBirth?: string
   gender?: string
   address?: string
-  emergencyContact?: string
+  emergencyContactName?: string
+  emergencyContactPhone?: string
 }
 
 export interface SignupInput {

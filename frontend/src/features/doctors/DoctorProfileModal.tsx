@@ -1,8 +1,14 @@
-import { Mail, Star, Stethoscope } from 'lucide-react'
+import { useState } from 'react'
+import { Mail, Phone, Star, Stethoscope, Globe, ExternalLink, Copy, Check } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { Modal } from '@/components/ui/Modal'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { formatCurrency } from '@/utils/currency'
+import { formatPhoneForDisplay } from '@/lib/phone'
+import { buildPublicDoctorProfileUrl } from '@/constants/routes'
+import { SOCIAL_LINK_LABELS, type SocialLinkKey } from '@/constants/socialLinks'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 
 interface DoctorProfileModalProps {
@@ -11,6 +17,20 @@ interface DoctorProfileModalProps {
 }
 
 export function DoctorProfileModal({ doctor, onClose }: DoctorProfileModalProps) {
+  const [isCopied, setIsCopied] = useState(false)
+  const socialLinks = doctor?.socialLinks
+    ? (Object.entries(doctor.socialLinks).filter(([, url]) => url) as [SocialLinkKey, string][])
+    : []
+
+  async function handleCopyLink() {
+    if (!doctor) return
+    const url = `${window.location.origin}${buildPublicDoctorProfileUrl(doctor.id)}`
+    await navigator.clipboard.writeText(url)
+    setIsCopied(true)
+    toast.success('Profile link copied to clipboard')
+    setTimeout(() => setIsCopied(false), 2000)
+  }
+
   return (
     <Modal isOpen={doctor !== null} onClose={onClose} title="Doctor Profile">
       {doctor && (
@@ -23,6 +43,12 @@ export function DoctorProfileModal({ doctor, onClose }: DoctorProfileModalProps)
                 <Mail className="size-3.5" aria-hidden="true" />
                 {doctor.email ?? 'No account'}
               </p>
+              {doctor.phone && (
+                <p className="flex items-center gap-1.5 text-sm text-ink-muted">
+                  <Phone className="size-3.5" aria-hidden="true" />
+                  {formatPhoneForDisplay(doctor.phone)}
+                </p>
+              )}
             </div>
           </div>
 
@@ -73,6 +99,50 @@ export function DoctorProfileModal({ doctor, onClose }: DoctorProfileModalProps)
               Bio
             </h3>
             <p className="text-sm text-ink-muted">{doctor.bio}</p>
+          </div>
+
+          {socialLinks.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-ink">Social Links</h3>
+              <div className="flex flex-wrap gap-2">
+                {socialLinks.map(([key, url]) => (
+                  <a
+                    key={key}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface-alt hover:text-ink"
+                  >
+                    {key === 'website' ? (
+                      <Globe className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <ExternalLink className="size-3.5" aria-hidden="true" />
+                    )}
+                    {SOCIAL_LINK_LABELS[key]}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-ink">Share Profile</h3>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-alt px-4 py-3">
+              <code className="truncate text-sm font-medium text-ink">
+                {`${window.location.origin}${buildPublicDoctorProfileUrl(doctor.id)}`}
+              </code>
+              <Button type="button" size="sm" variant="secondary" onClick={handleCopyLink}>
+                {isCopied ? (
+                  <>
+                    <Check className="size-4" aria-hidden="true" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-4" aria-hidden="true" /> Copy
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       )}

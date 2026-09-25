@@ -1,6 +1,8 @@
 import { Transform, Type } from 'class-transformer';
 import { IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min, MinLength, ValidateIf } from 'class-validator';
 import { normalizeEmail } from '../../common/normalize-email';
+import { normalizePhoneNumber } from '../../common/normalize-phone';
+import { IsE164PhoneNumber } from '../../common/validators/is-e164-phone-number.validator';
 
 /** Roles an admin may provision directly. Never 'admin' (out-of-band only)
  *  or 'patient' (self-registers). 'staff' covers every non-doctor staff
@@ -24,6 +26,12 @@ export class CreateStaffDto {
 
   @IsIn(['doctor', 'staff'])
   role!: StaffRole;
+
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value !== '' ? normalizePhoneNumber(value) : value))
+  @IsString()
+  @IsE164PhoneNumber()
+  phone?: string;
 
   // Only required/validated when role is 'doctor' -- see StaffService.create.
   @ValidateIf((dto: CreateStaffDto) => dto.role === 'doctor')

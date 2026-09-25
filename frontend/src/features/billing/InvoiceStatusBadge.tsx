@@ -7,6 +7,8 @@ const STATUS_CONFIG: Record<InvoiceStatus, { label: string; variant: 'success' |
   partially_paid: { label: 'Partially Paid', variant: 'brand' },
   overdue: { label: 'Overdue', variant: 'danger' },
   cancelled: { label: 'Cancelled', variant: 'neutral' },
+  refunded: { label: 'Refunded', variant: 'neutral' },
+  partially_refunded: { label: 'Partially Refunded', variant: 'brand' },
 }
 
 export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {

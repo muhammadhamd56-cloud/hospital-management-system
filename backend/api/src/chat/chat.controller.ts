@@ -37,7 +37,7 @@ export class ChatController {
     @Param('doctorId') doctorId: string,
     @Body() dto: SendMessageDto,
   ): Promise<{ thread: ChatMessageResponse[] }> {
-    const thread = await this.chatService.sendMessage(user.id, doctorId, dto.body);
+    const thread = await this.chatService.sendMessage(user.id, doctorId, dto);
     return { thread };
   }
 }

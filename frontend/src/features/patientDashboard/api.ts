@@ -44,8 +44,16 @@ export function getChatThread(doctorId: string): Promise<{ thread: ChatMessage[]
   return api.get(`/chat/${doctorId}`)
 }
 
-export function sendChatMessage(doctorId: string, body: string): Promise<{ thread: ChatMessage[] }> {
-  return api.post(`/chat/${doctorId}`, { body })
+export interface SendChatMessageInput {
+  body?: string
+  imageUrl?: string
+}
+
+export function sendChatMessage(
+  doctorId: string,
+  input: SendChatMessageInput,
+): Promise<{ thread: ChatMessage[] }> {
+  return api.post(`/chat/${doctorId}`, input)
 }
 
 export interface ChatInboxDoctor {

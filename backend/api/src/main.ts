@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import * as express from 'express';
+import compression from 'compression';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -18,10 +19,12 @@ async function bootstrap(): Promise<void> {
   const configService = app.get(ConfigService);
 
   app.use('/api/billing/webhooks/stripe', express.raw({ type: 'application/json' }));
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  // Raised from Express's 100kb default so chat messages can carry a compressed image data URL.
+  app.use(express.json({ limit: '3mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '3mb' }));
 
   app.use(helmet());
+  app.use(compression());
   app.enableCors({
     origin: configService.get<string>('clientUrl'),
     credentials: true,

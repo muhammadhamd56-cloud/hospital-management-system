@@ -7,17 +7,20 @@ import toast from 'react-hot-toast'
 import { KeyRound } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { PasswordRequirements } from '@/components/ui/PasswordRequirements'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/features/auth/useAuth'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
+import { isStrongPassword, STRONG_PASSWORD_MESSAGE } from '@/lib/passwordPolicy'
 
 const RESEND_COOLDOWN_SECONDS = 60
 
 const schema = z
   .object({
     code: z.string().length(6, 'Enter the 6-digit code'),
-    newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+    newPassword: z.string().refine(isStrongPassword, { message: STRONG_PASSWORD_MESSAGE }),
     confirmPassword: z.string().min(1, 'Confirm your new password'),
   })
   .refine((values) => values.newPassword === values.confirmPassword, {
@@ -38,8 +41,10 @@ export function ResetPasswordPage() {
     register,
     handleSubmit,
     setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
+  const newPassword = watch('newPassword') ?? ''
 
   useEffect(() => {
     if (!stateEmail) {
@@ -108,17 +113,16 @@ export function ResetPasswordPage() {
             error={errors.code?.message}
             {...register('code')}
           />
-          <Input
+          <PasswordInput
             label="New password"
-            type="password"
             autoComplete="new-password"
             placeholder="••••••••"
             error={errors.newPassword?.message}
             {...register('newPassword')}
           />
-          <Input
+          <PasswordRequirements password={newPassword} />
+          <PasswordInput
             label="Confirm new password"
-            type="password"
             autoComplete="new-password"
             placeholder="••••••••"
             error={errors.confirmPassword?.message}

@@ -1,4 +1,11 @@
-export type InvoiceStatus = 'paid' | 'pending' | 'partially_paid' | 'overdue' | 'cancelled'
+export type InvoiceStatus =
+  | 'paid'
+  | 'pending'
+  | 'partially_paid'
+  | 'overdue'
+  | 'cancelled'
+  | 'refunded'
+  | 'partially_refunded'
 
 export type PaymentMethod = 'CASH' | 'CARD' | 'BANK_TRANSFER' | 'OTHER'
 
@@ -17,6 +24,8 @@ export interface Payment {
   method: PaymentMethod
   recordedBy: string | null
   createdAt: string
+  refundedAmount: number
+  refundableAmount: number
 }
 
 export interface Invoice {

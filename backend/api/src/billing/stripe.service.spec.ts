@@ -3,10 +3,13 @@
 // the way babel-jest does, so the mock factory has to come first textually.
 const mockSessionsCreate = jest.fn();
 const mockConstructEvent = jest.fn();
+const mockRefundsCreate = jest.fn();
+const mockRefundsList = jest.fn();
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
     checkout: { sessions: { create: mockSessionsCreate } },
     webhooks: { constructEvent: mockConstructEvent },
+    refunds: { create: mockRefundsCreate, list: mockRefundsList },
   }));
 });
 
@@ -36,13 +39,21 @@ function buildInvoiceRow(overrides: Record<string, unknown> = {}) {
 
 describe('StripeService', () => {
   let service: StripeService;
-  let prisma: { invoice: { update: jest.Mock; findUnique: jest.Mock }; payment: { create: jest.Mock } };
+  let prisma: {
+    invoice: { update: jest.Mock; findUnique: jest.Mock };
+    payment: { create: jest.Mock; findFirst: jest.Mock };
+    refund: { create: jest.Mock };
+  };
   let configService: { get: jest.Mock };
   let notificationsService: { create: jest.Mock };
 
   async function buildService(values: Record<string, string | undefined>) {
     configService = { get: jest.fn((key: string) => values[key]) };
-    prisma = { invoice: { update: jest.fn(), findUnique: jest.fn() }, payment: { create: jest.fn() } };
+    prisma = {
+      invoice: { update: jest.fn(), findUnique: jest.fn() },
+      payment: { create: jest.fn(), findFirst: jest.fn() },
+      refund: { create: jest.fn().mockResolvedValue(undefined) },
+    };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -60,6 +71,8 @@ describe('StripeService', () => {
   beforeEach(() => {
     mockSessionsCreate.mockReset();
     mockConstructEvent.mockReset();
+    mockRefundsCreate.mockReset();
+    mockRefundsList.mockReset();
     (Stripe as unknown as jest.Mock).mockClear();
   });
 
@@ -83,6 +96,11 @@ describe('StripeService', () => {
       await expect(service.handleWebhook(Buffer.from('{}'), 'sig')).rejects.toBeInstanceOf(
         InternalServerErrorException,
       );
+    });
+
+    it('refundPayment throws a clear, user-facing error instead of pretending to work', async () => {
+      await expect(service.refundPayment('pi_123', 5000)).rejects.toBeInstanceOf(InternalServerErrorException);
+      expect(mockRefundsCreate).not.toHaveBeenCalled();
     });
   });
 
@@ -142,6 +160,17 @@ describe('StripeService', () => {
       });
     });
 
+    describe('refundPayment', () => {
+      it('refunds a payment intent in cents', async () => {
+        mockRefundsCreate.mockResolvedValue({ id: 're_123' });
+
+        const result = await service.refundPayment('pi_123', 6000);
+
+        expect(mockRefundsCreate).toHaveBeenCalledWith({ payment_intent: 'pi_123', amount: 6000 });
+        expect(result).toEqual({ id: 're_123' });
+      });
+    });
+
     describe('handleWebhook', () => {
       function buildEvent(overrides: Record<string, unknown> = {}, type = 'checkout.session.completed') {
         return {
@@ -152,6 +181,7 @@ describe('StripeService', () => {
               metadata: { invoiceId: 'invoice-1' },
               payment_status: 'paid',
               amount_total: 15000,
+              payment_intent: 'pi_test_1',
               ...overrides,
             },
           },
@@ -191,7 +221,13 @@ describe('StripeService', () => {
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
         expect(prisma.payment.create).toHaveBeenCalledWith({
-          data: { invoiceId: 'invoice-1', amount: 150, method: PaymentMethod.CARD, recordedById: null },
+          data: {
+            invoiceId: 'invoice-1',
+            amount: 150,
+            method: PaymentMethod.CARD,
+            recordedById: null,
+            stripePaymentIntentId: 'pi_test_1',
+          },
         });
         expect(prisma.invoice.update).toHaveBeenCalledWith({
           where: { id: 'invoice-1' },
@@ -206,7 +242,13 @@ describe('StripeService', () => {
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
         expect(prisma.payment.create).toHaveBeenCalledWith({
-          data: { invoiceId: 'invoice-1', amount: 50, method: PaymentMethod.CARD, recordedById: null },
+          data: {
+            invoiceId: 'invoice-1',
+            amount: 50,
+            method: PaymentMethod.CARD,
+            recordedById: null,
+            stripePaymentIntentId: 'pi_test_1',
+          },
         });
         expect(prisma.invoice.update).toHaveBeenCalledWith({
           where: { id: 'invoice-1' },
@@ -269,6 +311,72 @@ describe('StripeService', () => {
           expect.stringContaining('INV-0007'),
           '/billing?invoiceId=invoice-1',
         );
+      });
+
+      describe('charge.refunded', () => {
+        function buildChargeRefundedEvent(overrides: Record<string, unknown> = {}) {
+          return {
+            type: 'charge.refunded',
+            data: { object: { payment_intent: 'pi_test_1', ...overrides } },
+          };
+        }
+
+        it("warns and does nothing when no Payment row matches the charge's payment intent", async () => {
+          mockConstructEvent.mockReturnValue(buildChargeRefundedEvent());
+          prisma.payment.findFirst.mockResolvedValue(null);
+
+          await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+          expect(mockRefundsList).not.toHaveBeenCalled();
+          expect(prisma.refund.create).not.toHaveBeenCalled();
+        });
+
+        it('skips a Stripe refund that has already been recorded (by our own refund endpoint, or a prior delivery of this same event)', async () => {
+          mockConstructEvent.mockReturnValue(buildChargeRefundedEvent());
+          prisma.payment.findFirst.mockResolvedValue({
+            id: 'payment-1',
+            invoiceId: 'invoice-1',
+            refunds: [{ stripeRefundId: 're_already_known' }],
+          });
+          mockRefundsList.mockResolvedValue({ data: [{ id: 're_already_known', amount: 6000 }] });
+
+          await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+          expect(prisma.refund.create).not.toHaveBeenCalled();
+        });
+
+        it('records a new Stripe-Dashboard-initiated refund and syncs the invoice status/notification', async () => {
+          mockConstructEvent.mockReturnValue(buildChargeRefundedEvent());
+          prisma.payment.findFirst.mockResolvedValue({ id: 'payment-1', invoiceId: 'invoice-1', refunds: [] });
+          mockRefundsList.mockResolvedValue({ data: [{ id: 're_new', amount: 6000 }] });
+          prisma.invoice.findUnique.mockResolvedValue({
+            id: 'invoice-1',
+            patientId: 'patient-1',
+            invoiceNumber: 7,
+            discount: 0,
+            tax: 0,
+            items: [{ quantity: 1, unitPrice: 150, discount: 0 }],
+            payments: [{ amount: 150, refunds: [{ amount: 60 }] }],
+          });
+
+          await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+          expect(mockRefundsList).toHaveBeenCalledWith({ payment_intent: 'pi_test_1', limit: 100 });
+          expect(prisma.refund.create).toHaveBeenCalledWith({
+            data: { paymentId: 'payment-1', amount: 60, stripeRefundId: 're_new', refundedById: null },
+          });
+          expect(prisma.invoice.update).toHaveBeenCalledWith({
+            where: { id: 'invoice-1' },
+            data: { status: InvoiceStatus.PARTIALLY_PAID, paidAt: null },
+          });
+          expect(notificationsService.create).toHaveBeenCalledWith(
+            'patient-1',
+            'PAYMENT_REFUNDED',
+            'Payment refunded',
+            expect.stringContaining('60.00'),
+            '/billing?invoiceId=invoice-1',
+          );
+        });
       });
     });
   });

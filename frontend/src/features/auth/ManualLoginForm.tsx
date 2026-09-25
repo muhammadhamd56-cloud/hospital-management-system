@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { useNavigate } from 'react-router'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/Input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { Button } from '@/components/ui/Button'
 import { RoleSelector } from '@/features/auth/RoleSelector'
 import { useAuth } from '@/features/auth/useAuth'
@@ -106,9 +107,8 @@ export function ManualLoginForm() {
         error={errors.email?.message}
         {...register('email')}
       />
-      <Input
+      <PasswordInput
         label="Password"
-        type="password"
         autoComplete="current-password"
         placeholder="••••••••"
         error={errors.password?.message}

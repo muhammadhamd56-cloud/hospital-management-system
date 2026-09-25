@@ -3,19 +3,24 @@ import {
   InvoiceStatus,
   NotificationType,
   PaymentMethod,
+  Prisma,
   Role,
   type Invoice,
   type InvoiceItem,
   type Payment,
+  type Refund,
   type User,
 } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { roundMoney } from '../common/money.util';
+import { currentMonthRange, lastCalendarMonths } from '../common/date-range.util';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { StripeService } from './stripe.service';
 import { formatInvoiceNumber } from './invoice-number.util';
 
@@ -34,9 +39,20 @@ export interface PaymentResponse {
   method: PaymentMethod;
   recordedBy: string | null;
   createdAt: string;
+  /** Sum of this payment's Refund rows -- 0 if never refunded. */
+  refundedAmount: number;
+  /** amount - refundedAmount, clamped at 0. What's left to refund. */
+  refundableAmount: number;
 }
 
-export type InvoiceDisplayStatus = 'paid' | 'pending' | 'partially_paid' | 'overdue' | 'cancelled';
+export type InvoiceDisplayStatus =
+  | 'paid'
+  | 'pending'
+  | 'partially_paid'
+  | 'overdue'
+  | 'cancelled'
+  | 'refunded'
+  | 'partially_refunded';
 
 export interface InvoiceResponse {
   id: string;
@@ -67,23 +83,42 @@ export interface BillingOverview {
   totalInvoices: number;
 }
 
-type InvoiceWithRelations = Invoice & {
+export interface MonthlyRevenue {
+  month: string;
+  revenue: number;
+}
+
+export type InvoiceWithRelations = Invoice & {
   patient: Pick<User, 'firstName' | 'lastName'>;
   items: InvoiceItem[];
-  payments: (Payment & { recordedBy: Pick<User, 'firstName' | 'lastName'> | null })[];
+  payments: (Payment & { recordedBy: Pick<User, 'firstName' | 'lastName'> | null; refunds: Refund[] })[];
 };
 
 
-function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceResponse {
+export function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceResponse {
   const subtotal = roundMoney(invoice.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice - item.discount), 0));
   const amount = roundMoney(subtotal - invoice.discount + invoice.tax);
-  const amountPaid = roundMoney(invoice.payments.reduce((sum, payment) => sum + payment.amount, 0));
+  // Net of any refunds -- a payment that's been fully refunded no longer
+  // counts toward what the patient has actually paid.
+  const amountPaid = roundMoney(
+    invoice.payments.reduce(
+      (sum, payment) => sum + (payment.amount - payment.refunds.reduce((s, refund) => s + refund.amount, 0)),
+      0,
+    ),
+  );
+  const totalRefunded = roundMoney(
+    invoice.payments.reduce((sum, payment) => sum + payment.refunds.reduce((s, refund) => s + refund.amount, 0), 0),
+  );
   const remaining = roundMoney(Math.max(0, amount - amountPaid));
   const isPastDue = invoice.dueDate.getTime() < Date.now();
 
   let status: InvoiceDisplayStatus;
   if (invoice.status === InvoiceStatus.CANCELLED) {
     status = 'cancelled';
+  } else if (totalRefunded > 0 && amountPaid <= 0.01) {
+    status = 'refunded';
+  } else if (totalRefunded > 0) {
+    status = 'partially_refunded';
   } else if (remaining <= 0) {
     status = 'paid';
   } else if (isPastDue) {
@@ -120,20 +155,25 @@ function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceResponse {
     payments: invoice.payments
       .slice()
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .map((payment) => ({
-        id: payment.id,
-        amount: payment.amount,
-        method: payment.method,
-        recordedBy: payment.recordedBy ? `${payment.recordedBy.firstName} ${payment.recordedBy.lastName}`.trim() : null,
-        createdAt: payment.createdAt.toISOString(),
-      })),
+      .map((payment) => {
+        const refundedAmount = roundMoney(payment.refunds.reduce((sum, refund) => sum + refund.amount, 0));
+        return {
+          id: payment.id,
+          amount: payment.amount,
+          method: payment.method,
+          recordedBy: payment.recordedBy ? `${payment.recordedBy.firstName} ${payment.recordedBy.lastName}`.trim() : null,
+          createdAt: payment.createdAt.toISOString(),
+          refundedAmount,
+          refundableAmount: roundMoney(Math.max(0, payment.amount - refundedAmount)),
+        };
+      }),
   };
 }
 
-const INVOICE_INCLUDE = {
+export const INVOICE_INCLUDE = {
   patient: { select: { firstName: true, lastName: true } },
   items: true,
-  payments: { include: { recordedBy: { select: { firstName: true, lastName: true } } } },
+  payments: { include: { recordedBy: { select: { firstName: true, lastName: true } }, refunds: true } },
 } as const;
 
 @Injectable()
@@ -143,6 +183,7 @@ export class BillingService {
     private readonly stripeService: StripeService,
     private readonly auditLogService: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    private readonly platformSettingsService: PlatformSettingsService,
   ) {}
 
   /**
@@ -366,6 +407,104 @@ export class BillingService {
     return response;
   }
 
+  /**
+   * Full or partial reversal of one payment. Admin-only (see
+   * BillingController) -- matches the precedent that "reverses money"
+   * actions (cancel, revenue) are admin-only, unlike recordPayment which
+   * DOCTOR can also do. For a payment taken via Stripe Checkout, actually
+   * refunds it through Stripe; for a manually-recorded payment (cash/bank/
+   * other, or a card payment taken outside Stripe), just records the
+   * reversal -- there's nothing external to call. Keeps the stored
+   * Invoice.status in sync afterward (same reasoning as recordPayment) so
+   * other code that reads the raw column directly -- the cancel() guard,
+   * the webhook's already-paid check -- stays correct.
+   */
+  async refundPayment(
+    caller: AuthenticatedUser,
+    invoiceId: string,
+    paymentId: string,
+    dto: RefundPaymentDto,
+  ): Promise<InvoiceResponse> {
+    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId }, include: INVOICE_INCLUDE });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    if (caller.role === Role.DOCTOR) {
+      await this.assertOwnPatient(caller.id, invoice.patientId);
+    }
+
+    const payment = invoice.payments.find((candidate) => candidate.id === paymentId);
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found on this invoice');
+    }
+
+    const alreadyRefunded = roundMoney(payment.refunds.reduce((sum, refund) => sum + refund.amount, 0));
+    const maxRefundable = roundMoney(Math.max(0, payment.amount - alreadyRefunded));
+
+    if (maxRefundable <= 0) {
+      throw new BadRequestException('This payment has already been fully refunded');
+    }
+
+    const amount = roundMoney(dto.amount ?? maxRefundable);
+
+    if (amount > maxRefundable + 0.01) {
+      throw new BadRequestException(
+        `Refund of ${amount.toFixed(2)} exceeds the refundable balance of ${maxRefundable.toFixed(2)}`,
+      );
+    }
+
+    let stripeRefundId: string | null = null;
+
+    if (payment.stripePaymentIntentId) {
+      const refund = await this.stripeService.refundPayment(payment.stripePaymentIntentId, Math.round(amount * 100));
+      stripeRefundId = refund.id;
+    }
+
+    await this.prisma.refund.create({
+      data: { paymentId: payment.id, amount, reason: dto.reason, stripeRefundId, refundedById: caller.id },
+    });
+
+    const updatedInvoice = await this.prisma.invoice.findUniqueOrThrow({
+      where: { id: invoiceId },
+      include: INVOICE_INCLUDE,
+    });
+    const response = toInvoiceResponse(updatedInvoice);
+
+    await this.prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status:
+          response.remaining <= 0.01
+            ? InvoiceStatus.PAID
+            : response.amountPaid > 0.01
+              ? InvoiceStatus.PARTIALLY_PAID
+              : InvoiceStatus.PENDING,
+        paidAt: response.remaining <= 0.01 ? invoice.paidAt : null,
+      },
+    });
+
+    await this.auditLogService.log({
+      actorId: caller.id,
+      action: 'UPDATE',
+      entityType: 'Refund',
+      entityId: payment.id,
+      metadata: { invoiceId, amount, reason: dto.reason ?? null, stripeRefundId },
+    });
+
+    await this.notificationsService.create(
+      invoice.patientId,
+      NotificationType.PAYMENT_REFUNDED,
+      'Payment refunded',
+      `A refund of ${amount.toFixed(2)} was issued for Invoice ${response.invoiceNumber}.`,
+      `/billing?invoiceId=${invoiceId}`,
+    );
+
+    return response;
+  }
+
   /** Admin-only. Refuses to cancel an invoice that already has payments recorded -- refund first. */
   async cancel(caller: AuthenticatedUser, id: string): Promise<InvoiceResponse> {
     const invoice = await this.prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
@@ -400,19 +539,20 @@ export class BillingService {
   }
 
   /**
-   * Dashboard summary. Total Revenue is the total billed value of every
-   * non-cancelled invoice; it always equals paidAmount + pendingAmount +
-   * overdueAmount, since every invoice's remaining balance falls into
-   * exactly one of the pending/overdue buckets and its paid portion always
-   * counts toward paidAmount.
+   * The ONE authoritative revenue aggregation in the app. "Revenue" means
+   * the total billed value (amount) of every non-cancelled invoice matching
+   * `where` -- regardless of payment status -- decomposed into
+   * paidAmount/pendingAmount/overdueAmount using the exact same per-invoice
+   * paid/pending/overdue classification as toInvoiceResponse (never the raw,
+   * possibly-stale `Invoice.status` column). totalRevenue always equals
+   * paidAmount + pendingAmount + overdueAmount by construction.
+   *
+   * Every revenue figure surfaced anywhere in the app (Billing's cards, the
+   * Dashboard's Revenue (MTD) card, and the shared monthly revenue chart)
+   * must go through this method -- with only `where` varying (caller scope,
+   * a date window, or both) -- so they can never disagree.
    */
-  async overview(caller: AuthenticatedUser): Promise<BillingOverview> {
-    const where = caller.role === Role.DOCTOR ? await this.scopedPatientWhere(caller.id) : {};
-
-    if (where === null) {
-      return { totalRevenue: 0, paidAmount: 0, pendingAmount: 0, overdueAmount: 0, totalInvoices: 0 };
-    }
-
+  private async computeOverview(where: Prisma.InvoiceWhereInput): Promise<BillingOverview> {
     const invoices = await this.prisma.invoice.findMany({
       where: { ...where, status: { not: InvoiceStatus.CANCELLED } },
       include: INVOICE_INCLUDE,
@@ -440,6 +580,17 @@ export class BillingService {
       overdueAmount: roundMoney(totals.overdueAmount),
       totalInvoices: invoices.length,
     };
+  }
+
+  /** Billing page summary, scoped to the caller (a doctor only sees their own patients). All-time -- no date window. */
+  async overview(caller: AuthenticatedUser): Promise<BillingOverview> {
+    const where = caller.role === Role.DOCTOR ? await this.scopedPatientWhere(caller.id) : {};
+
+    if (where === null) {
+      return { totalRevenue: 0, paidAmount: 0, pendingAmount: 0, overdueAmount: 0, totalInvoices: 0 };
+    }
+
+    return this.computeOverview(where);
   }
 
   /** Returns a Prisma where-clause scoped to patients this doctor has an appointment or chat relationship with, or null if there are none (caller has no matches at all). */
@@ -484,7 +635,14 @@ export class BillingService {
     return [...new Set([...fromAppointments, ...fromMessages].map((row) => row.patientId))];
   }
 
-  /** Called when a patient books a session with a doctor who charges a consultation fee. */
+  /**
+   * Called when a patient books a session with a doctor who charges a
+   * consultation fee. The platform's flat consultationMargin (admin-set via
+   * PlatformSettingsService) is folded into this single line's price -- the
+   * doctor's own consultationFee (what they set, what shows on their public
+   * profile and the booking flow) is never touched, only what the patient
+   * is actually billed here.
+   */
   async createConsultationInvoice(
     patientId: string,
     doctorName: string,
@@ -493,15 +651,17 @@ export class BillingService {
     appointmentId?: string,
   ): Promise<InvoiceResponse> {
     const description = `Consultation with Dr. ${doctorName}`;
+    const margin = await this.platformSettingsService.getConsultationMargin();
+    const chargedAmount = roundMoney(fee + margin);
 
     const invoice = await this.prisma.invoice.create({
       data: {
         patientId,
         description,
-        amount: roundMoney(fee),
+        amount: chargedAmount,
         dueDate,
         appointmentId,
-        items: { create: [{ description, quantity: 1, unitPrice: fee }] },
+        items: { create: [{ description, quantity: 1, unitPrice: chargedAmount }] },
       },
       include: INVOICE_INCLUDE,
     });
@@ -546,17 +706,33 @@ export class BillingService {
     });
   }
 
-  /** Actual money collected this calendar month, across every payment method (Stripe included). */
+  /**
+   * Hospital-wide billed revenue for invoices issued so far this calendar
+   * month -- the same totalRevenue definition as overview(), just windowed
+   * to [start of this month, now) by Invoice.createdAt. Sharing
+   * computeOverview() here is what guarantees this always agrees with the
+   * "Sep" bar of monthlyRevenueTrend() and with the invoices making up
+   * Billing's all-time totalRevenue.
+   */
   async revenueThisMonth(): Promise<{ amount: number }> {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const { start, end } = currentMonthRange();
+    const { totalRevenue } = await this.computeOverview({ createdAt: { gte: start, lt: end } });
+    return { amount: totalRevenue };
+  }
 
-    const result = await this.prisma.payment.aggregate({
-      where: { createdAt: { gte: start, lt: end } },
-      _sum: { amount: true },
-    });
+  /**
+   * Hospital-wide billed revenue for each of the last `months` calendar
+   * months (oldest first), bucketed by Invoice.createdAt using the same
+   * totalRevenue definition as overview()/revenueThisMonth() -- so the
+   * chart and the revenue cards can never disagree. Months with no billed
+   * invoices report 0, never null/undefined.
+   */
+  async monthlyRevenueTrend(months: number): Promise<MonthlyRevenue[]> {
+    const ranges = lastCalendarMonths(months);
+    const results = await Promise.all(
+      ranges.map(({ start, end }) => this.computeOverview({ createdAt: { gte: start, lt: end } })),
+    );
 
-    return { amount: roundMoney(result._sum.amount ?? 0) };
+    return ranges.map(({ label }, i) => ({ month: label, revenue: results[i].totalRevenue }));
   }
 }

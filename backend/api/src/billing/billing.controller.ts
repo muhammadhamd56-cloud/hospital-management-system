@@ -8,6 +8,7 @@ import type { AuthenticatedUser } from '../auth/types/authenticated-user.interfa
 import { BillingOverview, BillingService, InvoiceResponse } from './billing.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { RecordPaymentDto } from './dto/record-payment.dto';
+import { RefundPaymentDto } from './dto/refund-payment.dto';
 
 @Controller('billing')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -69,6 +70,21 @@ export class BillingController {
     @Body() dto: RecordPaymentDto,
   ): Promise<{ invoice: InvoiceResponse }> {
     const invoice = await this.billingService.recordPayment(user, id, dto, user.id);
+    return { invoice };
+  }
+
+  /** Admin-only -- overrides the class-level ADMIN/DOCTOR role. Same
+   *  "reverses money" precedent as cancel() and revenue() below. Amount
+   *  defaults to the payment's full refundable balance when omitted. */
+  @Post('invoices/:invoiceId/payments/:paymentId/refund')
+  @Roles(Role.ADMIN)
+  async refundPayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('invoiceId') invoiceId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() dto: RefundPaymentDto,
+  ): Promise<{ invoice: InvoiceResponse }> {
+    const invoice = await this.billingService.refundPayment(user, invoiceId, paymentId, dto);
     return { invoice };
   }
 

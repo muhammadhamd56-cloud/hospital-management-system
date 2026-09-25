@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ChatSender, NotificationType } from '@prisma/client';
 import { ChatService } from './chat.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -51,10 +51,10 @@ describe('ChatService', () => {
         { id: 'm1', doctorId: 'doctor-1', sender: ChatSender.PATIENT, body: 'Hi', createdAt: new Date() },
       ]);
 
-      const thread = await service.sendMessage('patient-1', 'doctor-1', 'Hi');
+      const thread = await service.sendMessage('patient-1', 'doctor-1', { body: 'Hi' });
 
       expect(prisma.chatMessage.create).toHaveBeenCalledWith({
-        data: { patientId: 'patient-1', doctorId: 'doctor-1', sender: 'PATIENT', body: 'Hi' },
+        data: { patientId: 'patient-1', doctorId: 'doctor-1', sender: 'PATIENT', body: 'Hi', imageUrl: null },
       });
       expect(notificationsService.create).toHaveBeenCalledWith(
         'doctor-user-1',
@@ -64,6 +64,31 @@ describe('ChatService', () => {
         '/messages?patientId=patient-1',
       );
       expect(thread).toHaveLength(1);
+    });
+
+    it('sends an image-only message when body is empty', async () => {
+      prisma.doctor.findUnique.mockResolvedValue({ id: 'doctor-1', userId: 'doctor-user-1' });
+      prisma.user.findUnique.mockResolvedValue({ firstName: 'Pat', lastName: 'Ient' });
+      prisma.chatMessage.findMany.mockResolvedValue([]);
+
+      await service.sendMessage('patient-1', 'doctor-1', { imageUrl: 'data:image/png;base64,abc' });
+
+      expect(prisma.chatMessage.create).toHaveBeenCalledWith({
+        data: {
+          patientId: 'patient-1',
+          doctorId: 'doctor-1',
+          sender: 'PATIENT',
+          body: '',
+          imageUrl: 'data:image/png;base64,abc',
+        },
+      });
+    });
+
+    it('rejects a message with neither text nor an image', async () => {
+      await expect(service.sendMessage('patient-1', 'doctor-1', {})).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.chatMessage.create).not.toHaveBeenCalled();
     });
   });
 

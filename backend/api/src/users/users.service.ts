@@ -35,8 +35,11 @@ export class UsersService {
         }),
         ...(dto.gender !== undefined && { gender: dto.gender === '' ? null : dto.gender }),
         ...(dto.address !== undefined && { address: dto.address === '' ? null : dto.address }),
-        ...(dto.emergencyContact !== undefined && {
-          emergencyContact: dto.emergencyContact === '' ? null : dto.emergencyContact,
+        ...(dto.emergencyContactName !== undefined && {
+          emergencyContactName: dto.emergencyContactName === '' ? null : dto.emergencyContactName,
+        }),
+        ...(dto.emergencyContactPhone !== undefined && {
+          emergencyContactPhone: dto.emergencyContactPhone === '' ? null : dto.emergencyContactPhone,
         }),
       },
     });
@@ -93,7 +96,17 @@ export class UsersService {
 
     return this.prisma.user.update({
       where: { id: userId },
-      data: { password, mustChangePassword: false },
+      data: {
+        password,
+        mustChangePassword: false,
+        // Setting a new password is itself proof of control of the account
+        // (either the current password or a fresh admin temp password) --
+        // clear any login lockout so a just-changed password isn't
+        // immediately unusable. See AuthService.resetPassword for the same
+        // reasoning on the forgot-password path.
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
     });
   }
 

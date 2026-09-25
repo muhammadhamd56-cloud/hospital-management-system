@@ -43,6 +43,8 @@ function fallbackRoute(type: AppNotification['type'], role: Role | undefined): s
       return ROUTES.announcements
     case 'invoice_created':
     case 'payment_received':
+    case 'payment_refunded':
+    case 'invoice_overdue':
       return ROUTES.billing
     default:
       return null

@@ -16,6 +16,14 @@ export type NotificationType =
   | 'announcement_published'
   | 'invoice_created'
   | 'payment_received'
+  | 'payment_refunded'
+  | 'invoice_overdue'
+  | 'emergency_created'
+  | 'emergency_acknowledged'
+  | 'emergency_team_assigned'
+  | 'emergency_status_updated'
+  | 'emergency_resolved'
+  | 'emergency_cancelled'
 
 export interface AppNotification {
   id: string

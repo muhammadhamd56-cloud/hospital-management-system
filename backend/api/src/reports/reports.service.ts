@@ -1,12 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { InvoiceStatus } from '@prisma/client';
 import { toClientStatus } from '../common/session.mapper';
 import { PrismaService } from '../prisma/prisma.service';
+import { BillingService, type MonthlyRevenue } from '../billing/billing.service';
 
-export interface MonthlyRevenueResponse {
-  month: string;
-  revenue: number;
-}
+export type MonthlyRevenueResponse = MonthlyRevenue;
 
 export interface DepartmentCountResponse {
   department: string;
@@ -26,30 +23,18 @@ function capitalize(value: string): string {
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly billingService: BillingService,
+  ) {}
 
-  /** Last 6 calendar months of PAID invoices, reduced by month in JS -- same
-   *  aggregate/date-window style as BillingService.revenueThisMonth, generalized to a range. */
+  /**
+   * Delegates to BillingService.monthlyRevenueTrend -- the same billed-revenue
+   * definition and computation used by Billing's and Dashboard's revenue
+   * cards, so this chart can never disagree with them.
+   */
   async revenueTrend(): Promise<MonthlyRevenueResponse[]> {
-    const now = new Date();
-    const months = Array.from({ length: TREND_MONTHS }, (_, i) => {
-      const offset = TREND_MONTHS - 1 - i;
-      const start = new Date(now.getFullYear(), now.getMonth() - offset, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() - offset + 1, 1);
-      return { label: start.toLocaleString('en-US', { month: 'short' }), start, end };
-    });
-
-    const invoices = await this.prisma.invoice.findMany({
-      where: { status: InvoiceStatus.PAID, paidAt: { gte: months[0].start } },
-      select: { amount: true, paidAt: true },
-    });
-
-    return months.map(({ label, start, end }) => ({
-      month: label,
-      revenue: invoices
-        .filter((invoice) => invoice.paidAt && invoice.paidAt >= start && invoice.paidAt < end)
-        .reduce((sum, invoice) => sum + invoice.amount, 0),
-    }));
+    return this.billingService.monthlyRevenueTrend(TREND_MONTHS);
   }
 
   async appointmentsByDepartment(): Promise<DepartmentCountResponse[]> {

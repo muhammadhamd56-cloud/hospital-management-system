@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { NotificationType, type Doctor } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChatMessageResponse, toChatMessageResponse } from './chat.mapper';
+import type { SendMessageDto } from './dto/send-message.dto';
 
 export interface ChatInboxDoctor {
   doctorId: string;
@@ -70,11 +71,16 @@ export class ChatService {
     return messages.map(toChatMessageResponse);
   }
 
-  async sendMessage(patientId: string, doctorId: string, body: string): Promise<ChatMessageResponse[]> {
+  async sendMessage(patientId: string, doctorId: string, dto: SendMessageDto): Promise<ChatMessageResponse[]> {
+    const body = dto.body?.trim() ?? '';
+    if (!body && !dto.imageUrl) {
+      throw new BadRequestException('Message cannot be empty');
+    }
+
     const doctor = await this.assertDoctorExists(doctorId);
 
     await this.prisma.chatMessage.create({
-      data: { patientId, doctorId, sender: 'PATIENT', body },
+      data: { patientId, doctorId, sender: 'PATIENT', body, imageUrl: dto.imageUrl ?? null },
     });
 
     const patient = await this.prisma.user.findUnique({
@@ -86,7 +92,7 @@ export class ChatService {
       doctor.userId,
       NotificationType.CHAT_MESSAGE,
       `New message from ${patientName}`,
-      body,
+      body || 'Sent an image',
       `/messages?patientId=${patientId}`,
     );
 

@@ -19,6 +19,7 @@ import {
   CalendarRange,
   ListTodo,
   Megaphone,
+  AlertTriangle,
 } from 'lucide-react'
 import { ROUTES } from '@/constants/routes'
 import type { NavItem } from '@/types/nav'
@@ -30,6 +31,15 @@ const OPS_ONLY: NavItem['roles'] = ['admin', 'doctor']
 
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, path: ROUTES.dashboard },
+  {
+    label: 'Emergency',
+    icon: AlertTriangle,
+    path: ROUTES.emergency,
+    roles: ['patient', 'admin', 'doctor', 'staff'],
+    // Role.STAFF is shared by every non-doctor staff type -- only nurses
+    // staff the Emergency Center, same gating LaboratoryPage uses below.
+    visible: (user) => user.role !== 'staff' || user.staffType === 'nurse',
+  },
   { label: 'Find Doctor', icon: UserSearch, path: ROUTES.findDoctor, roles: ['patient'] },
   { label: 'Book Appointment', icon: CalendarPlus, path: ROUTES.bookAppointment, roles: ['patient'] },
   { label: 'My Appointments', icon: CalendarCheck, path: ROUTES.myAppointments, roles: ['patient'] },
@@ -64,7 +74,7 @@ export const NAV_ITEMS: NavItem[] = [
     visible: (user) => user.role !== 'staff' || user.staffType === 'lab_technician',
   },
   { label: 'Billing', icon: Receipt, path: ROUTES.billing, roles: [...OPS_ONLY!, 'patient'] },
-  { label: 'Reports', icon: FileBarChart, path: ROUTES.reports, roles: OPS_ONLY },
+  { label: 'Reports', icon: FileBarChart, path: ROUTES.reports, roles: ['admin'] },
   { label: 'Staff', icon: UserCog, path: ROUTES.staff, roles: ['admin'] },
   { label: 'Staff Scheduling', icon: CalendarRange, path: ROUTES.staffScheduling, roles: ['admin'] },
   { label: 'Profile', icon: UserCircle, path: ROUTES.profile },

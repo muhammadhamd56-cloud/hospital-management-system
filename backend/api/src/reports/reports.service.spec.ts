@@ -1,20 +1,27 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AppointmentStatus, InvoiceStatus } from '@prisma/client';
+import { AppointmentStatus } from '@prisma/client';
 import { ReportsService } from './reports.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { BillingService } from '../billing/billing.service';
 
 describe('ReportsService', () => {
   let service: ReportsService;
   let prisma: { invoice: { findMany: jest.Mock }; appointment: { findMany: jest.Mock } };
+  let billingService: { monthlyRevenueTrend: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
       invoice: { findMany: jest.fn() },
       appointment: { findMany: jest.fn() },
     };
+    billingService = { monthlyRevenueTrend: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ReportsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        ReportsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: BillingService, useValue: billingService },
+      ],
     }).compile();
 
     service = module.get(ReportsService);
@@ -27,39 +34,21 @@ describe('ReportsService', () => {
   });
 
   describe('revenueTrend', () => {
-    it('queries paid invoices from the start of the 6-month window onward', async () => {
-      prisma.invoice.findMany.mockResolvedValue([]);
-
-      await service.revenueTrend();
-
-      expect(prisma.invoice.findMany).toHaveBeenCalledWith({
-        where: { status: InvoiceStatus.PAID, paidAt: { gte: new Date(2026, 0, 1) } },
-        select: { amount: true, paidAt: true },
-      });
-    });
-
-    it('returns 6 months in chronological order, each with $0 when there are no invoices', async () => {
-      prisma.invoice.findMany.mockResolvedValue([]);
+    it('delegates to BillingService.monthlyRevenueTrend for 6 months, so it can never disagree with the revenue cards', async () => {
+      const trend = [
+        { month: 'Jan', revenue: 0 },
+        { month: 'Feb', revenue: 0 },
+        { month: 'Mar', revenue: 150 },
+        { month: 'Apr', revenue: 0 },
+        { month: 'May', revenue: 0 },
+        { month: 'Jun', revenue: 200 },
+      ];
+      billingService.monthlyRevenueTrend.mockResolvedValue(trend);
 
       const result = await service.revenueTrend();
 
-      expect(result).toHaveLength(6);
-      expect(result.map((r) => r.month)).toEqual(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']);
-      expect(result.every((r) => r.revenue === 0)).toBe(true);
-    });
-
-    it('buckets invoice amounts into the correct month and ignores invoices outside the window', async () => {
-      prisma.invoice.findMany.mockResolvedValue([
-        { amount: 100, paidAt: new Date('2026-03-05T00:00:00.000Z') },
-        { amount: 50, paidAt: new Date('2026-03-20T00:00:00.000Z') },
-        { amount: 200, paidAt: new Date('2026-06-01T00:00:00.000Z') },
-      ]);
-
-      const result = await service.revenueTrend();
-
-      expect(result.find((r) => r.month === 'Mar')?.revenue).toBe(150);
-      expect(result.find((r) => r.month === 'Jun')?.revenue).toBe(200);
-      expect(result.find((r) => r.month === 'Jan')?.revenue).toBe(0);
+      expect(billingService.monthlyRevenueTrend).toHaveBeenCalledWith(6);
+      expect(result).toEqual(trend);
     });
   });
 

@@ -1,4 +1,4 @@
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
@@ -7,25 +7,38 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
+import { PhoneInput } from '@/components/ui/PhoneInput'
 import { createStaff, type CreateStaffResponse } from '@/features/staff/api'
 import { ApiError } from '@/lib/apiClient'
+import { detectDefaultCountry, phoneErrorMessage, toE164, validatePhone, type CountryCode } from '@/lib/phone'
 import { DEPARTMENTS } from '@/types/doctor'
 
-const doctorSchema = z.object({
-  firstName: z.string().min(1, 'First name is required'),
-  lastName: z.string().min(1, 'Last name is required'),
-  specialization: z.string().min(2, 'Enter a specialization'),
-  department: z.enum(DEPARTMENTS),
-  email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
-  bio: z.string().min(1, 'Bio is required'),
-  experienceYears: z.coerce
-    .number()
-    .int()
-    .min(0, 'Must be positive')
-    .max(60, 'Enter a valid number of years'),
-  consultationFee: z.coerce.number().min(0, 'Must be 0 or more').max(100_000, 'Enter a realistic fee').optional(),
-  appointmentDurationMinutes: z.coerce.number().int().min(5).max(240, 'Must be 240 minutes or less').optional(),
-})
+const doctorSchema = z
+  .object({
+    firstName: z.string().min(1, 'First name is required'),
+    lastName: z.string().min(1, 'Last name is required'),
+    specialization: z.string().min(2, 'Enter a specialization'),
+    department: z.enum(DEPARTMENTS),
+    email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
+    phone: z.object({
+      country: z.custom<CountryCode>(() => true),
+      nationalNumber: z.string(),
+    }),
+    bio: z.string().min(1, 'Bio is required'),
+    experienceYears: z.coerce
+      .number()
+      .int()
+      .min(0, 'Must be positive')
+      .max(60, 'Enter a valid number of years'),
+    consultationFee: z.coerce.number().min(0, 'Must be 0 or more').max(100_000, 'Enter a realistic fee').optional(),
+    appointmentDurationMinutes: z.coerce.number().int().min(5).max(240, 'Must be 240 minutes or less').optional(),
+  })
+  .superRefine((values, ctx) => {
+    const result = validatePhone(values.phone, { required: false })
+    if (!result.valid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phone'], message: phoneErrorMessage(values.phone, result) })
+    }
+  })
 
 type DoctorFormInput = z.input<typeof doctorSchema>
 
@@ -38,13 +51,14 @@ interface AddDoctorModalProps {
 
 export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalProps) {
   const {
+    control,
     register,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<DoctorFormInput>({
     resolver: zodResolver(doctorSchema),
-    defaultValues: { department: DEPARTMENTS[0] },
+    defaultValues: { department: DEPARTMENTS[0], phone: { country: detectDefaultCountry(), nationalNumber: '' } },
   })
 
   function handleClose() {
@@ -56,7 +70,11 @@ export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalPro
     const parsed = doctorSchema.parse(values)
 
     try {
-      const result = await createStaff({ ...parsed, role: 'doctor' })
+      const result = await createStaff({
+        ...parsed,
+        role: 'doctor',
+        phone: parsed.phone.nationalNumber ? toE164(parsed.phone) ?? undefined : undefined,
+      })
       onCreated(result)
       handleClose()
     } catch (error) {
@@ -103,6 +121,18 @@ export function AddDoctorModal({ isOpen, onClose, onCreated }: AddDoctorModalPro
             {...register('experienceYears')}
           />
         </div>
+        <Controller
+          control={control}
+          name="phone"
+          render={({ field }) => (
+            <PhoneInput
+              label="Phone number (optional)"
+              value={field.value}
+              onChange={field.onChange}
+              error={errors.phone?.message as string | undefined}
+            />
+          )}
+        />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="Consultation fee (USD)"

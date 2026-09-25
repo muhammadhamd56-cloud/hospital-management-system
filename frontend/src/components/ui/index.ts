@@ -1,6 +1,8 @@
 export { Button, type ButtonProps } from './Button'
 export { buttonVariants } from './button-variants'
 export { Input, type InputProps } from './Input'
+export { PasswordInput, type PasswordInputProps } from './PasswordInput'
+export { PasswordRequirements, type PasswordRequirementsProps } from './PasswordRequirements'
 export { Textarea, type TextareaProps } from './Textarea'
 export { Select, type SelectProps, type SelectOption } from './Select'
 export { Card, CardHeader, CardTitle, CardDescription, CardContent } from './Card'

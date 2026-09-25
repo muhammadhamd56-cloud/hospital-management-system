@@ -15,7 +15,7 @@ const VALID_PATIENT = {
   firstName: 'Ada',
   lastName: 'Lovelace',
   email: 'ada@example.com',
-  password: 'longenough1',
+  password: 'Longenough1!',
   role: 'patient',
 };
 
@@ -73,18 +73,58 @@ describe('SignupDto', () => {
 
   describe('password', () => {
     it('rejects a password shorter than 8 characters', async () => {
-      const errors = await errorsFor({ ...VALID_PATIENT, password: 'short1' });
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'Sh0rt!' });
       expect(fieldErrors(errors, 'password')).toBeDefined();
     });
 
     it('accepts a password exactly 8 characters (boundary)', async () => {
-      const errors = await errorsFor({ ...VALID_PATIENT, password: 'exactly8' });
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'Aa1!aaaa' });
+      expect(fieldErrors(errors, 'password')).toBeUndefined();
+    });
+
+    it('rejects a password longer than 64 characters', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: `Aa1!${'a'.repeat(62)}` });
+      expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('accepts a password exactly 64 characters (boundary)', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: `Aa1!${'a'.repeat(60)}` });
       expect(fieldErrors(errors, 'password')).toBeUndefined();
     });
 
     it('rejects an empty password', async () => {
       const errors = await errorsFor({ ...VALID_PATIENT, password: '' });
       expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('rejects a password with no uppercase letter', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'longenough1!' });
+      expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('rejects a password with no lowercase letter', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'LONGENOUGH1!' });
+      expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('rejects a password with no number', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'Longenough!' });
+      expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('rejects a password with no special character', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'Longenough1' });
+      expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('rejects a well-known common password even when it satisfies every character-class rule', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'Password1!' });
+      expect(fieldErrors(errors, 'password')).toBeDefined();
+    });
+
+    it('accepts a passphrase containing spaces', async () => {
+      const errors = await errorsFor({ ...VALID_PATIENT, password: 'Correct Horse 1!' });
+      expect(fieldErrors(errors, 'password')).toBeUndefined();
     });
   });
 

@@ -2,6 +2,7 @@ import { Transform, Type } from 'class-transformer';
 import { IsEmail, IsIn, IsInt, IsString, Max, Min, MinLength, ValidateIf } from 'class-validator';
 import type { ClientRole } from '../../common/role.mapper';
 import { normalizeEmail } from '../../common/normalize-email';
+import { IsStrongPassword } from '../password-policy';
 
 export class SignupDto {
   @IsString()
@@ -17,7 +18,7 @@ export class SignupDto {
   email!: string;
 
   @IsString()
-  @MinLength(8, { message: 'Password must be at least 8 characters' })
+  @IsStrongPassword()
   password!: string;
 
   // 'admin' is deliberately excluded — admin accounts are provisioned out-of-band,

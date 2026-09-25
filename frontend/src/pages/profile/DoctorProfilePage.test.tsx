@@ -19,7 +19,8 @@ const baseUser: AuthUser = {
   dateOfBirth: null,
   gender: null,
   address: null,
-  emergencyContact: null,
+  emergencyContactName: null,
+  emergencyContactPhone: null,
   role: 'doctor',
   roleSelected: true,
   hasPassword: true,
@@ -82,6 +83,8 @@ const existingProfile = {
   consultationFee: 50,
   appointmentDurationMinutes: 30,
   email: 'dana@example.test',
+  phone: null,
+  socialLinks: null,
 }
 
 beforeEach(() => {

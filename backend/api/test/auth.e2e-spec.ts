@@ -82,7 +82,7 @@ describe('Auth (e2e)', () => {
     firstName: 'Ada',
     lastName: 'Lovelace',
     email: 'ada@example.test',
-    password: 'longenough1',
+    password: 'Longenough1!',
     role: 'patient',
   };
 
@@ -90,7 +90,7 @@ describe('Auth (e2e)', () => {
     firstName: 'Dana',
     lastName: 'Doctor',
     email: 'dana@example.test',
-    password: 'longenough1',
+    password: 'Longenough1!',
     role: 'doctor',
     specialization: 'Cardiology',
     department: 'Cardiology',
@@ -142,6 +142,20 @@ describe('Auth (e2e)', () => {
       await request(server())
         .post('/api/auth/signup')
         .send({ ...validPatient, email: 'not-an-email' })
+        .expect(400);
+    });
+
+    it.each([
+      ['too short', 'Ab1!'],
+      ['no uppercase letter', 'longenough1!'],
+      ['no lowercase letter', 'LONGENOUGH1!'],
+      ['no number', 'Longenough!'],
+      ['no special character', 'Longenough1'],
+      ['a well-known common password', 'Password1!'],
+    ])('rejects a signup password that is %s with 400', async (_label, password) => {
+      await request(server())
+        .post('/api/auth/signup')
+        .send({ ...validPatient, password })
         .expect(400);
     });
 
@@ -278,11 +292,13 @@ describe('Auth (e2e)', () => {
       await request(server()).post('/api/auth/resend-otp').send({ email }).expect(400);
     });
 
-    it('rejects resending for a nonexistent account with 404', async () => {
-      await request(server())
+    it('returns the same generic success for a nonexistent account -- must not reveal account existence', async () => {
+      const res = await request(server())
         .post('/api/auth/resend-otp')
         .send({ email: 'nobody@example.test' })
-        .expect(404);
+        .expect(201);
+
+      expect(res.body.data.message).toBe('Verification code sent');
     });
   });
 
@@ -323,6 +339,38 @@ describe('Auth (e2e)', () => {
         .post('/api/auth/login')
         .send({ email: validPatient.email, password: validPatient.password, role: 'doctor' })
         .expect(403);
+    });
+
+    it('locks the account for repeated wrong passwords, independent of the per-IP throttle, then recovers after a successful reset', async () => {
+      const { email } = await signupAndVerify({ ...validPatient, email: 'lockout@example.test' });
+
+      for (let i = 0; i < 10; i++) {
+        await request(server())
+          .post('/api/auth/login')
+          .send({ email, password: 'wrong-password', role: 'patient' })
+          .expect(401);
+      }
+
+      // The 11th attempt -- even with the CORRECT password -- is rejected
+      // while locked, and the lockout message is distinct from "invalid
+      // email or password" (it's shown only after proving legitimate cause
+      // for concern, not to a guesser who hasn't hit the threshold).
+      const lockedRes = await request(server())
+        .post('/api/auth/login')
+        .send({ email, password: validPatient.password, role: 'patient' })
+        .expect(403);
+      expect(lockedRes.body.message).toMatch(/too many failed sign-in attempts/i);
+
+      // Once the lockout window has passed, login works again and the
+      // counter resets (simulated here rather than waiting 15 real minutes).
+      await prisma.user.update({
+        where: { email },
+        data: { lockedUntil: new Date(Date.now() - 1000) },
+      });
+      await request(server())
+        .post('/api/auth/login')
+        .send({ email, password: validPatient.password, role: 'patient' })
+        .expect(201);
     });
 
     it('regression: logs in successfully when the email is typed with different casing than it was stored', async () => {
@@ -380,6 +428,11 @@ describe('Auth (e2e)', () => {
   });
 
   describe('MFA (two-factor authentication)', () => {
+    // Longer timeout than the 5000ms default: this test chains many
+    // sequential bcrypt hash/compare calls (signup OTP, several logins, MFA
+    // disable's password re-check, ...), and bcrypt's cost factor was
+    // deliberately raised (see password.util.ts) -- individually
+    // imperceptible, but additive across this many calls in one test.
     it('full lifecycle: setup requires a valid code to confirm, enables login-gating, accepts a TOTP or backup code, and can be disabled', async () => {
       const { token } = await signupAndVerify({ ...validPatient, email: 'mfa-user@example.test' });
 
@@ -485,7 +538,7 @@ describe('Auth (e2e)', () => {
         .expect(201);
       expect(loginAfterDisable.body.data.mfaRequired).toBeUndefined();
       expect(typeof loginAfterDisable.body.data.token).toBe('string');
-    });
+    }, 20_000);
   });
 
   describe('GET /api/users/me (JwtAuthGuard)', () => {
@@ -571,13 +624,23 @@ describe('Auth (e2e)', () => {
       await request(server())
         .patch('/api/users/me/password')
         .set('Authorization', `Bearer ${token}`)
-        .send({ newPassword: 'brandnewpass123' })
+        .send({ newPassword: 'Brandnewpass1!' })
         .expect(200);
 
       await request(server())
         .post('/api/auth/login')
-        .send({ email: 'gpw@example.test', password: 'brandnewpass123', role: 'patient' })
+        .send({ email: 'gpw@example.test', password: 'Brandnewpass1!', role: 'patient' })
         .expect(201);
+    });
+
+    it('rejects a newPassword that does not meet the strength policy with 400', async () => {
+      const { token } = await signupAndVerify({ ...validPatient, email: 'pw-weak@example.test' });
+
+      await request(server())
+        .patch('/api/users/me/password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currentPassword: validPatient.password, newPassword: 'allweaklowercase' })
+        .expect(400);
     });
 
     it('requires currentPassword once one exists, rejects a wrong one, and accepts the correct one', async () => {
@@ -586,24 +649,24 @@ describe('Auth (e2e)', () => {
       await request(server())
         .patch('/api/users/me/password')
         .set('Authorization', `Bearer ${token}`)
-        .send({ newPassword: 'irrelevant123' })
+        .send({ newPassword: 'Irrelevant1!' })
         .expect(400);
 
       await request(server())
         .patch('/api/users/me/password')
         .set('Authorization', `Bearer ${token}`)
-        .send({ currentPassword: 'wrong-password', newPassword: 'irrelevant123' })
+        .send({ currentPassword: 'wrong-password', newPassword: 'Irrelevant1!' })
         .expect(401);
 
       await request(server())
         .patch('/api/users/me/password')
         .set('Authorization', `Bearer ${token}`)
-        .send({ currentPassword: validPatient.password, newPassword: 'newpass456' })
+        .send({ currentPassword: validPatient.password, newPassword: 'Newpass456!' })
         .expect(200);
 
       await request(server())
         .post('/api/auth/login')
-        .send({ email, password: 'newpass456', role: 'patient' })
+        .send({ email, password: 'Newpass456!', role: 'patient' })
         .expect(201);
     });
   });

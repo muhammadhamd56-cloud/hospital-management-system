@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { NavLink } from 'react-router'
 import { Activity, X } from 'lucide-react'
 import { NAV_ITEMS } from '@/constants/nav'
@@ -87,7 +88,45 @@ function SidebarContent({
   )
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const drawerRef = useRef<HTMLElement>(null)
+  const previouslyFocused = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    previouslyFocused.current = document.activeElement as HTMLElement | null
+    const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+    focusable?.[0]?.focus()
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !focusable || focusable.length === 0) return
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      previouslyFocused.current?.focus()
+    }
+  }, [isOpen, onClose])
+
   return (
     <>
       {/* Desktop: fixed-width spacer keeps page content from shifting; the
@@ -120,6 +159,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           )}
         />
         <aside
+          ref={drawerRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation menu"
           className={cn(
             'absolute inset-y-0 left-0 flex w-64 flex-col bg-surface shadow-xl transition-transform',
             isOpen ? 'translate-x-0' : '-translate-x-full',

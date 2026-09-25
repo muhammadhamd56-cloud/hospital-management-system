@@ -18,7 +18,8 @@ const baseUser: AuthUser = {
   dateOfBirth: '2000-02-05T00:00:00.000Z',
   gender: 'male',
   address: '123 Main St',
-  emergencyContact: 'Jane Doe - +14155552671',
+  emergencyContactName: 'Jane Doe',
+  emergencyContactPhone: '+14155552671',
   role: 'patient',
   roleSelected: true,
   hasPassword: true,
@@ -75,7 +76,8 @@ describe('PatientProfilePage', () => {
     expect(screen.getByLabelText('Date of birth')).toHaveValue('2000-02-05')
     expect(screen.getByLabelText('Gender')).toHaveValue('male')
     expect(screen.getByDisplayValue('123 Main St')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Jane Doe - +14155552671')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Jane Doe')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('4155552671')).toBeInTheDocument()
   })
 
   it('does not show doctor-only fields', () => {

@@ -33,8 +33,8 @@ async function fillBaseFields(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('First name'), 'Ada')
   await user.type(screen.getByLabelText('Last name'), 'Lovelace')
   await user.type(screen.getByLabelText('Email'), 'ada@example.test')
-  await user.type(screen.getByLabelText('Password'), 'longenough1')
-  await user.type(screen.getByLabelText('Confirm password'), 'longenough1')
+  await user.type(screen.getByLabelText('Password'), 'Longenough1!')
+  await user.type(screen.getByLabelText('Confirm password'), 'Longenough1!')
 }
 
 describe('ManualSignupForm', () => {
@@ -57,8 +57,8 @@ describe('ManualSignupForm', () => {
     await user.type(screen.getByLabelText('First name'), 'Ada')
     await user.type(screen.getByLabelText('Last name'), 'Lovelace')
     await user.type(screen.getByLabelText('Email'), 'ada@example.test')
-    await user.type(screen.getByLabelText('Password'), 'longenough1')
-    await user.type(screen.getByLabelText('Confirm password'), 'different1')
+    await user.type(screen.getByLabelText('Password'), 'Longenough1!')
+    await user.type(screen.getByLabelText('Confirm password'), 'Different1!')
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     expect(await screen.findByText('Passwords do not match')).toBeInTheDocument()
@@ -78,7 +78,7 @@ describe('ManualSignupForm', () => {
         firstName: 'Ada',
         lastName: 'Lovelace',
         email: 'ada@example.test',
-        password: 'longenough1',
+        password: 'Longenough1!',
         role: 'patient',
       }),
     )
@@ -122,7 +122,7 @@ describe('ManualSignupForm', () => {
         firstName: 'Ada',
         lastName: 'Lovelace',
         email: 'ada@example.test',
-        password: 'longenough1',
+        password: 'Longenough1!',
         role: 'doctor',
         specialization: 'Cardiology',
         department: 'Cardiology',

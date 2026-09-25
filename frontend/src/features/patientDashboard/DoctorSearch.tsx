@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Search, Star, UserSearch, MessageCircle } from 'lucide-react'
+import { Search, Star, UserSearch, MessageCircle, Share2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
@@ -10,9 +10,11 @@ import { Avatar } from '@/components/ui/Avatar'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { BookSessionModal } from '@/features/patientDashboard/BookSessionModal'
 import { DoctorChatModal } from '@/features/patientDashboard/DoctorChatModal'
+import { DoctorProfileModal } from '@/features/doctors/DoctorProfileModal'
 import { listDoctors } from '@/features/patientDashboard/api'
 import { ApiError } from '@/lib/apiClient'
 import { formatCurrency } from '@/utils/currency'
+import { shareDoctorProfile } from '@/utils/shareDoctorProfile'
 import { DEPARTMENTS } from '@/types/doctor'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 import type { PatientAppointment } from '@/types/patientSession'
@@ -28,8 +30,7 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [bookingDoctor, setBookingDoctor] = useState<DirectoryDoctor | null>(null)
   const [chattingDoctor, setChattingDoctor] = useState<DirectoryDoctor | null>(null)
-
-  const isFiltering = query.trim().length > 0 || department.length > 0
+  const [viewingDoctor, setViewingDoctor] = useState<DirectoryDoctor | null>(null)
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -37,7 +38,7 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
       listDoctors({
         q: query.trim() || undefined,
         department: department || undefined,
-        limit: isFiltering ? undefined : 6,
+        limit: 50,
       })
         .then((res) => setDoctors(res.doctors))
         .catch((error) => {
@@ -54,8 +55,8 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{isFiltering ? 'Find a Doctor' : 'Suggested Doctors'}</CardTitle>
-        <CardDescription>Search by name or specialization, or browse suggestions.</CardDescription>
+        <CardTitle>All Doctors</CardTitle>
+        <CardDescription>Search by name or specialization, or browse every registered doctor.</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row">
@@ -97,13 +98,18 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
               key={doctor.id}
               className="flex flex-col gap-3 rounded-lg border border-surface-border p-4"
             >
-              <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setViewingDoctor(doctor)}
+                aria-label={`View ${doctor.fullName}'s profile`}
+                className="flex items-center gap-3 rounded-lg text-left transition-opacity hover:opacity-80"
+              >
                 <Avatar name={doctor.fullName} size="md" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink">{doctor.fullName}</p>
                   <p className="truncate text-xs text-ink-muted">{doctor.specialization}</p>
                 </div>
-              </div>
+              </button>
               <div className="flex items-center justify-between">
                 <Badge variant="brand">{doctor.department}</Badge>
                 <span className="flex items-center gap-1 text-xs text-ink-muted">
@@ -136,6 +142,14 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
                 >
                   <MessageCircle className="size-4" aria-hidden="true" />
                 </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label={`Share ${doctor.fullName}'s profile`}
+                  onClick={() => shareDoctorProfile(doctor)}
+                >
+                  <Share2 className="size-4" aria-hidden="true" />
+                </Button>
               </div>
             </div>
           ))}
@@ -149,6 +163,8 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
       />
 
       <DoctorChatModal doctor={chattingDoctor} onClose={() => setChattingDoctor(null)} />
+
+      <DoctorProfileModal doctor={viewingDoctor} onClose={() => setViewingDoctor(null)} />
     </Card>
   )
 }

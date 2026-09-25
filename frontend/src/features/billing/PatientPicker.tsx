@@ -3,6 +3,7 @@ import { Search, User, X } from 'lucide-react'
 import { Input } from '@/components/ui/Input'
 import { Avatar } from '@/components/ui/Avatar'
 import { formatPatientId } from '@/utils/patientId'
+import { formatPhoneForDisplay } from '@/lib/phone'
 import type { PatientListItem } from '@/types/patientDirectory'
 
 interface PatientPickerProps {
@@ -42,7 +43,7 @@ export function PatientPicker({ patients, value, onChange, error }: PatientPicke
               <p className="truncate text-sm font-medium text-ink">{selected.fullName}</p>
               <p className="truncate text-xs text-ink-muted">
                 {formatPatientId(selected.id)}
-                {selected.phone ? ` · ${selected.phone}` : ''}
+                {selected.phone ? ` · ${formatPhoneForDisplay(selected.phone)}` : ''}
               </p>
             </div>
           </div>
@@ -87,7 +88,7 @@ export function PatientPicker({ patients, value, onChange, error }: PatientPicke
                   <p className="truncate text-sm font-medium text-ink">{patient.fullName}</p>
                   <p className="truncate text-xs text-ink-muted">
                     {formatPatientId(patient.id)}
-                    {patient.phone ? ` · ${patient.phone}` : ''}
+                    {patient.phone ? ` · ${formatPhoneForDisplay(patient.phone)}` : ''}
                   </p>
                 </div>
               </button>

@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsString, Length, MinLength } from 'class-validator';
+import { IsEmail, IsString, Length } from 'class-validator';
 import { normalizeEmail } from '../../common/normalize-email';
+import { IsStrongPassword } from '../password-policy';
 
 export class ResetPasswordDto {
   @Transform(({ value }) => (typeof value === 'string' ? normalizeEmail(value) : value))
@@ -12,6 +13,6 @@ export class ResetPasswordDto {
   code!: string;
 
   @IsString()
-  @MinLength(8, { message: 'Password must be at least 8 characters' })
+  @IsStrongPassword()
   newPassword!: string;
 }

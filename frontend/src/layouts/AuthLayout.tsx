@@ -1,7 +1,10 @@
 import { Activity } from 'lucide-react'
 import { Outlet } from 'react-router'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
 export function AuthLayout() {
+  useDocumentTitle()
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-alt p-4">
       <div className="w-full max-w-md">

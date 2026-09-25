@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, Prisma } from '@prisma/client';
 import { DoctorPortalService } from './doctor-portal.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -155,6 +155,7 @@ describe('DoctorPortalService', () => {
           experienceYears: 5,
           consultationFee: 100,
           appointmentDurationMinutes: 45,
+          socialLinks: Prisma.JsonNull,
           userId: 'user-1',
         },
         include: expect.anything(),
@@ -184,6 +185,7 @@ describe('DoctorPortalService', () => {
           experienceYears: 5,
           consultationFee: 100,
           appointmentDurationMinutes: 45,
+          socialLinks: Prisma.JsonNull,
         },
         include: expect.anything(),
       });
@@ -300,7 +302,7 @@ describe('DoctorPortalService', () => {
     });
 
     it('cancels the appointment and notifies the patient', async () => {
-      const doctor = buildDoctor({ id: 'doctor-1', user: { firstName: 'Greta', lastName: 'House', email: 'g@example.com' } });
+      const doctor = buildDoctor({ id: 'doctor-1', user: { firstName: 'Greta', lastName: 'House', email: 'g@example.com', phone: null } });
       prisma.doctor.findUnique.mockResolvedValue(doctor);
       prisma.appointment.findUnique.mockResolvedValue(buildAppointment({ doctorId: 'doctor-1', status: 'SCHEDULED' }));
       const updated = buildAppointment({ doctorId: 'doctor-1', status: 'CANCELLED' });
@@ -438,7 +440,9 @@ describe('DoctorPortalService', () => {
     it('throws NotFoundException when the calling user has no linked doctor profile', async () => {
       prisma.doctor.findUnique.mockResolvedValue(null);
 
-      await expect(service.sendMessage('user-1', 'patient-1', 'hi')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.sendMessage('user-1', 'patient-1', { body: 'hi' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
       expect(prisma.chatMessage.create).not.toHaveBeenCalled();
     });
 
@@ -447,22 +451,24 @@ describe('DoctorPortalService', () => {
       prisma.appointment.findFirst.mockResolvedValue(null);
       prisma.chatMessage.findFirst.mockResolvedValue(null);
 
-      await expect(service.sendMessage('user-1', 'patient-1', 'hi')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.sendMessage('user-1', 'patient-1', { body: 'hi' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
       expect(prisma.chatMessage.create).not.toHaveBeenCalled();
     });
 
     it('creates the message as sent by DOCTOR, notifies the patient, and returns the refreshed thread', async () => {
-      const doctor = buildDoctor({ id: 'doctor-1', user: { firstName: 'Greta', lastName: 'House', email: 'g@example.com' } });
+      const doctor = buildDoctor({ id: 'doctor-1', user: { firstName: 'Greta', lastName: 'House', email: 'g@example.com', phone: null } });
       prisma.doctor.findUnique.mockResolvedValue(doctor);
       prisma.appointment.findFirst.mockResolvedValue(buildAppointment());
       prisma.chatMessage.findFirst.mockResolvedValue(null);
       prisma.chatMessage.create.mockResolvedValue(buildChatMessage({ sender: 'DOCTOR', body: 'hi' }));
       prisma.chatMessage.findMany.mockResolvedValue([buildChatMessage({ sender: 'DOCTOR', body: 'hi' })]);
 
-      const result = await service.sendMessage('user-1', 'patient-1', 'hi');
+      const result = await service.sendMessage('user-1', 'patient-1', { body: 'hi' });
 
       expect(prisma.chatMessage.create).toHaveBeenCalledWith({
-        data: { patientId: 'patient-1', doctorId: 'doctor-1', sender: 'DOCTOR', body: 'hi' },
+        data: { patientId: 'patient-1', doctorId: 'doctor-1', sender: 'DOCTOR', body: 'hi', imageUrl: null },
       });
       expect(notificationsService.create).toHaveBeenCalledWith(
         'patient-1',
@@ -535,7 +541,7 @@ describe('DoctorPortalService', () => {
     });
 
     it('creates the record via MedicalRecordsService and notifies the patient', async () => {
-      const doctor = buildDoctor({ id: 'doctor-1', user: { firstName: 'Greta', lastName: 'House', email: 'g@example.com' } });
+      const doctor = buildDoctor({ id: 'doctor-1', user: { firstName: 'Greta', lastName: 'House', email: 'g@example.com', phone: null } });
       prisma.doctor.findUnique.mockResolvedValue(doctor);
       prisma.appointment.findFirst.mockResolvedValue(buildAppointment());
       prisma.chatMessage.findFirst.mockResolvedValue(null);

@@ -4,7 +4,6 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomInt } from 'crypto';
@@ -19,7 +18,7 @@ import type { SignupDto } from './dto/signup.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { VerifyOtpDto } from './dto/verify-otp.dto';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
-import { hashPassword, verifyPassword } from './password.util';
+import { hashPassword, needsRehash, verifyPassword } from './password.util';
 
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_RESEND_COOLDOWN_SECONDS = 60;
@@ -28,6 +27,16 @@ const OTP_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_EXPIRY_MINUTES = 15;
 const PASSWORD_RESET_RESEND_COOLDOWN_SECONDS = 60;
 const PASSWORD_RESET_MAX_ATTEMPTS = 5;
+
+/**
+ * Account-level brute-force guard for loginLocal, on top of (not instead of)
+ * the per-IP @Throttle on POST /auth/login -- IP throttling alone doesn't
+ * stop a distributed attempt (many IPs, one target account). Always a
+ * temporary lock, never permanent, so a legitimate user recovers on their
+ * own without needing support to intervene.
+ */
+const LOGIN_MAX_FAILED_ATTEMPTS = 10;
+const LOGIN_LOCKOUT_MINUTES = 15;
 
 @Injectable()
 export class AuthService {
@@ -159,11 +168,17 @@ export class AuthService {
     await this.emailService.sendOtpEmail(user.email, code);
   }
 
+  /**
+   * Silently no-ops for an unknown email rather than throwing -- same
+   * enumeration reasoning as requestPasswordReset below. The controller
+   * always returns the same "Verification code sent" message either way.
+   */
   async resendOtp(email: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      throw new NotFoundException('Account not found');
+      this.logger.log(`OTP resend requested for an email with no account: ${email}`);
+      return;
     }
 
     if (user.emailVerified) {
@@ -182,18 +197,19 @@ export class AuthService {
     await this.generateAndSendOtp(user);
   }
 
+  /**
+   * An unknown email and "no code was ever requested" are deliberately the
+   * same error (message and exception type) -- otherwise this endpoint
+   * would let anyone probe arbitrary addresses for account existence.
+   */
   async verifyOtp(dto: VerifyOtpDto): Promise<User> {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
-    if (!user) {
-      throw new NotFoundException('Account not found');
-    }
-
-    if (user.emailVerified) {
+    if (user?.emailVerified) {
       throw new BadRequestException('This account is already verified');
     }
 
-    if (!user.otpCodeHash || !user.otpExpiresAt) {
+    if (!user || !user.otpCodeHash || !user.otpExpiresAt) {
       throw new BadRequestException('No verification code was requested. Please request a new one.');
     }
 
@@ -232,10 +248,34 @@ export class AuthService {
       );
     }
 
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+      const minutesLeft = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60_000);
+      throw new ForbiddenException(
+        `Too many failed sign-in attempts. Please try again in ${minutesLeft} minute(s).`,
+      );
+    }
+
     const isValid = await verifyPassword(dto.password, user.password);
 
     if (!isValid) {
+      await this.registerFailedLogin(user);
       throw new UnauthorizedException('Invalid email or password');
+    }
+
+    // A correct password proves this is the real account holder, not an
+    // attacker guessing -- clear any accumulated lockout state and take the
+    // opportunity to lazily upgrade a hash made under an older, lower bcrypt
+    // cost (see needsRehash) without ever forcing a mass password reset.
+    const recovery: { failedLoginAttempts?: number; lockedUntil?: null; password?: string } = {};
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      recovery.failedLoginAttempts = 0;
+      recovery.lockedUntil = null;
+    }
+    if (needsRehash(user.password)) {
+      recovery.password = await hashPassword(dto.password);
+    }
+    if (Object.keys(recovery).length > 0) {
+      await this.prisma.user.update({ where: { id: user.id }, data: recovery });
     }
 
     const actualRole = toClientRole(user.role);
@@ -251,6 +291,22 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  /** Increments the account's failed-login counter and, once it crosses
+   *  LOGIN_MAX_FAILED_ATTEMPTS, locks it for LOGIN_LOCKOUT_MINUTES. */
+  private async registerFailedLogin(user: User): Promise<void> {
+    const attempts = user.failedLoginAttempts + 1;
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginAttempts: attempts,
+        ...(attempts >= LOGIN_MAX_FAILED_ATTEMPTS && {
+          lockedUntil: new Date(Date.now() + LOGIN_LOCKOUT_MINUTES * 60_000),
+        }),
+      },
+    });
   }
 
   /**
@@ -343,6 +399,11 @@ export class AuthService {
         // A successful reset should also sign out every existing session --
         // including an attacker's, if that's who has this account's inbox.
         tokenVersion: { increment: 1 },
+        // Proving control of the inbox is itself strong evidence this is the
+        // real owner -- clear any login lockout so they aren't stuck locked
+        // out immediately after resetting the very password that unlocks it.
+        failedLoginAttempts: 0,
+        lockedUntil: null,
       },
     });
   }

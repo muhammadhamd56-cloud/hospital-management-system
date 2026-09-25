@@ -17,7 +17,15 @@ export type ClientNotificationType =
   | 'task_overdue'
   | 'announcement_published'
   | 'invoice_created'
-  | 'payment_received';
+  | 'payment_received'
+  | 'payment_refunded'
+  | 'invoice_overdue'
+  | 'emergency_created'
+  | 'emergency_acknowledged'
+  | 'emergency_team_assigned'
+  | 'emergency_status_updated'
+  | 'emergency_resolved'
+  | 'emergency_cancelled';
 
 export interface NotificationResponse {
   id: string;
@@ -47,6 +55,14 @@ const TYPE_TO_CLIENT: Record<Notification['type'], ClientNotificationType> = {
   ANNOUNCEMENT_PUBLISHED: 'announcement_published',
   INVOICE_CREATED: 'invoice_created',
   PAYMENT_RECEIVED: 'payment_received',
+  PAYMENT_REFUNDED: 'payment_refunded',
+  INVOICE_OVERDUE: 'invoice_overdue',
+  EMERGENCY_CREATED: 'emergency_created',
+  EMERGENCY_ACKNOWLEDGED: 'emergency_acknowledged',
+  EMERGENCY_TEAM_ASSIGNED: 'emergency_team_assigned',
+  EMERGENCY_STATUS_UPDATED: 'emergency_status_updated',
+  EMERGENCY_RESOLVED: 'emergency_resolved',
+  EMERGENCY_CANCELLED: 'emergency_cancelled',
 };
 
 export function toNotificationResponse(notification: Notification): NotificationResponse {

@@ -5,8 +5,11 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ChatMessageBubble } from '@/components/chat/ChatMessageBubble'
+import { ChatImageAttachControl } from '@/components/chat/ChatImageAttachControl'
+import { useChatImageAttachment } from '@/hooks/useChatImageAttachment'
+import { useAutoScrollToBottom } from '@/hooks/useAutoScrollToBottom'
 import { getDoctorChatThread, sendDoctorChatMessage } from '@/features/doctorDashboard/api'
-import { formatSessionTime } from '@/features/patientDashboard/formatSession'
 import { ApiError } from '@/lib/apiClient'
 import { cn } from '@/utils/cn'
 import type { ChatMessage } from '@/types/chatMessage'
@@ -26,6 +29,8 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const imageAttachment = useChatImageAttachment()
+  const scrollRef = useAutoScrollToBottom(thread)
 
   useEffect(() => {
     if (selectedPatientId || patients.length === 0) return
@@ -52,10 +57,12 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
 
   async function handleSend() {
     const body = draft.trim()
-    if (!selectedPatientId || !body) return
+    const imageUrl = imageAttachment.imageDataUrl
+    if (!selectedPatientId || (!body && !imageUrl)) return
 
     const patientId = selectedPatientId
     setDraft('')
+    imageAttachment.clear()
     setIsSending(true)
 
     const optimisticMessage: ChatMessage = {
@@ -63,12 +70,16 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
       doctorId: patientId,
       sender: 'doctor',
       body,
+      imageUrl,
       createdAt: new Date().toISOString(),
     }
     setThread((prev) => [...prev, optimisticMessage])
 
     try {
-      const { thread: updated } = await sendDoctorChatMessage(patientId, body)
+      const { thread: updated } = await sendDoctorChatMessage(patientId, {
+        body: body || undefined,
+        imageUrl: imageUrl ?? undefined,
+      })
       setThread(updated)
     } catch (error) {
       setThread((prev) => prev.filter((message) => message.id !== optimisticMessage.id))
@@ -114,37 +125,12 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
             </ul>
 
             <div className="flex flex-col rounded-lg border border-surface-border">
-              <div className="flex-1 space-y-2 overflow-y-auto p-3" style={{ maxHeight: 320 }}>
+              <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3" style={{ maxHeight: 320 }}>
                 {isLoading ? (
                   <p className="py-8 text-center text-sm text-ink-muted">Loading conversation…</p>
                 ) : (
                   thread.map((message) => (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        'flex',
-                        message.sender === 'doctor' ? 'justify-end' : 'justify-start',
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
-                          message.sender === 'doctor'
-                            ? 'bg-brand-600 text-white'
-                            : 'bg-surface-alt text-ink',
-                        )}
-                      >
-                        <p>{message.body}</p>
-                        <p
-                          className={cn(
-                            'mt-1 text-[10px]',
-                            message.sender === 'doctor' ? 'text-white/70' : 'text-ink-muted',
-                          )}
-                        >
-                          {formatSessionTime(message.createdAt)}
-                        </p>
-                      </div>
-                    </div>
+                    <ChatMessageBubble key={message.id} message={message} isOwn={message.sender === 'doctor'} />
                   ))
                 )}
               </div>
@@ -155,6 +141,14 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
                   handleSend()
                 }}
               >
+                <ChatImageAttachControl
+                  imageDataUrl={imageAttachment.imageDataUrl}
+                  isProcessing={imageAttachment.isProcessing}
+                  inputRef={imageAttachment.inputRef}
+                  onFileChange={imageAttachment.handleFileChange}
+                  onPick={imageAttachment.openPicker}
+                  onClear={imageAttachment.clear}
+                />
                 <div className="flex-1">
                   <Input
                     label="Message"

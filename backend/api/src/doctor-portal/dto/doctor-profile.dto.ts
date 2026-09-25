@@ -1,5 +1,27 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+
+export class SocialLinksDto {
+  @IsOptional()
+  @IsUrl({}, { message: 'Enter a valid website URL' })
+  website?: string;
+
+  @IsOptional()
+  @IsUrl({}, { message: 'Enter a valid LinkedIn URL' })
+  linkedin?: string;
+
+  @IsOptional()
+  @IsUrl({}, { message: 'Enter a valid X/Twitter URL' })
+  twitter?: string;
+
+  @IsOptional()
+  @IsUrl({}, { message: 'Enter a valid Facebook URL' })
+  facebook?: string;
+
+  @IsOptional()
+  @IsUrl({}, { message: 'Enter a valid Instagram URL' })
+  instagram?: string;
+}
 
 export class DoctorProfileDto {
   @IsString()
@@ -39,4 +61,10 @@ export class DoctorProfileDto {
   @Min(5, { message: 'Appointment duration must be at least 5 minutes' })
   @Max(240, { message: 'Appointment duration must be 240 minutes or less' })
   appointmentDurationMinutes!: number;
+
+  /** Shown on the doctor's public, shareable profile. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SocialLinksDto)
+  socialLinks?: SocialLinksDto;
 }

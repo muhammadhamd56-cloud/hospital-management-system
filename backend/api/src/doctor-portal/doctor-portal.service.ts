@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { NotificationType } from '@prisma/client';
+import type { SendMessageDto } from '../chat/dto/send-message.dto';
+import { NotificationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   DOCTOR_PROFILE_INCLUDE,
@@ -70,6 +71,7 @@ export class DoctorPortalService {
       experienceYears: dto.experienceYears,
       consultationFee: dto.consultationFee,
       appointmentDurationMinutes: dto.appointmentDurationMinutes,
+      socialLinks: dto.socialLinks ? ({ ...dto.socialLinks } as Prisma.InputJsonValue) : Prisma.JsonNull,
     };
 
     const doctor = existing
@@ -228,12 +230,17 @@ export class DoctorPortalService {
     return messages.map(toChatMessageResponse);
   }
 
-  async sendMessage(userId: string, patientId: string, body: string): Promise<ChatMessageResponse[]> {
+  async sendMessage(userId: string, patientId: string, dto: SendMessageDto): Promise<ChatMessageResponse[]> {
+    const body = dto.body?.trim() ?? '';
+    if (!body && !dto.imageUrl) {
+      throw new BadRequestException('Message cannot be empty');
+    }
+
     const doctor = await this.requireLinkedDoctor(userId);
     await this.assertRelationship(doctor.id, patientId);
 
     await this.prisma.chatMessage.create({
-      data: { patientId, doctorId: doctor.id, sender: 'DOCTOR', body },
+      data: { patientId, doctorId: doctor.id, sender: 'DOCTOR', body, imageUrl: dto.imageUrl ?? null },
     });
 
     const doctorName = `${doctor.user.firstName} ${doctor.user.lastName}`.trim();
@@ -241,7 +248,7 @@ export class DoctorPortalService {
       patientId,
       NotificationType.CHAT_MESSAGE,
       `New message from Dr. ${doctorName}`,
-      body,
+      body || 'Sent an image',
       `/messages?doctorId=${doctor.id}`,
     );
 

@@ -25,12 +25,14 @@ function isToday(isoDate: string): boolean {
   )
 }
 
+type RevenueState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; amount: number }
+
 export function DashboardPage() {
   const navigate = useNavigate()
   const [patientCount, setPatientCount] = useState<number | null>(null)
   const [todaysAppointmentCount, setTodaysAppointmentCount] = useState<number | null>(null)
   const [bedStats, setBedStats] = useState<{ available: number; total: number } | null>(null)
-  const [revenue, setRevenue] = useState<number | null>(null)
+  const [revenue, setRevenue] = useState<RevenueState>({ status: 'loading' })
 
   useEffect(() => {
     listPatients()
@@ -46,9 +48,12 @@ export function DashboardPage() {
       .catch(() => setBedStats(null))
 
     getRevenueThisMonth()
-      .then((res) => setRevenue(res.amount))
-      .catch(() => setRevenue(null))
+      .then((res) => setRevenue({ status: 'ready', amount: res.amount }))
+      .catch(() => setRevenue({ status: 'error' }))
   }, [])
+
+  const revenueLabel =
+    revenue.status === 'loading' ? 'Loading…' : revenue.status === 'error' ? 'Unable to load revenue' : formatCurrency(revenue.amount)
 
   const stats = [
     {
@@ -77,7 +82,7 @@ export function DashboardPage() {
     },
     {
       label: 'Revenue (MTD)',
-      value: revenue === null ? '—' : formatCurrency(revenue),
+      value: revenueLabel,
       icon: Wallet,
       trend: 6.5,
       updatedLabel: 'Live count',

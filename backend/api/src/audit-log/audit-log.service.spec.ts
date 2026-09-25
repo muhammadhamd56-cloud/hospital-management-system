@@ -5,10 +5,10 @@ import { PrismaService } from '../prisma/prisma.service';
 
 describe('AuditLogService', () => {
   let service: AuditLogService;
-  let prisma: { auditLog: { create: jest.Mock } };
+  let prisma: { auditLog: { create: jest.Mock; findMany: jest.Mock } };
 
   beforeEach(async () => {
-    prisma = { auditLog: { create: jest.fn() } };
+    prisma = { auditLog: { create: jest.fn(), findMany: jest.fn() } };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [AuditLogService, { provide: PrismaService, useValue: prisma }],
@@ -64,6 +64,20 @@ describe('AuditLogService', () => {
         entityId: 'shift-1',
         metadata: undefined,
       },
+    });
+  });
+
+  describe('findForEntity', () => {
+    it('queries oldest-first with the actor name included', async () => {
+      prisma.auditLog.findMany.mockResolvedValue([]);
+
+      await service.findForEntity('EmergencyCase', 'case-1');
+
+      expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
+        where: { entityType: 'EmergencyCase', entityId: 'case-1' },
+        include: { actor: { select: { firstName: true, lastName: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
     });
   });
 });

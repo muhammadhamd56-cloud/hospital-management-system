@@ -1,12 +1,14 @@
-import { Printer } from 'lucide-react'
+import { Download, Printer, RotateCcw } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
 import { InvoiceStatusBadge } from '@/features/billing/InvoiceStatusBadge'
+import { generateInvoicePdf } from '@/features/billing/generateInvoicePdf'
 import { formatCurrency } from '@/utils/currency'
 import { formatDate } from '@/utils/datetime'
 import { formatPatientId } from '@/utils/patientId'
-import type { Invoice } from '@/types/invoice'
+import type { Invoice, Payment } from '@/types/invoice'
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   CASH: 'Cash',
@@ -21,9 +23,11 @@ interface InvoiceDetailsModalProps {
   /** Omit for a read-only (patient-facing) view. */
   onRecordPayment?: (invoice: Invoice) => void
   onCancel?: (invoice: Invoice) => void
+  /** Omit to hide refund actions -- staff/admin only, never shown to a patient. */
+  onRefund?: (invoice: Invoice, payment: Payment) => void
 }
 
-export function InvoiceDetailsModal({ invoice, onClose, onRecordPayment, onCancel }: InvoiceDetailsModalProps) {
+export function InvoiceDetailsModal({ invoice, onClose, onRecordPayment, onCancel, onRefund }: InvoiceDetailsModalProps) {
   return (
     <Modal
       isOpen={Boolean(invoice)}
@@ -134,6 +138,7 @@ export function InvoiceDetailsModal({ invoice, onClose, onRecordPayment, onCance
                       <TableHead>Method</TableHead>
                       <TableHead>Recorded By</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
+                      {onRefund && <TableHead className="no-print text-right">Refund</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -142,7 +147,29 @@ export function InvoiceDetailsModal({ invoice, onClose, onRecordPayment, onCance
                         <TableCell>{formatDate(payment.createdAt)}</TableCell>
                         <TableCell>{PAYMENT_METHOD_LABELS[payment.method] ?? payment.method}</TableCell>
                         <TableCell>{payment.recordedBy ?? 'Online payment'}</TableCell>
-                        <TableCell className="text-right">{formatCurrency(payment.amount)}</TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(payment.amount)}
+                          {payment.refundedAmount > 0 && (
+                            <span className="ml-1.5 text-xs text-ink-muted">
+                              ({formatCurrency(payment.refundedAmount)} refunded)
+                            </span>
+                          )}
+                        </TableCell>
+                        {onRefund && (
+                          <TableCell className="no-print text-right">
+                            {payment.refundableAmount > 0 && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => onRefund(invoice, payment)}
+                              >
+                                <RotateCcw className="size-3.5" aria-hidden="true" />
+                                Refund
+                              </Button>
+                            )}
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -152,6 +179,16 @@ export function InvoiceDetailsModal({ invoice, onClose, onRecordPayment, onCance
           </div>
 
           <div className="no-print flex flex-wrap justify-end gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                generateInvoicePdf(invoice).catch(() => toast.error('Failed to generate PDF'))
+              }}
+            >
+              <Download className="size-4" aria-hidden="true" />
+              Download PDF
+            </Button>
             <Button type="button" variant="secondary" onClick={() => window.print()}>
               <Printer className="size-4" aria-hidden="true" />
               Print Invoice

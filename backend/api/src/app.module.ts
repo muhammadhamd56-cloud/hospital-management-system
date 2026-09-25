@@ -26,6 +26,8 @@ import { StaffPortalModule } from './staff-portal/staff-portal.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { PlatformSettingsModule } from './platform-settings/platform-settings.module';
+import { EmergencyModule } from './emergency/emergency.module';
 
 @Module({
   imports: [
@@ -57,6 +59,8 @@ import { AssistantModule } from './assistant/assistant.module';
     StaffPortalModule,
     AnnouncementsModule,
     AssistantModule,
+    PlatformSettingsModule,
+    EmergencyModule,
   ],
   providers: [
     // The e2e suite alone signs up dozens of accounts in a few seconds --

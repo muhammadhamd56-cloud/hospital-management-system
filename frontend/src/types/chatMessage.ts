@@ -5,5 +5,6 @@ export interface ChatMessage {
   doctorId: string
   sender: ChatSender
   body: string
+  imageUrl: string | null
   createdAt: string
 }

@@ -34,7 +34,8 @@ function baseUser(overrides: Partial<AuthUser> = {}): AuthUser {
     dateOfBirth: null,
     gender: null,
     address: null,
-    emergencyContact: null,
+    emergencyContactName: null,
+    emergencyContactPhone: null,
     role: 'patient',
     roleSelected: true,
     hasPassword: false,
@@ -70,14 +71,14 @@ describe('SetPasswordCard — Google-only account (hasPassword: false)', () => {
     const user = userEvent.setup()
     render(<SetPasswordCard />)
 
-    await user.type(screen.getByLabelText('New password'), 'brandnewpass123')
-    await user.type(screen.getByLabelText('Confirm new password'), 'brandnewpass123')
+    await user.type(screen.getByLabelText('New password'), 'Brandnewpass1!')
+    await user.type(screen.getByLabelText('Confirm new password'), 'Brandnewpass1!')
     await user.click(screen.getByRole('button', { name: /set password/i }))
 
     await waitFor(() =>
       expect(setPassword).toHaveBeenCalledWith({
         currentPassword: undefined,
-        newPassword: 'brandnewpass123',
+        newPassword: 'Brandnewpass1!',
       }),
     )
     await waitFor(() => expect(mockRefresh).toHaveBeenCalled())
@@ -90,7 +91,7 @@ describe('SetPasswordCard — Google-only account (hasPassword: false)', () => {
     const user = userEvent.setup()
     render(<SetPasswordCard />)
 
-    await user.type(screen.getByLabelText('New password'), 'brandnewpass123')
+    await user.type(screen.getByLabelText('New password'), 'Brandnewpass1!')
     await user.type(screen.getByLabelText('Confirm new password'), 'somethingelse1')
     await user.click(screen.getByRole('button', { name: /set password/i }))
 
@@ -115,8 +116,8 @@ describe('SetPasswordCard — existing local account (hasPassword: true)', () =>
     const user = userEvent.setup()
     render(<SetPasswordCard />)
 
-    await user.type(screen.getByLabelText('New password'), 'brandnewpass123')
-    await user.type(screen.getByLabelText('Confirm new password'), 'brandnewpass123')
+    await user.type(screen.getByLabelText('New password'), 'Brandnewpass1!')
+    await user.type(screen.getByLabelText('Confirm new password'), 'Brandnewpass1!')
     await user.click(screen.getByRole('button', { name: /update password/i }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Enter your current password'))
@@ -129,14 +130,14 @@ describe('SetPasswordCard — existing local account (hasPassword: true)', () =>
     render(<SetPasswordCard />)
 
     await user.type(screen.getByLabelText('Current password'), 'old-password')
-    await user.type(screen.getByLabelText('New password'), 'brandnewpass123')
-    await user.type(screen.getByLabelText('Confirm new password'), 'brandnewpass123')
+    await user.type(screen.getByLabelText('New password'), 'Brandnewpass1!')
+    await user.type(screen.getByLabelText('Confirm new password'), 'Brandnewpass1!')
     await user.click(screen.getByRole('button', { name: /update password/i }))
 
     await waitFor(() =>
       expect(setPassword).toHaveBeenCalledWith({
         currentPassword: 'old-password',
-        newPassword: 'brandnewpass123',
+        newPassword: 'Brandnewpass1!',
       }),
     )
     expect(toast.success).toHaveBeenCalledWith('Password updated')
@@ -150,8 +151,8 @@ describe('SetPasswordCard — existing local account (hasPassword: true)', () =>
     render(<SetPasswordCard />)
 
     await user.type(screen.getByLabelText('Current password'), 'wrong-password')
-    await user.type(screen.getByLabelText('New password'), 'brandnewpass123')
-    await user.type(screen.getByLabelText('Confirm new password'), 'brandnewpass123')
+    await user.type(screen.getByLabelText('New password'), 'Brandnewpass1!')
+    await user.type(screen.getByLabelText('Confirm new password'), 'Brandnewpass1!')
     await user.click(screen.getByRole('button', { name: /update password/i }))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Current password is incorrect'))

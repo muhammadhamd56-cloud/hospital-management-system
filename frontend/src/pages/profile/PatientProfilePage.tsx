@@ -38,12 +38,24 @@ const schema = z
       .refine((value) => value === '' || new Date(value) <= new Date(), { message: 'Date of birth cannot be in the future' }),
     gender: z.string(),
     address: z.string().trim().max(300, 'Address is too long'),
-    emergencyContact: z.string().trim().max(200, 'Emergency contact is too long'),
+    emergencyContactName: z.string().trim().max(100, 'Emergency contact name is too long'),
+    emergencyContactPhone: z.object({
+      country: z.custom<CountryCode>(() => true),
+      nationalNumber: z.string(),
+    }),
   })
   .superRefine((values, ctx) => {
     const result = validatePhone(values.phone, { required: false })
     if (!result.valid) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phone'], message: phoneErrorMessage(values.phone, result) })
+    }
+    const emergencyResult = validatePhone(values.emergencyContactPhone, { required: false })
+    if (!emergencyResult.valid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['emergencyContactPhone'],
+        message: phoneErrorMessage(values.emergencyContactPhone, emergencyResult),
+      })
     }
   })
 
@@ -69,7 +81,8 @@ export function PatientProfilePage() {
       dateOfBirth: '',
       gender: '',
       address: '',
-      emergencyContact: '',
+      emergencyContactName: '',
+      emergencyContactPhone: { country: detectDefaultCountry(), nationalNumber: '' },
     },
   })
 
@@ -83,7 +96,8 @@ export function PatientProfilePage() {
       dateOfBirth: user.dateOfBirth?.slice(0, 10) ?? '',
       gender: user.gender ?? '',
       address: user.address ?? '',
-      emergencyContact: user.emergencyContact ?? '',
+      emergencyContactName: user.emergencyContactName ?? '',
+      emergencyContactPhone: fromE164(user.emergencyContactPhone, detectDefaultCountry()),
     }
     reset(values)
     setLoadedValues(values)
@@ -99,7 +113,10 @@ export function PatientProfilePage() {
         dateOfBirth: values.dateOfBirth,
         gender: values.gender,
         address: values.address,
-        emergencyContact: values.emergencyContact,
+        emergencyContactName: values.emergencyContactName,
+        emergencyContactPhone: values.emergencyContactPhone.nationalNumber
+          ? toE164(values.emergencyContactPhone) ?? ''
+          : '',
       })
       toast.success('Profile updated successfully.')
       reset(values)
@@ -189,12 +206,26 @@ export function PatientProfilePage() {
               error={errors.address?.message}
               {...register('address')}
             />
-            <Input
-              label="Emergency contact"
-              placeholder="Name and phone number"
-              error={errors.emergencyContact?.message}
-              {...register('emergencyContact')}
-            />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input
+                label="Emergency contact name"
+                placeholder="e.g. Jane Doe"
+                error={errors.emergencyContactName?.message}
+                {...register('emergencyContactName')}
+              />
+              <Controller
+                control={control}
+                name="emergencyContactPhone"
+                render={({ field }) => (
+                  <PhoneInput
+                    label="Emergency contact phone"
+                    value={field.value}
+                    onChange={field.onChange}
+                    error={errors.emergencyContactPhone?.message as string | undefined}
+                  />
+                )}
+              />
+            </div>
           </CardContent>
         </Card>
 

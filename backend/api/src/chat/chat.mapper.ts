@@ -6,6 +6,7 @@ export interface ChatMessageResponse {
   doctorId: string;
   sender: 'patient' | 'doctor';
   body: string;
+  imageUrl: string | null;
   createdAt: string;
 }
 
@@ -15,6 +16,7 @@ export function toChatMessageResponse(message: ChatMessage): ChatMessageResponse
     doctorId: message.doctorId,
     sender: toClientSender(message.sender),
     body: message.body,
+    imageUrl: message.imageUrl,
     createdAt: message.createdAt.toISOString(),
   };
 }

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { requestLabTest } from '@/features/laboratory/api'
 import { listPatients } from '@/features/patients/api'
 import { listDoctors } from '@/features/patientDashboard/api'
+import { useAuth } from '@/features/auth/useAuth'
 import { ApiError } from '@/lib/apiClient'
 import { LAB_TEST_CATEGORIES } from '@/types/labTest'
 import type { LabTest } from '@/types/labTest'
@@ -32,6 +33,12 @@ interface RequestLabTestModalProps {
 }
 
 export function RequestLabTestModal({ isOpen, onClose, onRequest }: RequestLabTestModalProps) {
+  const { user } = useAuth()
+  // The backend always attributes a DOCTOR caller's request to their own
+  // doctor record, discarding whatever doctorId is sent (laboratory.service.ts
+  // requestTest()) -- so a doctor picking a colleague here would be silently
+  // ignored. Only admins can actually choose the referring doctor.
+  const isDoctor = user?.role === 'doctor'
   const [patients, setPatients] = useState<PatientListItem[]>([])
   const [doctors, setDoctors] = useState<DirectoryDoctor[]>([])
   const {
@@ -49,10 +56,17 @@ export function RequestLabTestModal({ isOpen, onClose, onRequest }: RequestLabTe
     listPatients()
       .then((res) => setPatients(res.patients))
       .catch(() => setPatients([]))
-    listDoctors({ limit: 50 })
-      .then((res) => setDoctors(res.doctors))
-      .catch(() => setDoctors([]))
-  }, [isOpen])
+
+    if (isDoctor) {
+      // Not shown to the caller -- just needs to be non-empty to pass
+      // validation; the backend ignores it for a DOCTOR caller anyway.
+      reset({ category: LAB_TEST_CATEGORIES[0], doctorId: user?.id ?? 'self' })
+    } else {
+      listDoctors({ limit: 50 })
+        .then((res) => setDoctors(res.doctors))
+        .catch(() => setDoctors([]))
+    }
+  }, [isOpen, isDoctor, user?.id, reset])
 
   function handleClose() {
     reset()
@@ -88,15 +102,17 @@ export function RequestLabTestModal({ isOpen, onClose, onRequest }: RequestLabTe
             ...patients.map((patient) => ({ label: patient.fullName, value: patient.id })),
           ]}
         />
-        <Select
-          label="Referring doctor"
-          error={errors.doctorId?.message}
-          {...register('doctorId')}
-          options={[
-            { label: 'Select a doctor', value: '' },
-            ...doctors.map((doctor) => ({ label: doctor.fullName, value: doctor.id })),
-          ]}
-        />
+        {!isDoctor && (
+          <Select
+            label="Referring doctor"
+            error={errors.doctorId?.message}
+            {...register('doctorId')}
+            options={[
+              { label: 'Select a doctor', value: '' },
+              ...doctors.map((doctor) => ({ label: doctor.fullName, value: doctor.id })),
+            ]}
+          />
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="Test name"

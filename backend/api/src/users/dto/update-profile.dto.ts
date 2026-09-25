@@ -1,5 +1,11 @@
+import { Transform } from 'class-transformer';
 import { IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { normalizePhoneNumber } from '../../common/normalize-phone';
 import { IsE164PhoneNumber } from '../../common/validators/is-e164-phone-number.validator';
+
+function normalizePhoneIfPresent({ value }: { value: unknown }): unknown {
+  return typeof value === 'string' && value !== '' ? normalizePhoneNumber(value) : value;
+}
 
 export const GENDER_OPTIONS = ['male', 'female', 'other', 'prefer_not_to_say'] as const;
 
@@ -18,6 +24,7 @@ export class UpdateProfileDto {
    *  number. The frontend converts to E.164 before sending -- this is the
    *  server-side revalidation, not the only check. */
   @IsOptional()
+  @Transform(normalizePhoneIfPresent)
   @IsString()
   @IsE164PhoneNumber()
   phone?: string;
@@ -44,6 +51,12 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(200, { message: 'Emergency contact is too long' })
-  emergencyContact?: string;
+  @MaxLength(100, { message: 'Emergency contact name is too long' })
+  emergencyContactName?: string;
+
+  @IsOptional()
+  @Transform(normalizePhoneIfPresent)
+  @IsString()
+  @IsE164PhoneNumber()
+  emergencyContactPhone?: string;
 }

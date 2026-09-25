@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { useNavigate } from 'react-router'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/Input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { PasswordRequirements } from '@/components/ui/PasswordRequirements'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
@@ -12,6 +14,7 @@ import { RoleSelector } from '@/features/auth/RoleSelector'
 import { useAuth } from '@/features/auth/useAuth'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
+import { isStrongPassword, STRONG_PASSWORD_MESSAGE } from '@/lib/passwordPolicy'
 import { DEPARTMENTS } from '@/types/doctor'
 import { AUTH_ROLES, type AuthRole } from '@/types/role'
 
@@ -20,7 +23,7 @@ const signupSchema = z
     firstName: z.string().min(1, 'First name is required'),
     lastName: z.string().min(1, 'Last name is required'),
     email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
-    password: z.string().min(8, 'Password must be at least 8 characters'),
+    password: z.string().refine(isStrongPassword, { message: STRONG_PASSWORD_MESSAGE }),
     confirmPassword: z.string().min(1, 'Confirm your password'),
     specialization: z.string().trim().optional(),
     department: z.string().trim().optional(),
@@ -41,8 +44,10 @@ export function ManualSignupForm() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<SignupFormValues>({ resolver: zodResolver(signupSchema) })
+  const password = watch('password') ?? ''
 
   async function onSubmit(values: SignupFormValues) {
     const experienceYears = values.experienceYears ? Number(values.experienceYears) : undefined
@@ -96,16 +101,17 @@ export function ManualSignupForm() {
         {...register('email')}
       />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Input
-          label="Password"
-          type="password"
-          autoComplete="new-password"
-          error={errors.password?.message}
-          {...register('password')}
-        />
-        <Input
+        <div className="flex flex-col gap-2">
+          <PasswordInput
+            label="Password"
+            autoComplete="new-password"
+            error={errors.password?.message}
+            {...register('password')}
+          />
+          <PasswordRequirements password={password} />
+        </div>
+        <PasswordInput
           label="Confirm password"
-          type="password"
           autoComplete="new-password"
           error={errors.confirmPassword?.message}
           {...register('confirmPassword')}

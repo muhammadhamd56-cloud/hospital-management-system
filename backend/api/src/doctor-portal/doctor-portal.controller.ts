@@ -72,7 +72,7 @@ export class DoctorPortalController {
     @Param('patientId') patientId: string,
     @Body() dto: SendMessageDto,
   ) {
-    const thread = await this.doctorPortalService.sendMessage(user.id, patientId, dto.body);
+    const thread = await this.doctorPortalService.sendMessage(user.id, patientId, dto);
     return { thread };
   }
 

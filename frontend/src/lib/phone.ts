@@ -126,3 +126,11 @@ export function phoneErrorMessage(value: PhoneValue, validation: PhoneValidation
   if (validation.reason === 'non-digit') return 'Phone number can only contain digits'
   return `Enter a valid ${countryName(value.country)} phone number`
 }
+
+/** Formats a stored E.164 number for read-only display (e.g. "+1 415 555 2671").
+ *  Falls back to the raw stored string when it doesn't parse, rather than hiding it. */
+export function formatPhoneForDisplay(phone: string | null | undefined): string | null {
+  if (!phone) return null
+  const parsed = parsePhoneNumberFromString(phone)
+  return parsed?.isValid() ? parsed.formatInternational() : phone
+}

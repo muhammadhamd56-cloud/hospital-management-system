@@ -37,7 +37,10 @@ export class UserResponseDto {
   address!: string | null;
 
   @Expose()
-  emergencyContact!: string | null;
+  emergencyContactName!: string | null;
+
+  @Expose()
+  emergencyContactPhone!: string | null;
 
   @Expose()
   role!: ClientRole;
@@ -74,7 +77,8 @@ export class UserResponseDto {
     this.dateOfBirth = user.dateOfBirth;
     this.gender = user.gender;
     this.address = user.address;
-    this.emergencyContact = user.emergencyContact;
+    this.emergencyContactName = user.emergencyContactName;
+    this.emergencyContactPhone = user.emergencyContactPhone;
     this.role = toClientRole(user.role);
     this.roleSelected = user.roleSelected;
     this.createdAt = user.createdAt;

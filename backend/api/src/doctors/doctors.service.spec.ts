@@ -16,15 +16,17 @@ function buildDoctor(overrides: Partial<DoctorWithUser> = {}): DoctorWithUser {
     isAvailable: true,
     consultationFee: 0,
     appointmentDurationMinutes: 30,
+    socialLinks: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'user-1',
     departmentId: 'dept-1',
   };
 
-  const user: Pick<User, 'firstName' | 'lastName' | 'email'> = {
+  const user: Pick<User, 'firstName' | 'lastName' | 'email' | 'phone'> = {
     firstName: 'Ada',
     lastName: 'Lovelace',
     email: 'ada@example.com',
+    phone: null,
   };
 
   const department: Pick<Department, 'name'> = { name: 'Cardiology' };
@@ -99,6 +101,8 @@ describe('DoctorsService', () => {
           consultationFee: 0,
           appointmentDurationMinutes: 30,
           email: 'ada@example.com',
+          phone: null,
+          socialLinks: null,
         },
       ]);
     });
@@ -128,12 +132,12 @@ describe('DoctorsService', () => {
     it('filters in-memory by full name matching the search term (case-insensitive)', async () => {
       const match = buildDoctor({
         id: 'doctor-match',
-        user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' },
+        user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com', phone: null },
       });
       const nonMatch = buildDoctor({
         id: 'doctor-nonmatch',
         userId: 'user-2',
-        user: { firstName: 'Grace', lastName: 'Hopper', email: 'grace@example.com' },
+        user: { firstName: 'Grace', lastName: 'Hopper', email: 'grace@example.com', phone: null },
       });
       prisma.doctor.findMany.mockResolvedValue([match, nonMatch]);
 
@@ -161,12 +165,12 @@ describe('DoctorsService', () => {
     it('filters in-memory by email matching the search term', async () => {
       const match = buildDoctor({
         id: 'doctor-match',
-        user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada.special@example.com' },
+        user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada.special@example.com', phone: null },
       });
       const nonMatch = buildDoctor({
         id: 'doctor-nonmatch',
         userId: 'user-2',
-        user: { firstName: 'Grace', lastName: 'Hopper', email: 'grace@example.com' },
+        user: { firstName: 'Grace', lastName: 'Hopper', email: 'grace@example.com', phone: null },
       });
       prisma.doctor.findMany.mockResolvedValue([match, nonMatch]);
 

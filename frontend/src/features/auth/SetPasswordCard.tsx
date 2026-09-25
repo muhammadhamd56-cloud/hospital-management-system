@@ -3,17 +3,19 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
-import { Input } from '@/components/ui/Input'
+import { PasswordInput } from '@/components/ui/PasswordInput'
+import { PasswordRequirements } from '@/components/ui/PasswordRequirements'
 import { Button } from '@/components/ui/Button'
 import { setPassword } from '@/features/auth/api'
 import { useAuth } from '@/features/auth/useAuth'
 import { ApiError } from '@/lib/apiClient'
+import { isStrongPassword, STRONG_PASSWORD_MESSAGE } from '@/lib/passwordPolicy'
 
 const schema = z
   .object({
     currentPassword: z.string().optional(),
-    newPassword: z.string().min(8, 'Password must be at least 8 characters'),
-    confirmPassword: z.string().min(8, 'Please confirm your new password'),
+    newPassword: z.string().refine(isStrongPassword, { message: STRONG_PASSWORD_MESSAGE }),
+    confirmPassword: z.string().min(1, 'Please confirm your new password'),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
     message: 'Passwords do not match',
@@ -35,8 +37,10 @@ export function SetPasswordCard({ onSuccess }: SetPasswordCardProps = {}) {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
+  const newPassword = watch('newPassword') ?? ''
 
   async function onSubmit(values: FormValues) {
     if (hasPassword && !values.currentPassword) {
@@ -74,23 +78,26 @@ export function SetPasswordCard({ onSuccess }: SetPasswordCardProps = {}) {
       <CardContent>
         <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
           {hasPassword && (
-            <Input
+            <PasswordInput
               label="Current password"
-              type="password"
+              autoComplete="current-password"
               error={errors.currentPassword?.message}
               {...register('currentPassword')}
             />
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input
-              label="New password"
-              type="password"
-              error={errors.newPassword?.message}
-              {...register('newPassword')}
-            />
-            <Input
+            <div className="flex flex-col gap-2">
+              <PasswordInput
+                label="New password"
+                autoComplete="new-password"
+                error={errors.newPassword?.message}
+                {...register('newPassword')}
+              />
+              <PasswordRequirements password={newPassword} />
+            </div>
+            <PasswordInput
               label="Confirm new password"
-              type="password"
+              autoComplete="new-password"
               error={errors.confirmPassword?.message}
               {...register('confirmPassword')}
             />

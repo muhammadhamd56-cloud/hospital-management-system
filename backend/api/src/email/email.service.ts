@@ -2,6 +2,19 @@ import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 
+/** Escapes a user-controlled string (e.g. a patient/doctor name) before it's
+ *  interpolated into an HTML email template -- names have no character
+ *  restrictions at signup, so this is the only thing standing between a
+ *  crafted name and stored HTML injection in an email sent to someone else. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -106,6 +119,9 @@ export class EmailService {
       return;
     }
 
+    const patientName = escapeHtml(params.patientName);
+    const doctorName = escapeHtml(params.doctorName);
+
     try {
       const { error } = await this.resend.emails.send({
         from: this.fromEmail,
@@ -114,7 +130,7 @@ export class EmailService {
         html: `
           <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
             <h2>Upcoming appointment</h2>
-            <p>Hi ${params.patientName}, this is a reminder about your ${params.mode === 'online' ? 'online' : 'in-person'} appointment with Dr. ${params.doctorName}:</p>
+            <p>Hi ${patientName}, this is a reminder about your ${params.mode === 'online' ? 'online' : 'in-person'} appointment with Dr. ${doctorName}:</p>
             <p style="font-size: 18px; font-weight: bold;">${when}</p>
             <p>If you need to reschedule or cancel, you can do so from your MediCore account.</p>
           </div>
@@ -126,6 +142,49 @@ export class EmailService {
       }
     } catch (error) {
       this.logger.error(`Failed to send appointment reminder email to ${to}: ${(error as Error).message}`);
+    }
+  }
+
+  /** Best-effort, same reasoning as sendAppointmentReminderEmail -- driven
+   *  by InvoiceRemindersService's batch job, not a waiting request. */
+  async sendInvoiceOverdueEmail(
+    to: string,
+    params: { patientName: string; invoiceNumber: string; amount: number; dueDate: Date },
+  ): Promise<void> {
+    const dueDateLabel = params.dueDate.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY not configured — overdue notice for ${to} (Invoice ${params.invoiceNumber}, ${params.amount.toFixed(2)}) logged only, not emailed`,
+      );
+      return;
+    }
+
+    const patientName = escapeHtml(params.patientName);
+
+    try {
+      const { error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to,
+        subject: `Invoice ${params.invoiceNumber} is overdue`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+            <h2>Invoice overdue</h2>
+            <p>Hi ${patientName}, Invoice ${params.invoiceNumber} for ${params.amount.toFixed(2)} was due on ${dueDateLabel} and hasn't been paid yet.</p>
+            <p>You can pay it online from your MediCore account.</p>
+          </div>
+        `,
+      });
+
+      if (error) {
+        this.logger.error(`Failed to send invoice overdue email to ${to}: ${error.message}`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to send invoice overdue email to ${to}: ${(error as Error).message}`);
     }
   }
 }

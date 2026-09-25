@@ -4,7 +4,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Role, type User } from '@prisma/client';
@@ -30,7 +29,8 @@ function buildUser(overrides: Partial<User> = {}): User {
     dateOfBirth: null,
     gender: null,
     address: null,
-    emergencyContact: null,
+    emergencyContactName: null,
+    emergencyContactPhone: null,
     role: Role.PATIENT,
     roleSelected: false,
     emailVerified: true,
@@ -44,6 +44,8 @@ function buildUser(overrides: Partial<User> = {}): User {
     passwordResetLastSentAt: null,
     tokenVersion: 0,
     mustChangePassword: false,
+    failedLoginAttempts: 0,
+    lockedUntil: null,
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
@@ -248,6 +250,108 @@ describe('AuthService', () => {
 
       expect(result).toBe(user);
     });
+
+    describe('account lockout (brute-force protection independent of the per-IP throttle)', () => {
+      it('increments failedLoginAttempts on a wrong password', async () => {
+        const hashed = await hashPassword('correct-password');
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ id: 'user-1', password: hashed, failedLoginAttempts: 2 }),
+        );
+
+        await expect(
+          service.loginLocal({ ...loginDto, password: 'wrong-password' }),
+        ).rejects.toBeInstanceOf(UnauthorizedException);
+
+        expect(prisma.user.update).toHaveBeenCalledWith({
+          where: { id: 'user-1' },
+          data: { failedLoginAttempts: 3 },
+        });
+      });
+
+      it('locks the account once failedLoginAttempts reaches the 10-attempt threshold', async () => {
+        const hashed = await hashPassword('correct-password');
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ id: 'user-1', password: hashed, failedLoginAttempts: 9 }),
+        );
+
+        await expect(
+          service.loginLocal({ ...loginDto, password: 'wrong-password' }),
+        ).rejects.toBeInstanceOf(UnauthorizedException);
+
+        expect(prisma.user.update).toHaveBeenCalledWith({
+          where: { id: 'user-1' },
+          data: { failedLoginAttempts: 10, lockedUntil: expect.any(Date) },
+        });
+      });
+
+      it('rejects a login attempt with the correct password while the account is locked, without touching the password hash', async () => {
+        const hashed = await hashPassword('correct-password');
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({
+            password: hashed,
+            failedLoginAttempts: 10,
+            lockedUntil: new Date(Date.now() + 5 * 60_000),
+          }),
+        );
+
+        await expect(service.loginLocal(loginDto)).rejects.toThrow(
+          /Too many failed sign-in attempts/,
+        );
+        // A locked account is rejected before spending a bcrypt comparison,
+        // and definitely before any lockout-clearing write.
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('allows login again, and clears the lockout, once lockedUntil is in the past', async () => {
+        const hashed = await hashPassword('correct-password');
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({
+            id: 'user-1',
+            password: hashed,
+            failedLoginAttempts: 10,
+            lockedUntil: new Date(Date.now() - 1000),
+            role: Role.PATIENT,
+            emailVerified: true,
+          }),
+        );
+
+        await service.loginLocal(loginDto);
+
+        expect(prisma.user.update).toHaveBeenCalledWith({
+          where: { id: 'user-1' },
+          data: { failedLoginAttempts: 0, lockedUntil: null },
+        });
+      });
+    });
+
+    describe('bcrypt cost migration', () => {
+      it('lazily rehashes a password stored under an older, lower bcrypt cost on successful login', async () => {
+        const bcrypt = jest.requireActual('bcryptjs') as typeof import('bcryptjs');
+        const legacyHash = await bcrypt.hash('correct-password', 10);
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ id: 'user-1', password: legacyHash, role: Role.PATIENT, emailVerified: true }),
+        );
+
+        await service.loginLocal(loginDto);
+
+        expect(prisma.user.update).toHaveBeenCalledTimes(1);
+        const updateArgs = prisma.user.update.mock.calls[0][0];
+        expect(updateArgs.where).toEqual({ id: 'user-1' });
+        expect(typeof updateArgs.data.password).toBe('string');
+        expect(updateArgs.data.password).not.toBe(legacyHash);
+      });
+
+      it('does not rehash a password already at the current cost', async () => {
+        const hashed = await hashPassword('correct-password');
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ id: 'user-1', password: hashed, role: Role.PATIENT, emailVerified: true }),
+        );
+
+        await service.loginLocal(loginDto);
+
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('verifyOtp', () => {
@@ -265,11 +369,14 @@ describe('AuthService', () => {
       });
     }
 
-    it('throws NotFoundException when the account does not exist', async () => {
+    it('throws the same BadRequestException for an unknown email as for "no code requested" -- must not reveal account existence', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
 
       await expect(service.verifyOtp({ email, code: '123456' })).rejects.toBeInstanceOf(
-        NotFoundException,
+        BadRequestException,
+      );
+      await expect(service.verifyOtp({ email, code: '123456' })).rejects.toThrow(
+        'No verification code was requested. Please request a new one.',
       );
     });
 
@@ -342,10 +449,11 @@ describe('AuthService', () => {
   describe('resendOtp', () => {
     const email = 'ada@example.com';
 
-    it('throws NotFoundException when the account does not exist', async () => {
+    it('resolves without error and never emails when the account does not exist -- must not reveal that', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
 
-      await expect(service.resendOtp(email)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.resendOtp(email)).resolves.toBeUndefined();
+      expect(emailService.sendOtpEmail).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException when the account is already verified', async () => {
@@ -522,6 +630,8 @@ describe('AuthService', () => {
       expect(updateArgs.data.passwordResetAttempts).toBe(0);
       expect(updateArgs.data.passwordResetLastSentAt).toBeNull();
       expect(updateArgs.data.tokenVersion).toEqual({ increment: 1 });
+      expect(updateArgs.data.failedLoginAttempts).toBe(0);
+      expect(updateArgs.data.lockedUntil).toBeNull();
     });
   });
 

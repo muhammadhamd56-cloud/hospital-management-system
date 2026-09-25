@@ -43,6 +43,8 @@ const laboratoryPage = () => import('@/pages/laboratory/LaboratoryPage').then((m
 const staffPage = () => import('@/pages/staff/StaffPage').then((m) => ({ Component: m.StaffPage }))
 const staffSchedulingPage = () => import('@/pages/staffScheduling/StaffSchedulingPage').then((m) => ({ Component: m.StaffSchedulingPage }))
 const notificationsPage = () => import('@/pages/notifications/NotificationsPage').then((m) => ({ Component: m.NotificationsPage }))
+const emergencySwitch = () => import('@/pages/emergency/EmergencyRouteSwitch').then((m) => ({ Component: m.EmergencyRouteSwitch }))
+const emergencyCaseDetailPage = () => import('@/pages/emergency/EmergencyCaseDetailPage').then((m) => ({ Component: m.EmergencyCaseDetailPage }))
 
 export const router = createBrowserRouter([
   {
@@ -91,6 +93,8 @@ export const router = createBrowserRouter([
               { path: ROUTES.medicalRecords, lazy: medicalRecordsSwitch, handle: { title: 'Medical Records' } },
               { path: ROUTES.billing, lazy: billingSwitch, handle: { title: 'Billing' } },
               { path: ROUTES.announcements, lazy: announcementsPage, handle: { title: 'Announcements' } },
+              { path: ROUTES.emergency, lazy: emergencySwitch, handle: { title: 'Emergency' } },
+              { path: ROUTES.emergencyCase, lazy: emergencyCaseDetailPage, handle: { title: 'Emergency Case' } },
               {
                 element: <RoleRoute allow={['patient']} />,
                 children: [

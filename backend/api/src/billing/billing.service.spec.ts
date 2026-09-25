@@ -8,6 +8,7 @@ import {
   type Invoice,
   type InvoiceItem,
   type Payment,
+  type Refund,
   type User,
 } from '@prisma/client';
 import { BillingService } from './billing.service';
@@ -15,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from './stripe.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import type { CreateInvoiceDto } from './dto/create-invoice.dto';
 
@@ -33,6 +35,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
     isAvailable: true,
     consultationFee: 0,
     appointmentDurationMinutes: 30,
+    socialLinks: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     userId: 'doctor-user-1',
     departmentId: 'dept-1',
@@ -40,7 +43,7 @@ function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
   };
 }
 
-type PaymentWithRecordedBy = Payment & { recordedBy: Pick<User, 'firstName' | 'lastName'> | null };
+type PaymentWithRecordedBy = Payment & { recordedBy: Pick<User, 'firstName' | 'lastName'> | null; refunds: Refund[] };
 
 type InvoiceWithRelations = Invoice & {
   patient: Pick<User, 'firstName' | 'lastName'>;
@@ -51,8 +54,21 @@ type InvoiceWithRelations = Invoice & {
 const INVOICE_INCLUDE = {
   patient: { select: { firstName: true, lastName: true } },
   items: true,
-  payments: { include: { recordedBy: { select: { firstName: true, lastName: true } } } },
+  payments: { include: { recordedBy: { select: { firstName: true, lastName: true } }, refunds: true } },
 };
+
+function buildRefund(overrides: Partial<Refund> = {}): Refund {
+  return {
+    id: 'refund-1',
+    paymentId: 'payment-1',
+    amount: 50,
+    reason: null,
+    stripeRefundId: null,
+    refundedById: 'admin-1',
+    createdAt: new Date('2026-08-06T00:00:00.000Z'),
+    ...overrides,
+  };
+}
 
 function buildItem(overrides: Partial<InvoiceItem> = {}): InvoiceItem {
   return {
@@ -74,7 +90,9 @@ function buildPayment(overrides: Partial<PaymentWithRecordedBy> = {}): PaymentWi
     method: PaymentMethod.CASH,
     recordedById: 'admin-1',
     recordedBy: { firstName: 'Admin', lastName: 'User' },
+    stripePaymentIntentId: null,
     createdAt: new Date('2026-08-05T00:00:00.000Z'),
+    refunds: [],
     ...overrides,
   };
 }
@@ -94,6 +112,7 @@ function buildInvoice(overrides: Partial<InvoiceWithRelations> = {}): InvoiceWit
     stripeCheckoutSessionId: null,
     appointmentId: null,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    overdueNotifiedAt: null,
     patient: { firstName: 'Ada', lastName: 'Lovelace' },
     items: [buildItem()],
     payments: [],
@@ -114,7 +133,8 @@ function buildPatient(overrides: Partial<User> = {}): User {
     dateOfBirth: null,
     gender: null,
     address: null,
-    emergencyContact: null,
+    emergencyContactName: null,
+    emergencyContactPhone: null,
     role: Role.PATIENT,
     roleSelected: true,
     emailVerified: true,
@@ -128,6 +148,8 @@ function buildPatient(overrides: Partial<User> = {}): User {
     passwordResetLastSentAt: null,
     tokenVersion: 0,
     mustChangePassword: false,
+    failedLoginAttempts: 0,
+    lockedUntil: null,
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
@@ -144,17 +166,20 @@ describe('BillingService', () => {
       findMany: jest.Mock;
       create: jest.Mock;
       findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
       update: jest.Mock;
     };
     payment: { create: jest.Mock; aggregate: jest.Mock };
+    refund: { create: jest.Mock };
     user: { findUnique: jest.Mock };
     doctor: { findUnique: jest.Mock };
     appointment: { findMany: jest.Mock };
     chatMessage: { findMany: jest.Mock };
   };
-  let stripeService: { createCheckoutSession: jest.Mock };
+  let stripeService: { createCheckoutSession: jest.Mock; refundPayment: jest.Mock };
   let auditLogService: { log: jest.Mock };
   let notificationsService: { create: jest.Mock };
+  let platformSettingsService: { getConsultationMargin: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -162,17 +187,20 @@ describe('BillingService', () => {
         findMany: jest.fn(),
         create: jest.fn(),
         findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
         update: jest.fn(),
       },
       payment: { create: jest.fn(), aggregate: jest.fn() },
+      refund: { create: jest.fn().mockResolvedValue(undefined) },
       user: { findUnique: jest.fn() },
       doctor: { findUnique: jest.fn() },
       appointment: { findMany: jest.fn().mockResolvedValue([]) },
       chatMessage: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    stripeService = { createCheckoutSession: jest.fn() };
+    stripeService = { createCheckoutSession: jest.fn(), refundPayment: jest.fn() };
     auditLogService = { log: jest.fn().mockResolvedValue(undefined) };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+    platformSettingsService = { getConsultationMargin: jest.fn().mockResolvedValue(0) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -181,6 +209,7 @@ describe('BillingService', () => {
         { provide: StripeService, useValue: stripeService },
         { provide: AuditLogService, useValue: auditLogService },
         { provide: NotificationsService, useValue: notificationsService },
+        { provide: PlatformSettingsService, useValue: platformSettingsService },
       ],
     }).compile();
 
@@ -546,6 +575,30 @@ describe('BillingService', () => {
         expect.objectContaining({ data: expect.objectContaining({ appointmentId: 'appt-1' }) }),
       );
     });
+
+    it('folds the platform consultation margin into the single line total without touching the doctor fee', async () => {
+      const dueDate = new Date('2099-01-01T10:00:00.000Z');
+      platformSettingsService.getConsultationMargin.mockResolvedValue(5);
+      prisma.invoice.create.mockResolvedValue(
+        buildInvoice({ amount: 205, items: [buildItem({ unitPrice: 205, description: 'Consultation with Dr. Grace Hopper' })] }),
+      );
+
+      const result = await service.createConsultationInvoice('patient-1', 'Grace Hopper', 200, dueDate);
+
+      expect(prisma.invoice.create).toHaveBeenCalledWith({
+        data: {
+          patientId: 'patient-1',
+          description: 'Consultation with Dr. Grace Hopper',
+          amount: 205,
+          dueDate,
+          items: {
+            create: [{ description: 'Consultation with Dr. Grace Hopper', quantity: 1, unitPrice: 205 }],
+          },
+        },
+        include: INVOICE_INCLUDE,
+      });
+      expect(result.amount).toBe(205);
+    });
   });
 
   describe('cancelInvoiceForAppointment', () => {
@@ -747,6 +800,147 @@ describe('BillingService', () => {
     });
   });
 
+  describe('refundPayment', () => {
+    it('throws NotFoundException when the invoice does not exist', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(null);
+
+      await expect(service.refundPayment(admin, 'missing', 'payment-1', {})).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.refund.create).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the payment does not belong to the invoice', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ payments: [buildPayment({ id: 'payment-1' })] }));
+
+      await expect(service.refundPayment(admin, 'invoice-1', 'not-on-this-invoice', {})).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.refund.create).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when the payment has already been fully refunded', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        buildInvoice({ payments: [buildPayment({ amount: 50, refunds: [buildRefund({ amount: 50 })] })] }),
+      );
+
+      await expect(service.refundPayment(admin, 'invoice-1', 'payment-1', {})).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.refund.create).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when the requested amount exceeds the refundable balance', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ payments: [buildPayment({ amount: 50 })] }));
+
+      await expect(
+        service.refundPayment(admin, 'invoice-1', 'payment-1', { amount: 100 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.refund.create).not.toHaveBeenCalled();
+    });
+
+    it('refunds a manually-recorded (cash) payment without calling Stripe, defaulting amount to the full refundable balance', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        buildInvoice({ id: 'inv-1', amount: 150, payments: [buildPayment({ amount: 150 })] }),
+      );
+      prisma.invoice.findUniqueOrThrow.mockResolvedValue(
+        buildInvoice({
+          id: 'inv-1',
+          amount: 150,
+          payments: [buildPayment({ amount: 150, refunds: [buildRefund({ amount: 150 })] })],
+        }),
+      );
+
+      const result = await service.refundPayment(admin, 'inv-1', 'payment-1', { reason: 'Duplicate charge' });
+
+      expect(stripeService.refundPayment).not.toHaveBeenCalled();
+      expect(prisma.refund.create).toHaveBeenCalledWith({
+        data: {
+          paymentId: 'payment-1',
+          amount: 150,
+          reason: 'Duplicate charge',
+          stripeRefundId: null,
+          refundedById: 'admin-1',
+        },
+      });
+      expect(result).toMatchObject({ status: 'refunded', amountPaid: 0, remaining: 150 });
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        'patient-1',
+        'PAYMENT_REFUNDED',
+        'Payment refunded',
+        expect.stringContaining('150.00'),
+        '/billing?invoiceId=inv-1',
+      );
+    });
+
+    it('refunds a Stripe payment through Stripe, using the amount it returns as the stripeRefundId', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        buildInvoice({
+          id: 'inv-1',
+          amount: 150,
+          payments: [buildPayment({ amount: 150, stripePaymentIntentId: 'pi_123' })],
+        }),
+      );
+      stripeService.refundPayment.mockResolvedValue({ id: 're_123' });
+      prisma.invoice.findUniqueOrThrow.mockResolvedValue(
+        buildInvoice({
+          id: 'inv-1',
+          amount: 150,
+          payments: [
+            buildPayment({
+              amount: 150,
+              stripePaymentIntentId: 'pi_123',
+              refunds: [buildRefund({ amount: 60, stripeRefundId: 're_123' })],
+            }),
+          ],
+        }),
+      );
+
+      const result = await service.refundPayment(admin, 'inv-1', 'payment-1', { amount: 60 });
+
+      expect(stripeService.refundPayment).toHaveBeenCalledWith('pi_123', 6000);
+      expect(prisma.refund.create).toHaveBeenCalledWith({
+        data: { paymentId: 'payment-1', amount: 60, reason: undefined, stripeRefundId: 're_123', refundedById: 'admin-1' },
+      });
+      expect(result).toMatchObject({ status: 'partially_refunded', amountPaid: 90, remaining: 60 });
+    });
+
+    it('moves the stored invoice status back from PAID once a refund reopens a balance', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        buildInvoice({
+          id: 'inv-1',
+          status: InvoiceStatus.PAID,
+          amount: 150,
+          payments: [buildPayment({ amount: 150 })],
+        }),
+      );
+      prisma.invoice.findUniqueOrThrow.mockResolvedValue(
+        buildInvoice({
+          id: 'inv-1',
+          amount: 150,
+          payments: [buildPayment({ amount: 150, refunds: [buildRefund({ amount: 60 })] })],
+        }),
+      );
+
+      await service.refundPayment(admin, 'inv-1', 'payment-1', { amount: 60 });
+
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: 'inv-1' },
+        data: { status: InvoiceStatus.PARTIALLY_PAID, paidAt: null },
+      });
+    });
+
+    it('rejects a doctor caller refunding a payment for a patient they have no relationship with', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ payments: [buildPayment()] }));
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor());
+
+      await expect(
+        service.refundPayment(doctorCaller, 'invoice-1', 'payment-1', {}),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.refund.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('overview', () => {
     it('sums total revenue as paid + pending + overdue across non-cancelled invoices', async () => {
       const paidInvoice = buildInvoice({
@@ -802,10 +996,17 @@ describe('BillingService', () => {
       jest.useRealTimers();
     });
 
-    it('returns the sum of payments actually collected within the current calendar month', async () => {
+    it('returns the same totalRevenue definition as overview(), windowed to invoices created this calendar month', async () => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
-      prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 4200 } });
+      const invoiceThisMonth = buildInvoice({
+        id: 'inv-this-month',
+        amount: 100,
+        items: [buildItem({ unitPrice: 100 })],
+        payments: [buildPayment({ amount: 100 })],
+        createdAt: new Date('2026-08-05T00:00:00.000Z'),
+      });
+      prisma.invoice.findMany.mockResolvedValue([invoiceThisMonth]);
 
       const now = new Date();
       const expectedStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -813,17 +1014,84 @@ describe('BillingService', () => {
 
       const result = await service.revenueThisMonth();
 
-      expect(result).toEqual({ amount: 4200 });
-      expect(prisma.payment.aggregate).toHaveBeenCalledWith({
-        where: { createdAt: { gte: expectedStart, lt: expectedEnd } },
-        _sum: { amount: true },
+      expect(result).toEqual({ amount: 100 });
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith({
+        where: { createdAt: { gte: expectedStart, lt: expectedEnd }, status: { not: InvoiceStatus.CANCELLED } },
+        include: INVOICE_INCLUDE,
       });
     });
 
     it('returns 0 when there is no revenue recorded yet this month', async () => {
-      prisma.payment.aggregate.mockResolvedValue({ _sum: { amount: null } });
+      prisma.invoice.findMany.mockResolvedValue([]);
 
       await expect(service.revenueThisMonth()).resolves.toEqual({ amount: 0 });
+    });
+
+    it('excludes invoices created in a different month even if paid this month', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-09-09T12:00:00.000Z'));
+      // Created in August, so it must not count toward September's revenue,
+      // even though its payment (and paidAt) landed in September.
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await expect(service.revenueThisMonth()).resolves.toEqual({ amount: 0 });
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: { gte: new Date(2026, 8, 1), lt: new Date(2026, 9, 1) },
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('monthlyRevenueTrend', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('returns 6 months in chronological order, each 0 when there are no invoices', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-09-09T12:00:00.000Z'));
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      const result = await service.monthlyRevenueTrend(6);
+
+      expect(result).toHaveLength(6);
+      expect(result.map((r) => r.month)).toEqual(['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']);
+      expect(result.every((r) => r.revenue === 0)).toBe(true);
+    });
+
+    it('buckets each invoice by its createdAt month, using the same totalRevenue definition as overview()', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-09-09T12:00:00.000Z'));
+
+      const augustInvoice = buildInvoice({
+        id: 'inv-aug',
+        amount: 200,
+        items: [buildItem({ unitPrice: 200 })],
+        createdAt: new Date('2026-08-30T20:52:55.017Z'),
+        dueDate: new Date('2099-01-01T00:00:00.000Z'),
+      });
+      const septemberInvoice = buildInvoice({
+        id: 'inv-sep',
+        amount: 50,
+        items: [buildItem({ unitPrice: 50 })],
+        createdAt: new Date('2026-09-06T17:20:54.359Z'),
+        dueDate: new Date('2099-01-01T00:00:00.000Z'),
+      });
+
+      prisma.invoice.findMany.mockImplementation(({ where }: { where: { createdAt: { gte: Date; lt: Date } } }) => {
+        const { gte, lt } = where.createdAt;
+        const inRange = (invoice: InvoiceWithRelations) => invoice.createdAt >= gte && invoice.createdAt < lt;
+        return Promise.resolve([augustInvoice, septemberInvoice].filter(inRange));
+      });
+
+      const result = await service.monthlyRevenueTrend(6);
+
+      expect(result.find((r) => r.month === 'Aug')?.revenue).toBe(200);
+      expect(result.find((r) => r.month === 'Sep')?.revenue).toBe(50);
+      expect(result.find((r) => r.month === 'Jul')?.revenue).toBe(0);
     });
   });
 });

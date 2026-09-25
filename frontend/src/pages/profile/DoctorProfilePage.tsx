@@ -3,6 +3,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import toast from 'react-hot-toast'
+import { Copy, Check } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -19,6 +20,15 @@ import { getDoctorProfile, upsertDoctorProfile } from '@/features/doctorDashboar
 import { detectDefaultCountry, fromE164, phoneErrorMessage, toE164, validatePhone, type CountryCode } from '@/lib/phone'
 import { ApiError } from '@/lib/apiClient'
 import { DEPARTMENTS } from '@/types/doctor'
+import { buildPublicDoctorProfileUrl } from '@/constants/routes'
+
+const optionalUrl = z
+  .string()
+  .trim()
+  .optional()
+  .refine((value) => !value || z.string().url().safeParse(value).success, {
+    message: 'Enter a valid URL',
+  })
 
 const schema = z
   .object({
@@ -44,6 +54,11 @@ const schema = z
       .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100_000, {
         message: 'Enter a valid amount, or 0 for no charge',
       }),
+    website: optionalUrl,
+    linkedin: optionalUrl,
+    twitter: optionalUrl,
+    facebook: optionalUrl,
+    instagram: optionalUrl,
   })
   .superRefine((values, ctx) => {
     const result = validatePhone(values.phone, { required: false })
@@ -63,6 +78,8 @@ export function DoctorProfilePage() {
   // DoctorProfileDto requires it on every save -- carried through unedited
   // from whatever was already loaded so saving Profile can't silently reset it.
   const [appointmentDurationMinutes, setAppointmentDurationMinutes] = useState(30)
+  const [doctorId, setDoctorId] = useState<string | null>(null)
+  const [isLinkCopied, setIsLinkCopied] = useState(false)
 
   const {
     control,
@@ -82,6 +99,11 @@ export function DoctorProfilePage() {
       experienceYears: '',
       bio: '',
       consultationFee: '',
+      website: '',
+      linkedin: '',
+      twitter: '',
+      facebook: '',
+      instagram: '',
     },
   })
 
@@ -92,6 +114,7 @@ export function DoctorProfilePage() {
       .then((res) => {
         const profile = res.profile
         if (profile) setAppointmentDurationMinutes(profile.appointmentDurationMinutes)
+        setDoctorId(profile?.id ?? null)
 
         const values: FormValues = {
           firstName: user.firstName,
@@ -103,6 +126,11 @@ export function DoctorProfilePage() {
           experienceYears: profile ? String(profile.experienceYears) : '',
           bio: profile?.bio ?? '',
           consultationFee: profile ? String(profile.consultationFee) : '',
+          website: profile?.socialLinks?.website ?? '',
+          linkedin: profile?.socialLinks?.linkedin ?? '',
+          twitter: profile?.socialLinks?.twitter ?? '',
+          facebook: profile?.socialLinks?.facebook ?? '',
+          instagram: profile?.socialLinks?.instagram ?? '',
         }
         reset(values)
         setLoadedValues(values)
@@ -117,7 +145,7 @@ export function DoctorProfilePage() {
 
   async function onSubmit(values: FormValues) {
     try {
-      await Promise.all([
+      const [, { profile }] = await Promise.all([
         updateProfile({
           firstName: values.firstName,
           lastName: values.lastName,
@@ -131,8 +159,16 @@ export function DoctorProfilePage() {
           experienceYears: Number(values.experienceYears),
           consultationFee: Number(values.consultationFee),
           appointmentDurationMinutes,
+          socialLinks: {
+            website: values.website || undefined,
+            linkedin: values.linkedin || undefined,
+            twitter: values.twitter || undefined,
+            facebook: values.facebook || undefined,
+            instagram: values.instagram || undefined,
+          },
         }),
       ])
+      setDoctorId(profile.id)
       toast.success('Profile updated successfully.')
       reset(values)
       setLoadedValues(values)
@@ -150,6 +186,15 @@ export function DoctorProfilePage() {
   function confirmDiscard() {
     if (loadedValues) reset(loadedValues)
     setIsCancelConfirmOpen(false)
+  }
+
+  async function handleCopyLink() {
+    if (!doctorId) return
+    const url = `${window.location.origin}${buildPublicDoctorProfileUrl(doctorId)}`
+    await navigator.clipboard.writeText(url)
+    setIsLinkCopied(true)
+    toast.success('Profile link copied to clipboard')
+    setTimeout(() => setIsLinkCopied(false), 2000)
   }
 
   if (isLoading) {
@@ -246,6 +291,50 @@ export function DoctorProfilePage() {
           </CardContent>
         </Card>
 
+        <Card className="animate-fade-in" style={{ animationDelay: '105ms' }}>
+          <CardHeader>
+            <CardTitle>Social Links</CardTitle>
+            <CardDescription>Shown on your public profile so patients can find you elsewhere.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <Input
+              label="Website"
+              placeholder="https://example.com"
+              hint="Optional"
+              error={errors.website?.message}
+              {...register('website')}
+            />
+            <Input
+              label="LinkedIn"
+              placeholder="https://linkedin.com/in/…"
+              hint="Optional"
+              error={errors.linkedin?.message}
+              {...register('linkedin')}
+            />
+            <Input
+              label="X / Twitter"
+              placeholder="https://x.com/…"
+              hint="Optional"
+              error={errors.twitter?.message}
+              {...register('twitter')}
+            />
+            <Input
+              label="Facebook"
+              placeholder="https://facebook.com/…"
+              hint="Optional"
+              error={errors.facebook?.message}
+              {...register('facebook')}
+            />
+            <Input
+              label="Instagram"
+              placeholder="https://instagram.com/…"
+              hint="Optional"
+              error={errors.instagram?.message}
+              {...register('instagram')}
+            />
+          </CardContent>
+        </Card>
+
         <div className="sticky bottom-0 -mx-4 animate-fade-in border-t border-surface-border bg-surface-alt/95 px-4 py-4 backdrop-blur sm:mx-0 sm:rounded-card sm:border sm:border-surface-border sm:bg-surface">
           <div className="flex justify-end gap-3">
             <Button type="button" variant="secondary" onClick={handleCancel} disabled={!isDirty || isSubmitting}>
@@ -266,6 +355,37 @@ export function DoctorProfilePage() {
         <CardContent>
           <AvailabilityToggle labelClass="text-sm font-medium text-ink" />
         </CardContent>
+      </Card>
+
+      <Card className="animate-fade-in" style={{ animationDelay: '135ms' }}>
+        <CardHeader>
+          <CardTitle>Share Your Profile</CardTitle>
+          <CardDescription>
+            {doctorId
+              ? 'Anyone with this link can view your public profile — no account required.'
+              : 'Save your profile once to get a shareable link.'}
+          </CardDescription>
+        </CardHeader>
+        {doctorId && (
+          <CardContent>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-alt px-4 py-3">
+              <code className="truncate text-sm font-medium text-ink">
+                {`${window.location.origin}${buildPublicDoctorProfileUrl(doctorId)}`}
+              </code>
+              <Button type="button" size="sm" variant="secondary" onClick={handleCopyLink}>
+                {isLinkCopied ? (
+                  <>
+                    <Check className="size-4" aria-hidden="true" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-4" aria-hidden="true" /> Copy
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       <div className="animate-fade-in" style={{ animationDelay: '150ms' }}>

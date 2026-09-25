@@ -36,14 +36,17 @@ model User {
   lastName                String
   phone                   String?
   picture                 String?
-  /** Patient-facing profile fields. Meaningless (left null) for other
-   *  roles -- kept on User rather than a separate table since, unlike
-   *  Doctor, nothing else in the schema references "a patient" by its own
-   *  id (Appointment.patientId etc. already point straight at User.id). */
+  /**
+   * Patient-facing profile fields. Meaningless (left null) for other
+   * roles -- kept on User rather than a separate table since, unlike
+   * Doctor, nothing else in the schema references "a patient" by its own
+   * id (Appointment.patientId etc. already point straight at User.id).
+   */
   dateOfBirth             DateTime?
   gender                  String?
   address                 String?
-  emergencyContact        String?
+  emergencyContactName    String?
+  emergencyContactPhone   String?
   role                    Role      @default(PATIENT)
   /**
    * True once the user has completed the one-time post-signup role picker
@@ -84,6 +87,22 @@ model User {
    */
   mustChangePassword      Boolean   @default(false)
   /**
+   * Consecutive failed loginLocal attempts for this account specifically --
+   * separate from (and in addition to) the per-IP throttling on POST
+   * /auth/login, so a distributed attempt (many IPs, one target account)
+   * still gets locked out. Reset to 0 on any successful login or password
+   * reset. Not incremented by MFA challenge failures (mfa.service.ts) --
+   * those already require a correct password first.
+   */
+  failedLoginAttempts     Int       @default(0)
+  /**
+   * Set once failedLoginAttempts crosses the threshold in auth.service.ts;
+   * loginLocal rejects attempts until this passes, then the counter resets
+   * on the next success. Always temporary by design -- never a permanent
+   * ban -- so a locked-out legitimate user recovers on their own.
+   */
+  lockedUntil             DateTime?
+  /**
    * TOTP-based two-factor auth, opt-in for admin/doctor. mfaSecret is the
    * base32 shared secret (set as soon as setup starts, kept even before
    * confirmation so a user can retry scanning the QR code without
@@ -103,6 +122,7 @@ model User {
   beds                       Bed[]
   invoices                   Invoice[]
   paymentsRecorded           Payment[]          @relation("PaymentsRecorded")
+  refundsIssued              Refund[]           @relation("RefundsIssued")
   notifications              Notification[]
   medicalRecords             MedicalRecord[]
   auditLogs                  AuditLog[]
@@ -114,6 +134,11 @@ model User {
   respondedShiftApplications ShiftApplication[] @relation("ShiftApplicationRespondedBy")
   assignedTasks              Task[]             @relation("TaskAssignedBy")
   announcements              Announcement[]
+  emergencyCases             EmergencyCase[]    @relation("EmergencyPatient")
+  emergencyCasesAcknowledged EmergencyCase[]    @relation("EmergencyAcknowledgedBy")
+  emergencyCasesAssignedBy   EmergencyCase[]    @relation("EmergencyAssignedBy")
+  emergencyCasesResolved     EmergencyCase[]    @relation("EmergencyResolvedBy")
+  emergencyNotes             EmergencyNote[]
 
   @@index([role])
 }
@@ -141,7 +166,9 @@ model Department {
 model Doctor {
   id                         String   @id @default(cuid())
   specialization             String
-  /** Free-text credentials, e.g. "MBBS, FCPS". Optional -- not every doctor has filled this in yet. */
+  /**
+   * Free-text credentials, e.g. "MBBS, FCPS". Optional -- not every doctor has filled this in yet.
+   */
   qualifications             String?
   bio                        String
   experienceYears            Int
@@ -156,6 +183,10 @@ model Doctor {
    * Informational only -- not used to generate bookable time slots (no working-hours model exists yet).
    */
   appointmentDurationMinutes Int      @default(30)
+  /**
+   * Public-facing social links shown on the doctor's shareable profile, e.g. { "linkedin": "https://..." }.
+   */
+  socialLinks                Json?
   createdAt                  DateTime @default(now())
 
   userId String @unique
@@ -164,10 +195,11 @@ model Doctor {
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id])
 
-  appointments   Appointment[]
-  chatMessages   ChatMessage[]
-  medicalRecords MedicalRecord[]
-  labTests       LabTest[]
+  appointments           Appointment[]
+  chatMessages           ChatMessage[]
+  medicalRecords         MedicalRecord[]
+  labTests               LabTest[]
+  assignedEmergencyCases EmergencyCase[]
 
   @@index([departmentId])
 }
@@ -240,7 +272,21 @@ model ChatMessage {
   doctor    Doctor     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   sender    ChatSender
   body      String
+  /**
+   * Optional image attachment, stored as a data URL. Null for text-only messages.
+   */
+  imageUrl  String?
   createdAt DateTime   @default(now())
+
+  /**
+   * Covers doctor-only lookups (e.g. doctorPatientIds() in billing/patients/
+   * laboratory) as a leftmost prefix, and doctor+patient thread reads.
+   */
+  @@index([doctorId, patientId])
+  /**
+   * Covers patient-only lookups (e.g. a patient's own conversation list).
+   */
+  @@index([patientId])
 }
 
 enum BedStatus {
@@ -293,36 +339,42 @@ model Invoice {
   /**
    * Stable DB id, used in URLs/API calls. Never shown to users -- see invoiceNumber.
    */
-  id            String        @id @default(cuid())
+  id                String        @id @default(cuid())
   /**
    * Human-facing sequential number, displayed as "INV-0001".
    */
-  invoiceNumber Int           @unique @default(autoincrement())
-  description   String
+  invoiceNumber     Int           @unique @default(autoincrement())
+  description       String
   /**
    * Sum of item line totals (quantity * unitPrice - item discount), before
    * this invoice's own discount/tax. Recomputed and re-validated server-side
    * on every write -- never trusted from the client.
    */
-  amount        Float
+  amount            Float
   /**
    * Invoice-level discount, applied after summing line items.
    */
-  discount      Float         @default(0)
+  discount          Float         @default(0)
   /**
    * Invoice-level tax, applied after the discount.
    */
-  tax           Float         @default(0)
+  tax               Float         @default(0)
   /**
    * PENDING/PARTIALLY_PAID/PAID are kept in sync with the linked Payment
    * rows whenever a payment is recorded. "Overdue" is deliberately NOT a
    * stored value -- it's derived at read time from (status, dueDate) so it
    * never needs a cron job or manual staff intervention to "become" overdue.
    */
-  status        InvoiceStatus @default(PENDING)
-  dueDate       DateTime
-  paidAt        DateTime?
-  createdAt     DateTime      @default(now())
+  status            InvoiceStatus @default(PENDING)
+  dueDate           DateTime
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+  /**
+   * Stamped the one time an overdue reminder is sent for this invoice, so
+   * InvoiceRemindersService never re-notifies for the same invoice -- same
+   * one-time-event pattern as Task.overdueNotifiedAt.
+   */
+  overdueNotifiedAt DateTime?
 
   /**
    * Set when a patient starts an online payment (Stripe Checkout Session
@@ -344,6 +396,12 @@ model Invoice {
 
   items    InvoiceItem[]
   payments Payment[]
+
+  /**
+   * Every billing read (a patient's own invoices, a doctor's scoped patient
+   * list, overview aggregation) filters on patientId -- was unindexed.
+   */
+  @@index([patientId])
 }
 
 /**
@@ -385,9 +443,49 @@ model Payment {
   recordedById String?
   recordedBy   User?   @relation("PaymentsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
 
+  /**
+   * Stripe's PaymentIntent id for a payment taken via Checkout -- needed to
+   * call stripe.refunds.create() against it. Null for cash/bank/manually
+   * recorded card payments, which have nothing to refund through Stripe.
+   */
+  stripePaymentIntentId String?
+
   createdAt DateTime @default(now())
 
+  refunds Refund[]
+
   @@index([invoiceId])
+}
+
+/**
+ * A full or partial reversal of one Payment. A payment's refundable balance
+ * is always (Payment.amount - sum of its Refund rows) -- never a separately
+ * stored/synced number, same "one source of truth" philosophy as Payment
+ * itself. refundedById is null for a refund synced from a Stripe-dashboard-
+ * initiated refund via webhook, where there's no acting staff user.
+ */
+model Refund {
+  id        String  @id @default(cuid())
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  amount Float
+  reason String?
+
+  /**
+   * Stripe's Refund id, when this went through Stripe -- unique so a
+   * `charge.refunded` webhook redelivery (or one already recorded via our
+   * own refund endpoint) can never be double-inserted. Null for a manually
+   * reversed cash/bank/other payment.
+   */
+  stripeRefundId String? @unique
+
+  refundedById String?
+  refundedBy   User?   @relation("RefundsIssued", fields: [refundedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([paymentId])
 }
 
 enum NotificationType {
@@ -408,6 +506,14 @@ enum NotificationType {
   ANNOUNCEMENT_PUBLISHED
   INVOICE_CREATED
   PAYMENT_RECEIVED
+  PAYMENT_REFUNDED
+  INVOICE_OVERDUE
+  EMERGENCY_CREATED
+  EMERGENCY_ACKNOWLEDGED
+  EMERGENCY_TEAM_ASSIGNED
+  EMERGENCY_STATUS_UPDATED
+  EMERGENCY_RESOLVED
+  EMERGENCY_CANCELLED
 }
 
 model Notification {
@@ -561,12 +667,13 @@ model Staff {
   departmentId String?
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
-  shifts       StaffShift[]
-  availability StaffAvailability[]
-  leave        StaffLeave[]
-  attendance   Attendance[]
-  applications ShiftApplication[]
-  tasks        Task[]
+  shifts                 StaffShift[]
+  availability           StaffAvailability[]
+  leave                  StaffLeave[]
+  attendance             Attendance[]
+  applications           ShiftApplication[]
+  tasks                  Task[]
+  assignedEmergencyCases EmergencyCase[]
 
   @@index([staffType])
   @@index([departmentId])
@@ -851,6 +958,7 @@ enum AuditAction {
   CREATE
   UPDATE
   DELETE
+  VIEW
 }
 
 /**
@@ -873,4 +981,138 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorId])
   @@index([createdAt])
+}
+
+/**
+ * Single-row (id always "default") table of hospital-wide billing settings,
+ * admin-editable from the Billing page. Kept separate from Doctor so a
+ * doctor's own consultationFee -- what they set, and what shows on their
+ * public profile / the booking flow -- never has to know this exists.
+ */
+model PlatformSettings {
+  id String @id
+
+  /**
+   * Flat dollar amount added on top of a doctor's consultationFee when an
+   * appointment booking auto-generates its consultation invoice (folded
+   * into that invoice's single line total -- see
+   * BillingService.createConsultationInvoice). Platform revenue on top of
+   * the doctor's fee, not part of it; 0 means no markup.
+   */
+  consultationMargin Float @default(0)
+
+  updatedAt DateTime @updatedAt
+}
+
+enum EmergencyType {
+  MEDICAL
+  ACCIDENT_INJURY
+  BREATHING_DIFFICULTY
+  CHEST_RELATED
+  UNCONSCIOUS_PERSON
+  SEVERE_BLEEDING
+  OTHER
+}
+
+enum EmergencyPriority {
+  CRITICAL
+  HIGH
+  NORMAL
+}
+
+enum EmergencyStatus {
+  NEW
+  ACKNOWLEDGED
+  TEAM_ASSIGNED
+  RESPONDING
+  ARRIVED
+  RESOLVED
+  CANCELLED
+}
+
+/**
+ * A patient-initiated emergency request. This is a "Hospital Emergency
+ * Request" only -- it does not represent, and must never be presented as,
+ * dispatch of an ambulance or any external emergency service.
+ * The visible case timeline is deliberately NOT a column/table on this model
+ * -- it's derived by EmergencyService from AuditLog rows scoped to
+ * (entityType: "EmergencyCase", entityId: this.id), so there is exactly one
+ * source of truth for "what happened and when" instead of two systems that
+ * could drift apart.
+ */
+model EmergencyCase {
+  id            String            @id @default(cuid())
+  patientId     String
+  patient       User              @relation("EmergencyPatient", fields: [patientId], references: [id], onDelete: Cascade)
+  emergencyType EmergencyType     @default(OTHER)
+  /**
+   * Optional free-text, only ever supplied by the patient -- never an inferred/AI diagnosis.
+   */
+  description   String?
+  priority      EmergencyPriority @default(NORMAL)
+  status        EmergencyStatus   @default(NEW)
+
+  /**
+   * Explicit, one-time patient consent -- set only when the patient actually
+   * shares their location, never inferred. Coordinates are omitted from any
+   * list/summary response; only a single case's detail endpoint (for an
+   * authorized responder) includes them -- see EmergencyService.
+   */
+  locationShared Boolean @default(false)
+  locationLat    Float?
+  locationLng    Float?
+
+  acknowledgedById String?
+  acknowledgedBy   User?     @relation("EmergencyAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+  acknowledgedAt   DateTime?
+
+  /**
+   * Set together, only from ACKNOWLEDGED -- see EmergencyService.assign().
+   */
+  assignedDoctorId String?
+  assignedDoctor   Doctor?   @relation(fields: [assignedDoctorId], references: [id], onDelete: SetNull)
+  assignedStaffId  String?
+  assignedStaff    Staff?    @relation(fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  assignedTeamName String?
+  assignedById     String?
+  assignedBy       User?     @relation("EmergencyAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  assignedAt       DateTime?
+
+  respondingAt DateTime?
+  arrivedAt    DateTime?
+
+  resolvedById String?
+  resolvedBy   User?     @relation("EmergencyResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt   DateTime?
+
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notes EmergencyNote[]
+
+  @@index([patientId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@index([assignedStaffId])
+  @@index([assignedDoctorId])
+}
+
+/**
+ * An operational or clinical note added to an emergency case by a responder.
+ * Kept even if the author's account is later deleted, same convention as AuditLog.actor.
+ */
+model EmergencyNote {
+  id        String        @id @default(cuid())
+  caseId    String
+  case      EmergencyCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body      String
+  createdAt DateTime      @default(now())
+
+  @@index([caseId])
 }

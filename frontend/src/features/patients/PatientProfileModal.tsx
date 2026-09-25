@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Calendar, Mail, Stethoscope } from 'lucide-react'
+import { Calendar, Mail, Phone, Stethoscope } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Modal } from '@/components/ui/Modal'
 import { Avatar } from '@/components/ui/Avatar'
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { getPatient } from '@/features/patients/api'
 import { ApiError } from '@/lib/apiClient'
+import { formatPhoneForDisplay } from '@/lib/phone'
 import type { PatientDetail } from '@/types/patientDirectory'
 import type { SessionStatus } from '@/types/patientSession'
 
@@ -56,6 +57,12 @@ export function PatientProfileModal({ patientId, onClose }: PatientProfileModalP
                 <Mail className="size-3.5" aria-hidden="true" />
                 {patient.email}
               </p>
+              {patient.phone && (
+                <p className="flex items-center gap-1.5 text-sm text-ink-muted">
+                  <Phone className="size-3.5" aria-hidden="true" />
+                  {formatPhoneForDisplay(patient.phone)}
+                </p>
+              )}
             </div>
           </div>
 

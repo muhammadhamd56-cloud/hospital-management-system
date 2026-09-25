@@ -15,7 +15,7 @@ type Category = 'all' | 'unread' | 'messages' | 'appointments' | 'billing'
 const CATEGORY_TYPES: Record<Exclude<Category, 'all' | 'unread'>, NotificationType[]> = {
   messages: ['chat_message'],
   appointments: ['appointment_booked', 'appointment_cancelled', 'appointment_reminder'],
-  billing: ['invoice_created', 'payment_received'],
+  billing: ['invoice_created', 'payment_received', 'payment_refunded', 'invoice_overdue'],
 }
 
 function matchesCategory(notification: AppNotification, category: Category): boolean {

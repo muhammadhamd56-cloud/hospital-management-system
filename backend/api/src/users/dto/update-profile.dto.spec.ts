@@ -96,8 +96,28 @@ describe('UpdateProfileDto', () => {
     expect(fieldErrors(errors, 'address')).toBeUndefined();
   });
 
-  it('rejects an emergency contact over the length limit', async () => {
-    const errors = await errorsFor({ emergencyContact: 'x'.repeat(201) });
-    expect(fieldErrors(errors, 'emergencyContact')).toBeDefined();
+  it('rejects an emergency contact name over the length limit', async () => {
+    const errors = await errorsFor({ emergencyContactName: 'x'.repeat(101) });
+    expect(fieldErrors(errors, 'emergencyContactName')).toBeDefined();
+  });
+
+  it('accepts an emergency contact name at the length limit', async () => {
+    const errors = await errorsFor({ emergencyContactName: 'x'.repeat(100) });
+    expect(fieldErrors(errors, 'emergencyContactName')).toBeUndefined();
+  });
+
+  it('accepts a valid E.164 emergency contact phone number', async () => {
+    const errors = await errorsFor({ emergencyContactPhone: '+923001234567' });
+    expect(fieldErrors(errors, 'emergencyContactPhone')).toBeUndefined();
+  });
+
+  it('accepts an empty string emergency contact phone -- explicitly clearing it', async () => {
+    const errors = await errorsFor({ emergencyContactPhone: '' });
+    expect(fieldErrors(errors, 'emergencyContactPhone')).toBeUndefined();
+  });
+
+  it('rejects an emergency contact phone number missing the country code', async () => {
+    const errors = await errorsFor({ emergencyContactPhone: '3001234567' });
+    expect(fieldErrors(errors, 'emergencyContactPhone')).toBeDefined();
   });
 });

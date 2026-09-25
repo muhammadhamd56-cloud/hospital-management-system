@@ -10,6 +10,7 @@ export interface CreateStaffInput {
   lastName: string
   email: string
   role: StaffRole
+  phone?: string
   specialization?: string
   department?: string
   bio?: string

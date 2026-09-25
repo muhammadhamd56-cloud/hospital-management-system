@@ -2,8 +2,11 @@ import { Link } from 'react-router'
 import { CompassIcon } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button-variants'
 import { ROUTES } from '@/constants/routes'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
 export function NotFoundPage() {
+  useDocumentTitle()
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-surface-alt p-4 text-center">
       <span className="flex size-14 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300">

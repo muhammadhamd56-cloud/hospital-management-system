@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
+import { IsStrongPassword } from '../../auth/password-policy';
 
 export class SetPasswordDto {
   @IsOptional()
@@ -6,6 +7,6 @@ export class SetPasswordDto {
   currentPassword?: string;
 
   @IsString()
-  @MinLength(8, { message: 'Password must be at least 8 characters' })
+  @IsStrongPassword()
   newPassword!: string;
 }

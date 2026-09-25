@@ -18,6 +18,7 @@ import {
 import { Pagination } from '@/components/ui/Pagination'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { RevenueChart } from '@/components/dashboard/RevenueChart'
+import { useAuth } from '@/features/auth/useAuth'
 import { usePagination } from '@/hooks/usePagination'
 import { formatDate } from '@/utils/datetime'
 import { formatCurrency } from '@/utils/currency'
@@ -26,8 +27,10 @@ import { InvoiceStatusBadge } from '@/features/billing/InvoiceStatusBadge'
 import { CreateInvoiceModal } from '@/features/billing/CreateInvoiceModal'
 import { InvoiceDetailsModal } from '@/features/billing/InvoiceDetailsModal'
 import { RecordPaymentModal } from '@/features/billing/RecordPaymentModal'
+import { RefundPaymentModal } from '@/features/billing/RefundPaymentModal'
+import { ConsultationMarginCard } from '@/features/billing/ConsultationMarginCard'
 import { ApiError } from '@/lib/apiClient'
-import type { BillingOverview, Invoice, InvoiceStatus } from '@/types/invoice'
+import type { BillingOverview, Invoice, InvoiceStatus, Payment } from '@/types/invoice'
 
 const PAGE_SIZE = 8
 
@@ -38,6 +41,8 @@ const STATUS_FILTER_OPTIONS: { label: string; value: InvoiceStatus | 'all' }[] =
   { label: 'Partially Paid', value: 'partially_paid' },
   { label: 'Overdue', value: 'overdue' },
   { label: 'Cancelled', value: 'cancelled' },
+  { label: 'Refunded', value: 'refunded' },
+  { label: 'Partially Refunded', value: 'partially_refunded' },
 ]
 
 type DateFilter = 'all' | 'today' | 'week' | 'month'
@@ -92,9 +97,16 @@ function exportInvoicesToCsv(invoices: Invoice[]) {
   URL.revokeObjectURL(url)
 }
 
+type OverviewState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; overview: BillingOverview }
+
 export function BillingPage() {
+  const { user } = useAuth()
+  // Refunds, cancellations, and hospital-wide revenue are admin-only on the
+  // backend (see BillingController/ReportsController) -- a doctor sharing
+  // this page must not be shown actions or data that will 403.
+  const isAdmin = user?.role === 'admin'
   const [invoices, setInvoices] = useState<Invoice[]>([])
-  const [overview, setOverview] = useState<BillingOverview | null>(null)
+  const [overviewState, setOverviewState] = useState<OverviewState>({ status: 'loading' })
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'all'>('all')
@@ -102,6 +114,7 @@ export function BillingPage() {
   const [isCreateOpen, setCreateOpen] = useState(false)
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null)
   const [payingInvoice, setPayingInvoice] = useState<Invoice | null>(null)
+  const [refunding, setRefunding] = useState<{ invoice: Invoice; payment: Payment } | null>(null)
   const [cancellingInvoice, setCancellingInvoice] = useState<Invoice | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -145,8 +158,8 @@ export function BillingPage() {
 
   function loadOverview() {
     getBillingOverview()
-      .then(setOverview)
-      .catch(() => setOverview(null))
+      .then((overview) => setOverviewState({ status: 'ready', overview }))
+      .catch(() => setOverviewState({ status: 'error' }))
   }
 
   useEffect(() => {
@@ -215,6 +228,12 @@ export function BillingPage() {
 
   const { page, totalPages, pageItems, setPage } = usePagination(filteredInvoices, PAGE_SIZE)
 
+  function overviewValue(select: (overview: BillingOverview) => number, format: (value: number) => string): string {
+    if (overviewState.status === 'loading') return 'Loading…'
+    if (overviewState.status === 'error') return 'Unable to load'
+    return format(select(overviewState.overview))
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -231,14 +250,21 @@ export function BillingPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        <StatCard label="Total Revenue" value={formatCurrency(overview?.totalRevenue ?? 0)} icon={ReceiptText} />
-        <StatCard label="Paid" value={formatCurrency(overview?.paidAmount ?? 0)} icon={CheckCircle2} />
-        <StatCard label="Pending" value={formatCurrency(overview?.pendingAmount ?? 0)} icon={Clock} />
-        <StatCard label="Overdue" value={formatCurrency(overview?.overdueAmount ?? 0)} icon={AlertTriangle} />
-        <StatCard label="Invoices" value={String(overview?.totalInvoices ?? 0)} icon={ListOrdered} />
+        <StatCard label="Total Revenue" value={overviewValue((o) => o.totalRevenue, formatCurrency)} icon={ReceiptText} />
+        <StatCard label="Paid" value={overviewValue((o) => o.paidAmount, formatCurrency)} icon={CheckCircle2} />
+        <StatCard label="Pending" value={overviewValue((o) => o.pendingAmount, formatCurrency)} icon={Clock} />
+        <StatCard label="Overdue" value={overviewValue((o) => o.overdueAmount, formatCurrency)} icon={AlertTriangle} />
+        <StatCard label="Invoices" value={overviewValue((o) => o.totalInvoices, String)} icon={ListOrdered} />
       </div>
 
-      <RevenueChart />
+      {isAdmin && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <RevenueChart />
+          </div>
+          <ConsultationMarginCard />
+        </div>
+      )}
 
       {isUnpaidFilterActive && (
         <div className="flex items-center gap-2 text-sm text-ink-muted">
@@ -408,13 +434,28 @@ export function BillingPage() {
           setViewingInvoice(null)
           setPayingInvoice(invoice)
         }}
-        onCancel={(invoice) => setCancellingInvoice(invoice)}
+        onCancel={isAdmin ? (invoice) => setCancellingInvoice(invoice) : undefined}
+        onRefund={
+          isAdmin
+            ? (invoice, payment) => {
+                setViewingInvoice(null)
+                setRefunding({ invoice, payment })
+              }
+            : undefined
+        }
       />
 
       <RecordPaymentModal
         invoice={payingInvoice}
         onClose={() => setPayingInvoice(null)}
         onRecorded={upsertInvoice}
+      />
+
+      <RefundPaymentModal
+        invoice={refunding?.invoice ?? null}
+        payment={refunding?.payment ?? null}
+        onClose={() => setRefunding(null)}
+        onRefunded={upsertInvoice}
       />
 
       <ConfirmDialog

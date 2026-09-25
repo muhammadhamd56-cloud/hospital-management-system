@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { randomBytes } from 'crypto';
 import { hashPassword } from '../auth/password.util';
+import { generateStrongTempPassword } from '../auth/password-policy';
 import { PrismaService } from '../prisma/prisma.service';
 import { PatientAppointmentResponse, toPatientAppointmentResponse } from '../appointments/appointment.mapper';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
@@ -164,7 +164,7 @@ export class PatientsService {
       throw new ConflictException('An account with this email already exists');
     }
 
-    const tempPassword = generateTempPassword();
+    const tempPassword = generateStrongTempPassword();
     const password = await hashPassword(tempPassword);
 
     const user = await this.prisma.user.create({
@@ -195,9 +195,4 @@ export class PatientsService {
       tempPassword,
     };
   }
-}
-
-/** 16-char URL-safe random temp password -- e.g. "kX9m2Qw_p7ZbN3aR". */
-function generateTempPassword(): string {
-  return randomBytes(12).toString('base64url');
 }

@@ -18,7 +18,8 @@ function buildUser(overrides: Partial<User> = {}): User {
     dateOfBirth: null,
     gender: null,
     address: null,
-    emergencyContact: null,
+    emergencyContactName: null,
+    emergencyContactPhone: null,
     role: Role.PATIENT,
     roleSelected: false,
     emailVerified: true,
@@ -32,6 +33,8 @@ function buildUser(overrides: Partial<User> = {}): User {
     passwordResetLastSentAt: null,
     tokenVersion: 0,
     mustChangePassword: false,
+    failedLoginAttempts: 0,
+    lockedUntil: null,
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
@@ -120,7 +123,8 @@ describe('UsersService', () => {
         dateOfBirth: '1990-05-12',
         gender: 'female',
         address: '123 Main St',
-        emergencyContact: 'Jane Doe - +923001234567',
+        emergencyContactName: 'Jane Doe',
+        emergencyContactPhone: '+923001234567',
       });
 
       expect(prisma.user.update).toHaveBeenCalledWith({
@@ -129,7 +133,8 @@ describe('UsersService', () => {
           dateOfBirth: new Date('1990-05-12'),
           gender: 'female',
           address: '123 Main St',
-          emergencyContact: 'Jane Doe - +923001234567',
+          emergencyContactName: 'Jane Doe',
+          emergencyContactPhone: '+923001234567',
         },
       });
     });
@@ -138,11 +143,23 @@ describe('UsersService', () => {
       prisma.user.findUnique.mockResolvedValue(buildUser());
       prisma.user.update.mockResolvedValue(buildUser());
 
-      await service.updateProfile('user-1', { dateOfBirth: '', gender: '', address: '', emergencyContact: '' });
+      await service.updateProfile('user-1', {
+        dateOfBirth: '',
+        gender: '',
+        address: '',
+        emergencyContactName: '',
+        emergencyContactPhone: '',
+      });
 
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
-        data: { dateOfBirth: null, gender: null, address: null, emergencyContact: null },
+        data: {
+          dateOfBirth: null,
+          gender: null,
+          address: null,
+          emergencyContactName: null,
+          emergencyContactPhone: null,
+        },
       });
     });
 
@@ -218,6 +235,19 @@ describe('UsersService', () => {
       await service.setPassword('user-1', { currentPassword: 'existing-pass', newPassword: 'brandnewpass123' });
 
       expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears any login lockout when a password is set/changed', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ password: null, failedLoginAttempts: 7, lockedUntil: new Date() }),
+      );
+      prisma.user.update.mockResolvedValue(buildUser({ password: 'new-hashed' }));
+
+      await service.setPassword('user-1', { newPassword: 'brandnewpass123' });
+
+      const updateArgs = prisma.user.update.mock.calls[0][0];
+      expect(updateArgs.data.failedLoginAttempts).toBe(0);
+      expect(updateArgs.data.lockedUntil).toBeNull();
     });
   });
 

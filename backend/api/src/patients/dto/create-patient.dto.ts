@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 import { normalizeEmail } from '../../common/normalize-email';
+import { normalizePhoneNumber } from '../../common/normalize-phone';
 import { IsE164PhoneNumber } from '../../common/validators/is-e164-phone-number.validator';
 
 export class CreatePatientDto {
@@ -17,6 +18,7 @@ export class CreatePatientDto {
   email!: string;
 
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' && value !== '' ? normalizePhoneNumber(value) : value))
   @IsString()
   @IsE164PhoneNumber()
   phone?: string;

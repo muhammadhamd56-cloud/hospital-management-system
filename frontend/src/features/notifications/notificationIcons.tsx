@@ -16,6 +16,11 @@ import {
   Megaphone,
   Receipt,
   Wallet,
+  RotateCcw,
+  Siren,
+  UserCheck,
+  Users,
+  XOctagon,
 } from 'lucide-react'
 import type { AppNotification } from '@/types/notification'
 
@@ -37,4 +42,12 @@ export const NOTIFICATION_TYPE_ICONS: Record<AppNotification['type'], typeof Bel
   announcement_published: Megaphone,
   invoice_created: Receipt,
   payment_received: Wallet,
+  payment_refunded: RotateCcw,
+  invoice_overdue: AlertTriangle,
+  emergency_created: Siren,
+  emergency_acknowledged: UserCheck,
+  emergency_team_assigned: Users,
+  emergency_status_updated: Siren,
+  emergency_resolved: CheckCircle2,
+  emergency_cancelled: XOctagon,
 }

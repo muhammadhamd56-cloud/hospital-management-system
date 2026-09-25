@@ -29,4 +29,16 @@ export const ROUTES = {
   availableShifts: '/available-shifts',
   myTasks: '/my-tasks',
   announcements: '/announcements',
+  emergency: '/emergency',
+  emergencyCase: '/emergency/cases/:id',
+  /** Unauthenticated -- a doctor's shareable profile link. */
+  publicDoctorProfile: '/doctor/:id',
 } as const
+
+export function buildPublicDoctorProfileUrl(doctorId: string): string {
+  return `/doctor/${doctorId}`
+}
+
+export function buildEmergencyCaseUrl(caseId: string): string {
+  return `/emergency/cases/${caseId}`
+}
