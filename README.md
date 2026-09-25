@@ -6,8 +6,10 @@ appointments, billing, and laboratory workflows.
 ## Status
 
 Frontend and backend are both active and wired together: auth (Google OAuth +
-JWT), patients, doctors, appointments, billing, beds, and chat run against a
-real PostgreSQL database via the NestJS API.
+JWT), patients, doctors, appointments, billing (incl. refunds and payment
+reminders), beds, chat (with image attachments), laboratory, staff
+scheduling, emergency response, and platform settings all run against a real
+PostgreSQL database via the NestJS API.
 
 ## Tech Stack
 
@@ -51,16 +53,21 @@ hospital-management-system/
 │       └── styles/        # Tailwind theme tokens and global styles
 ├── backend/
 │   └── api/               # NestJS backend (Google OAuth + JWT), :3000
+│       └── src/
+│           ├── auth, users, patients, doctors, appointments
+│           ├── billing, beds, chat, laboratory
+│           ├── emergency, platform-settings, staff, staff-scheduling
+│           ├── reports, notifications, announcements, doctor-portal
+│           └── medical-records, assistant, audit-log
 └── database/
     └── api/               # Prisma schema + migrations (PostgreSQL)
 ```
 
 ## Roles
 
-Admin, Doctor, Patient, Laboratory Staff.
-
-## Roadmap
-
-Built module by module — auth, admin, doctor, patient, appointments, billing,
-laboratory, reports, notifications — with the backend following once the UI
-is in place.
+- **Admin** — platform settings, staff and doctor management, reports
+- **Doctor** — patient chats, appointments, doctor portal, public profile
+- **Patient** — booking, billing, chat, emergency requests
+- **Staff** — umbrella role for nurses, receptionists, pharmacists, lab
+  technicians, and other non-doctor staff (specific job lives on
+  `Staff.staffType`)
