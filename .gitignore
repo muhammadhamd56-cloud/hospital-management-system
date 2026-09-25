@@ -21,3 +21,6 @@ Thumbs.db
 .claude/
 
 *.tsbuildinfo
+
+# Generated invoice PDFs from local testing (e.g. frontend/INV-0001.pdf)
+*.pdf
