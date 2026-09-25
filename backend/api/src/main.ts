@@ -2,12 +2,21 @@ import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as Sentry from '@sentry/node';
 import helmet from 'helmet';
 import * as express from 'express';
 import compression from 'compression';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+
+// Only reports errors (no performance tracing) -- undefined DSN makes this a
+// no-op client, so it's safe to call unconditionally in every environment.
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'development',
+  tracesSampleRate: 0,
+});
 
 async function bootstrap(): Promise<void> {
   // Body parsing is set up manually below instead of Nest's default,

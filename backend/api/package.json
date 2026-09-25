@@ -33,6 +33,7 @@
     "@nestjs/swagger": "^7.4.2",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^6.0.0",
+    "@sentry/node": "^11.0.0",
     "@types/compression": "^1.8.1",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",

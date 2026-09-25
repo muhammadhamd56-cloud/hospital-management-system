@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
+import * as Sentry from '@sentry/node';
 import type { Request, Response } from 'express';
 
 interface NestErrorBody {
@@ -58,6 +59,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         `${request.method} ${request.url} -> ${status}: ${message}`,
         exception instanceof Error ? exception.stack : undefined,
       );
+      Sentry.captureException(exception);
     } else {
       this.logger.warn(`${request.method} ${request.url} -> ${status}: ${message}`);
     }

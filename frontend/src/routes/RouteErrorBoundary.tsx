@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { isRouteErrorResponse, Link, useRouteError } from 'react-router'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+import * as Sentry from '@sentry/react'
 import { buttonVariants } from '@/components/ui/button-variants'
 import { ROUTES } from '@/constants/routes'
 
@@ -16,6 +18,12 @@ export function RouteErrorBoundary() {
   const error = useRouteError()
   const staleChunk = isStaleChunkError(error)
   const status = isRouteErrorResponse(error) ? error.status : undefined
+
+  useEffect(() => {
+    // Skip stale-chunk reloads and 404s -- neither is an actual bug to report.
+    if (staleChunk || status === 404) return
+    Sentry.captureException(error)
+  }, [error, staleChunk, status])
 
   const title = staleChunk
     ? 'This app was just updated'

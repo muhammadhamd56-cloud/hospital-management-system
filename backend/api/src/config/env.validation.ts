@@ -65,6 +65,16 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   ANTHROPIC_MODEL?: string;
+
+  /** Optional so the app still boots without it -- Sentry.init() no-ops
+   *  when the DSN is undefined, so errors just go unreported. */
+  @IsOptional()
+  @IsString()
+  SENTRY_DSN?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_ENVIRONMENT?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {

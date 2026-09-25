@@ -341,6 +341,8 @@ describe('Auth (e2e)', () => {
         .expect(403);
     });
 
+    // 12 real HTTP round trips through bcrypt + Prisma can exceed Jest's
+    // default 5s under CI/load, hence the trailing timeout arg below.
     it('locks the account for repeated wrong passwords, independent of the per-IP throttle, then recovers after a successful reset', async () => {
       const { email } = await signupAndVerify({ ...validPatient, email: 'lockout@example.test' });
 
@@ -371,7 +373,7 @@ describe('Auth (e2e)', () => {
         .post('/api/auth/login')
         .send({ email, password: validPatient.password, role: 'patient' })
         .expect(201);
-    });
+    }, 20000);
 
     it('regression: logs in successfully when the email is typed with different casing than it was stored', async () => {
       await signupAndVerify(validPatient);
