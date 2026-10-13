@@ -36,6 +36,24 @@ npm run start:dev   # starts the API on http://localhost:3000/api
 
 See `backend/api/README.md` for environment variables and Prisma commands.
 
+## Netlify Deployment
+
+The root `netlify.toml` configures Netlify to run
+`npm ci --include=dev && npm run build` from `frontend/`, then publish
+`frontend/dist/`. This explicitly installs the locked frontend dependencies,
+including TypeScript and Vite, before compilation, even when deployment runs
+without a separate dependency installation step. The repository root is not a
+deployable website and does not contain an `index.html`.
+
+A single-page application rewrite serves `index.html` for client-side routes,
+so opening or refreshing a nested URL reaches React Router instead of Netlify's
+default 404 page. Existing static files are served normally.
+
+The NestJS backend is deployed separately. Set `VITE_API_URL` in Netlify's build
+environment to the backend origin (without a trailing `/api`), and configure
+the backend's `CLIENT_URL` to the frontend origin. Rebuild the frontend after
+changing `VITE_API_URL`; the static frontend deployment does not start NestJS.
+
 ## Project Structure
 
 ```
