@@ -9,7 +9,7 @@ jest.mock('resend', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { InternalServerErrorException } from '@nestjs/common';
+import { InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { EmailService } from './email.service';
@@ -183,6 +183,56 @@ describe('EmailService', () => {
     it('degrades to logging instead of emailing a password reset code', async () => {
       await expect(service.sendPasswordResetEmail('ada@example.com', '654321')).resolves.toBeUndefined();
       expect(mockSend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('code redaction in production logs', () => {
+    const originalEnv = process.env.NODE_ENV;
+    let logged: string[];
+
+    beforeEach(() => {
+      logged = [];
+      const capture = (message: unknown) => void logged.push(String(message));
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(capture);
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(capture);
+    });
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+      jest.restoreAllMocks();
+    });
+
+    it.each(['sendOtpEmail', 'sendPasswordResetEmail'] as const)(
+      '%s never writes the code to the log in production',
+      async (method) => {
+        process.env.NODE_ENV = 'production';
+        service = await buildService({ 'email.fromEmail': 'no-reply@medicore.test' });
+
+        await service[method]('ada@example.com', '987654');
+
+        expect(logged.length).toBeGreaterThan(0);
+        expect(logged.join(' ')).not.toContain('987654');
+      },
+    );
+
+    it('redacts the code from the failure log when Resend rejects the send in production', async () => {
+      process.env.NODE_ENV = 'production';
+      service = await buildService({ 'email.resendApiKey': 're_test_key', 'email.fromEmail': 'no-reply@medicore.test' });
+      mockSend.mockResolvedValue({ data: null, error: { message: 'sandbox recipient' } });
+
+      await expect(service.sendPasswordResetEmail('ada@example.com', '987654')).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+      expect(logged.join(' ')).not.toContain('987654');
+    });
+
+    it('still logs the code outside production so local signup works without Resend', async () => {
+      process.env.NODE_ENV = 'development';
+      service = await buildService({ 'email.fromEmail': 'no-reply@medicore.test' });
+
+      await service.sendOtpEmail('ada@example.com', '987654');
+
+      expect(logged.join(' ')).toContain('987654');
     });
   });
 });

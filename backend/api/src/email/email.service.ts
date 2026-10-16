@@ -20,21 +20,34 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private readonly resend: Resend | null;
   private readonly fromEmail: string;
+  /** Codes are secrets (a reset code is a password). Only outside production
+   *  may the dev fallback print one, so a log viewer can't take over accounts. */
+  private readonly mayLogCodes = process.env.NODE_ENV !== 'production';
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('email.resendApiKey');
     this.resend = apiKey ? new Resend(apiKey) : null;
     this.fromEmail = this.configService.get<string>('email.fromEmail') as string;
+
+    if (!this.resend && !this.mayLogCodes) {
+      this.logger.error('RESEND_API_KEY is not set -- verification and password reset emails cannot be delivered');
+    }
+  }
+
+  /** The code itself only in non-production logs; a placeholder otherwise. */
+  private codeForLog(code: string): string {
+    return this.mayLogCodes ? code : '[redacted]';
   }
 
   /**
    * Degrades to logging the code instead of throwing when no API key is
    * configured, so local dev keeps working before RESEND_API_KEY is set —
-   * the code is still visible (in the server log) to complete signup.
+   * the code is still visible (in the server log) to complete signup. In
+   * production the code is never logged (see mayLogCodes).
    */
   async sendOtpEmail(to: string, code: string): Promise<void> {
     if (!this.resend) {
-      this.logger.warn(`RESEND_API_KEY not configured — OTP for ${to} is ${code} (logged only, not emailed)`);
+      this.logger.warn(`RESEND_API_KEY not configured — OTP for ${to} is ${this.codeForLog(code)} (logged only, not emailed)`);
       return;
     }
 
@@ -57,7 +70,7 @@ export class EmailService {
       // a recipient other than the account owner's own address) so it's
       // still recoverable in dev/staging even though a real API key is
       // configured — mirrors the no-key-configured fallback above.
-      this.logger.error(`Failed to send OTP email to ${to}: ${error.message} — code was ${code}`);
+      this.logger.error(`Failed to send OTP email to ${to}: ${error.message} — code was ${this.codeForLog(code)}`);
       throw new InternalServerErrorException('Failed to send verification email');
     }
   }
@@ -69,7 +82,7 @@ export class EmailService {
   async sendPasswordResetEmail(to: string, code: string): Promise<void> {
     if (!this.resend) {
       this.logger.warn(
-        `RESEND_API_KEY not configured — password reset code for ${to} is ${code} (logged only, not emailed)`,
+        `RESEND_API_KEY not configured — password reset code for ${to} is ${this.codeForLog(code)} (logged only, not emailed)`,
       );
       return;
     }
@@ -89,7 +102,7 @@ export class EmailService {
     });
 
     if (error) {
-      this.logger.error(`Failed to send password reset email to ${to}: ${error.message} — code was ${code}`);
+      this.logger.error(`Failed to send password reset email to ${to}: ${error.message} — code was ${this.codeForLog(code)}`);
       throw new InternalServerErrorException('Failed to send password reset email');
     }
   }
@@ -142,6 +155,48 @@ export class EmailService {
       }
     } catch (error) {
       this.logger.error(`Failed to send appointment reminder email to ${to}: ${(error as Error).message}`);
+    }
+  }
+
+  /** Best-effort, like the reminder emails: tells a doctor/staff applicant
+   *  the outcome of their account review, since they may never sign in to
+   *  see the in-app notice. The admin's note is free text, so it's escaped. */
+  async sendAccountDecisionEmail(
+    to: string,
+    params: { firstName: string; approved: boolean; note: string | null },
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY not configured — account ${params.approved ? 'approval' : 'rejection'} notice for ${to} logged only, not emailed`,
+      );
+      return;
+    }
+
+    const firstName = escapeHtml(params.firstName);
+    const body = params.approved
+      ? '<p>An administrator has approved your MediCore account. You can now sign in and use the app.</p>'
+      : `<p>An administrator reviewed your MediCore account request and did not approve it.</p>${
+          params.note ? `<p><strong>Note:</strong> ${escapeHtml(params.note)}</p>` : ''
+        }`;
+
+    try {
+      const { error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to,
+        subject: params.approved ? 'Your MediCore account is approved' : 'Your MediCore account request',
+        html: `
+          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+            <h2>Hi ${firstName},</h2>
+            ${body}
+          </div>
+        `,
+      });
+
+      if (error) {
+        this.logger.error(`Failed to send account decision email to ${to}: ${error.message}`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to send account decision email to ${to}: ${(error as Error).message}`);
     }
   }
 

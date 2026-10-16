@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AppointmentStatus, NotificationType, Prisma, Role } from '@prisma/client';
+import { ApprovalStatus, AppointmentStatus, NotificationType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPrismaMode } from '../common/session.mapper';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -93,10 +93,24 @@ export class AppointmentsService {
   }
 
   async book(patientId: string, dto: BookAppointmentDto): Promise<PatientAppointmentResponse> {
-    const doctor = await this.prisma.doctor.findUnique({ where: { id: dto.doctorId } });
+    const doctor = await this.prisma.doctor.findUnique({
+      where: { id: dto.doctorId },
+      include: { user: { select: { approvalStatus: true } } },
+    });
 
-    if (!doctor) {
+    // An unvetted (pending/rejected) doctor can't be booked -- same 404 as an unknown one.
+    if (!doctor || doctor.user.approvalStatus !== ApprovalStatus.APPROVED) {
       throw new NotFoundException('Doctor not found');
+    }
+
+    // The booking page only offers available doctors -- enforced here too so
+    // the API can't be used to book around a doctor's own settings.
+    if (!doctor.isAvailable) {
+      throw new BadRequestException('This doctor is not accepting bookings right now');
+    }
+
+    if (dto.mode === 'online' && !doctor.acceptsOnline) {
+      throw new BadRequestException('This doctor only offers in-person sessions');
     }
 
     const scheduledAt = new Date(dto.scheduledAt);
@@ -116,7 +130,8 @@ export class AppointmentsService {
     let appointment: Awaited<ReturnType<AppointmentsService['createAppointmentRow']>>;
     try {
       appointment = await this.prisma.$transaction(
-        (tx) => this.createAppointmentRow(tx, patientId, dto, scheduledAt, doctor.consultationFee),
+        (tx) =>
+          this.createAppointmentRow(tx, patientId, dto, scheduledAt, doctor.consultationFee, doctor.appointmentDurationMinutes),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (error) {
@@ -158,13 +173,29 @@ export class AppointmentsService {
     dto: BookAppointmentDto,
     scheduledAt: Date,
     consultationFee: number,
+    durationMinutes: number,
   ) {
-    const conflict = await tx.appointment.findFirst({
-      where: { doctorId: dto.doctorId, scheduledAt, status: AppointmentStatus.SCHEDULED },
-    });
+    // Any scheduled session starting less than one session-length before or
+    // after this one overlaps it -- not just one at the identical instant
+    // (10:00 and 10:05 would otherwise both be accepted). Inside the
+    // Serializable transaction this range read is conflict-checked too.
+    const durationMs = Math.max(durationMinutes, 1) * 60_000;
+    const overlapping = {
+      status: AppointmentStatus.SCHEDULED,
+      scheduledAt: { gt: new Date(scheduledAt.getTime() - durationMs), lt: new Date(scheduledAt.getTime() + durationMs) },
+    };
 
-    if (conflict) {
+    const [doctorConflict, patientConflict] = await Promise.all([
+      tx.appointment.findFirst({ where: { doctorId: dto.doctorId, ...overlapping }, select: { id: true } }),
+      tx.appointment.findFirst({ where: { patientId, ...overlapping }, select: { id: true } }),
+    ]);
+
+    if (doctorConflict) {
       throw new ConflictException('This doctor already has an appointment at that time');
+    }
+
+    if (patientConflict) {
+      throw new ConflictException('You already have another appointment at that time');
     }
 
     return tx.appointment.create({
@@ -187,11 +218,13 @@ export class AppointmentsService {
       throw new NotFoundException('Appointment not found');
     }
 
-    const updated = await this.prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status: 'CANCELLED' },
-      include: DOCTOR_AND_PATIENT_INCLUDE,
-    });
+    // A completed visit can't be "cancelled" after the fact -- that would
+    // rewrite history and void its unpaid invoice.
+    if (appointment.status !== AppointmentStatus.SCHEDULED) {
+      throw new BadRequestException('Only scheduled sessions can be cancelled');
+    }
+
+    const updated = await this.updateIfScheduled(appointmentId, AppointmentStatus.CANCELLED);
 
     const patientName = `${updated.patient.firstName} ${updated.patient.lastName}`.trim();
     await this.notificationsService.create(
@@ -205,5 +238,22 @@ export class AppointmentsService {
     await this.billingService.cancelInvoiceForAppointment(appointmentId);
 
     return toPatientAppointmentResponse(updated);
+  }
+
+  /** Writes only while the appointment is still SCHEDULED, so a cancel racing
+   *  the doctor's "complete" (or a double-click) can't overwrite it. */
+  private async updateIfScheduled(appointmentId: string, status: AppointmentStatus) {
+    try {
+      return await this.prisma.appointment.update({
+        where: { id: appointmentId, status: AppointmentStatus.SCHEDULED },
+        data: { status },
+        include: DOCTOR_AND_PATIENT_INCLUDE,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new ConflictException('This session was just updated. Refresh to see its current status.');
+      }
+      throw error;
+    }
   }
 }

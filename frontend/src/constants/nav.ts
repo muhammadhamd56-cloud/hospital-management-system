@@ -20,6 +20,7 @@ import {
   ListTodo,
   Megaphone,
   AlertTriangle,
+  ShieldCheck,
 } from 'lucide-react'
 import { ROUTES } from '@/constants/routes'
 import type { NavItem } from '@/types/nav'
@@ -76,6 +77,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Billing', icon: Receipt, path: ROUTES.billing, roles: [...OPS_ONLY!, 'patient'] },
   { label: 'Reports', icon: FileBarChart, path: ROUTES.reports, roles: ['admin'] },
   { label: 'Staff', icon: UserCog, path: ROUTES.staff, roles: ['admin'] },
+  { label: 'Account Approvals', icon: ShieldCheck, path: ROUTES.accountApprovals, roles: ['admin'] },
   { label: 'Staff Scheduling', icon: CalendarRange, path: ROUTES.staffScheduling, roles: ['admin'] },
   { label: 'Profile', icon: UserCircle, path: ROUTES.profile },
   { label: 'Settings', icon: Settings, path: ROUTES.settings },

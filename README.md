@@ -36,6 +36,13 @@ npm run start:dev   # starts the API on http://localhost:3000/api
 
 See `backend/api/README.md` for environment variables and Prisma commands.
 
+## Documentation
+
+- [docs/PROJECT_AUDIT.md](docs/PROJECT_AUDIT.md): findings by severity, what's fixed, what's open
+- [docs/SECURITY.md](docs/SECURITY.md): auth/session design, CSRF, permission matrix
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Vercel + Render + Postgres setup, required env values, migrations
+- [docs/TESTING.md](docs/TESTING.md): running unit and e2e suites (and Windows quirks)
+
 ## Project Structure
 
 ```

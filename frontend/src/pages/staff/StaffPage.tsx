@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, UserCog, Copy, Check } from 'lucide-react'
+import { Search, UserCog } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
+import { TempPasswordDialog } from '@/components/ui/TempPasswordDialog'
 import { Badge } from '@/components/ui/Badge'
-import { Modal } from '@/components/ui/Modal'
 import {
   Table,
   TableHeader,
@@ -36,7 +36,6 @@ export function StaffPage() {
   const [roleFilter, setRoleFilter] = useState<StaffRole | 'all'>('all')
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [revealed, setRevealed] = useState<CreateStaffResponse | null>(null)
-  const [copied, setCopied] = useState(false)
 
   function refresh() {
     setIsLoading(true)
@@ -56,15 +55,8 @@ export function StaffPage() {
   function handleCreated(result: CreateStaffResponse) {
     setStaff((current) => [result.staff, ...current])
     setRevealed(result)
-    setCopied(false)
   }
 
-  async function handleCopy() {
-    if (!revealed) return
-    await navigator.clipboard.writeText(revealed.tempPassword)
-    setCopied(true)
-    toast.success('Copied to clipboard')
-  }
 
   const filteredStaff = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -156,40 +148,10 @@ export function StaffPage() {
 
       <AddStaffModal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} onCreated={handleCreated} />
 
-      <Modal
-        isOpen={revealed !== null}
+      <TempPasswordDialog
+        account={revealed ? { fullName: revealed.staff.fullName, tempPassword: revealed.tempPassword } : null}
         onClose={() => setRevealed(null)}
-        title="Account created"
-        description={
-          revealed
-            ? `Relay this temporary password to ${revealed.staff.fullName} — it won't be shown again.`
-            : undefined
-        }
-      >
-        {revealed && (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-alt px-4 py-3">
-              <code className="text-sm font-medium text-ink">{revealed.tempPassword}</code>
-              <Button type="button" size="sm" variant="secondary" onClick={handleCopy}>
-                {copied ? (
-                  <>
-                    <Check className="size-4" aria-hidden="true" /> Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="size-4" aria-hidden="true" /> Copy
-                  </>
-                )}
-              </Button>
-            </div>
-            <div className="flex justify-end">
-              <Button type="button" onClick={() => setRevealed(null)}>
-                Done
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      />
     </div>
   )
 }

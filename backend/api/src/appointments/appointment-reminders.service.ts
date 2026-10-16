@@ -50,6 +50,16 @@ export class AppointmentRemindersService {
     let sent = 0;
     for (const appointment of dueAppointments) {
       try {
+        // Claim before sending: if two runs overlap (a slow run, or more than
+        // one instance), only the one that stamps reminderSentAt first sends.
+        // Deliberately at-most-once -- a duplicate reminder is worse than
+        // the rare missed one if sending fails after the claim.
+        const claimed = await this.prisma.appointment.updateMany({
+          where: { id: appointment.id, reminderSentAt: null },
+          data: { reminderSentAt: new Date() },
+        });
+        if (claimed.count === 0) continue;
+
         const patientName = `${appointment.patient.firstName} ${appointment.patient.lastName}`.trim();
         const doctorName = `${appointment.doctor.user.firstName} ${appointment.doctor.user.lastName}`.trim();
 
@@ -67,11 +77,6 @@ export class AppointmentRemindersService {
           `You have an appointment with Dr. ${doctorName} on ${appointment.scheduledAt.toLocaleString()}.`,
           `/my-appointments?appointmentId=${appointment.id}`,
         );
-
-        await this.prisma.appointment.update({
-          where: { id: appointment.id },
-          data: { reminderSentAt: new Date() },
-        });
 
         sent += 1;
       } catch (error) {

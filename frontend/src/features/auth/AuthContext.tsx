@@ -1,5 +1,5 @@
 import { createContext, useEffect, useState, type ReactNode } from 'react'
-import { API_BASE_URL, api, clearAccessToken, getAccessToken, onUnauthorized, setAccessToken } from '@/lib/apiClient'
+import { API_BASE_URL, api, onUnauthorized } from '@/lib/apiClient'
 import type { AuthRole, Role } from '@/types/role'
 import type { StaffType } from '@/types/staffScheduling'
 
@@ -29,6 +29,11 @@ export interface AuthUser {
   mustChangePassword: boolean
   /** Whether TOTP-based two-factor auth is currently turned on. */
   mfaEnabled: boolean
+  /** Self-registered doctor/staff accounts are 'pending' until an admin
+   *  reviews them; until 'approved' they can only see their own account. */
+  approvalStatus: ApprovalStatus
+  /** The admin's reason, when a request was rejected. */
+  approvalNote: string | null
   /** Only meaningful for role === 'staff' -- the roster categorization of
    *  their linked Staff row (e.g. 'lab_technician'). Null when the role
    *  isn't 'staff', or when a self-signed-up staff account hasn't been
@@ -54,7 +59,11 @@ interface RawUser {
   emailVerified: boolean
   mustChangePassword: boolean
   mfaEnabled: boolean
+  approvalStatus: ApprovalStatus
+  approvalNote: string | null
 }
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
 
 /** Only STAFF-role accounts have a staffType, and only once an admin has
  *  linked them to the scheduling roster -- a 404 here just means "not
@@ -106,8 +115,8 @@ export interface SignupInput {
   experienceYears?: number
 }
 
+/** The session itself arrives as httpOnly cookies, never in the body. */
 interface AuthResponse {
-  token: string
   user: RawUser
 }
 
@@ -135,7 +144,7 @@ export interface AuthContextValue {
    * true once verified — no post-verify role picker needed.
    */
   signup: (input: SignupInput) => Promise<void>
-  /** Submits the emailed OTP; on success this is the actual sign-in moment (stores the token). */
+  /** Submits the emailed OTP; on success this is the actual sign-in moment (the server sets the session cookies). */
   verifyOtp: (email: string, code: string) => Promise<void>
   /** Requests a fresh OTP for an unverified account (subject to a server-side cooldown). */
   resendOtp: (email: string) => Promise<void>
@@ -148,8 +157,10 @@ export interface AuthContextValue {
   resetPassword: (email: string, code: string, newPassword: string) => Promise<void>
   /** Navigates the browser to the backend's Google OAuth entry point. */
   loginWithGoogle: () => void
-  /** Called by OAuthCallbackPage once Google redirects back with a token. */
-  completeOAuthCallback: (token: string) => Promise<void>
+  /** Called by OAuthCallbackPage once Google redirects back -- the backend has
+   *  already set the session cookies, so this just loads the user. Rejects if
+   *  there turns out to be no session. */
+  completeOAuthCallback: () => Promise<void>
   /** One-time role pick shown right after a user's first Google sign-in. */
   selectRole: (role: AuthRole) => Promise<void>
   /** Updates the caller's own name/phone. Fields omitted are left unchanged. */
@@ -158,7 +169,7 @@ export interface AuthContextValue {
   refresh: () => Promise<void>
   /** Permanently deletes the account, then clears the local session. Irreversible. */
   deleteAccount: () => Promise<void>
-  /** Revokes the session server-side (so the current token can no longer reach the API), then clears it locally. */
+  /** Revokes the session server-side and clears its cookies, then clears the local user. */
   logout: () => Promise<void>
 }
 
@@ -170,18 +181,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
+  // The cookies are httpOnly, so there's no local way to tell whether a
+  // session exists -- asking the server is the only check.
   async function refresh() {
-    if (!getAccessToken()) {
-      setUser(null)
-      setIsLoading(false)
-      return
-    }
-
     try {
       const raw = await api.get<RawUser>('/users/me')
       setUser(await toAuthUser(raw))
     } catch {
-      clearAccessToken()
       setUser(null)
     } finally {
       setIsLoading(false)
@@ -193,15 +199,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // An expired/revoked token surfaces as a 401 from any authenticated
-  // request, not just /users/me -- clearing the session here (rather than
-  // only in refresh()) means ProtectedRoute redirects to login right away
-  // instead of leaving the user on a page that just keeps failing.
+  // A session that can't be refreshed surfaces as a 401 from any
+  // authenticated request, not just /users/me -- clearing the user here
+  // (rather than only in refresh()) means ProtectedRoute redirects to login
+  // right away instead of leaving the user on a page that just keeps failing.
   useEffect(() => {
-    onUnauthorized(() => {
-      clearAccessToken()
-      setUser(null)
-    })
+    onUnauthorized(() => setUser(null))
   }, [])
 
   async function login(input: LoginInput): Promise<LoginResult> {
@@ -211,14 +214,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { mfaRequired: true, mfaToken: res.mfaToken }
     }
 
-    setAccessToken(res.token)
     setUser(await toAuthUser(res.user))
     return { mfaRequired: false }
   }
 
   async function verifyMfa(mfaToken: string, code: string) {
     const res = await api.post<AuthResponse>('/auth/mfa/verify', { mfaToken, code })
-    setAccessToken(res.token)
     setUser(await toAuthUser(res.user))
   }
 
@@ -228,7 +229,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function verifyOtp(email: string, code: string) {
     const res = await api.post<AuthResponse>('/auth/verify-otp', { email, code })
-    setAccessToken(res.token)
     setUser(await toAuthUser(res.user))
   }
 
@@ -248,9 +248,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = GOOGLE_LOGIN_URL
   }
 
-  async function completeOAuthCallback(token: string) {
-    setAccessToken(token)
-    await refresh()
+  async function completeOAuthCallback() {
+    const raw = await api.get<RawUser>('/users/me')
+    setUser(await toAuthUser(raw))
   }
 
   async function selectRole(role: AuthRole) {
@@ -265,7 +265,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function deleteAccount() {
     await api.del<void>('/users/me')
-    clearAccessToken()
     setUser(null)
   }
 
@@ -273,9 +272,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.post<void>('/auth/logout')
     } catch {
-      // Token may already be expired/revoked -- still proceed to clear the local session below.
+      // Session may already be expired/revoked -- still proceed to clear the local user below.
     } finally {
-      clearAccessToken()
       setUser(null)
     }
   }

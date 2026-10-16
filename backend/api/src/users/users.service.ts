@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { BedStatus, type User } from '@prisma/client';
+import { ApprovalStatus, BedStatus, type User } from '@prisma/client';
+import { AccountApprovalsService, requiresApproval } from '../account-approvals/account-approvals.service';
 import { hashPassword, verifyPassword } from '../auth/password.util';
 import { ClientRole, toPrismaRole } from '../common/role.mapper';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,7 +9,10 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly accountApprovalsService: AccountApprovalsService,
+  ) {}
 
   async findById(id: string): Promise<User> {
     const user = await this.prisma.user.findUnique({ where: { id } });
@@ -64,10 +68,24 @@ export class UsersService {
       throw new ForbiddenException('Your role has already been set for this account');
     }
 
-    return this.prisma.user.update({
+    // Doctor/staff roles open up patient data, so picking one needs an admin's
+    // approval. Google has already verified the email, so the request goes
+    // to the admins' queue straight away.
+    const needsApproval = requiresApproval(toPrismaRole(role));
+    const updated = await this.prisma.user.update({
       where: { id: userId },
-      data: { role: toPrismaRole(role), roleSelected: true },
+      data: {
+        role: toPrismaRole(role),
+        roleSelected: true,
+        approvalStatus: needsApproval ? ApprovalStatus.PENDING : ApprovalStatus.APPROVED,
+      },
     });
+
+    if (needsApproval) {
+      await this.accountApprovalsService.notifyAdminsOfRequest(updated);
+    }
+
+    return updated;
   }
 
   /**

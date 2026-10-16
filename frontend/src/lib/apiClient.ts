@@ -1,28 +1,27 @@
-const TOKEN_KEY = 'hms_access_token'
-
-// In dev, Vite's server.proxy forwards relative '/api' calls to the backend
-// (see vite.config.ts), so this stays empty. In production the frontend and
-// backend are typically deployed on different origins, so VITE_API_URL must
-// be set to the backend's absolute URL at build time.
+// Normally empty: requests go to relative '/api' on the app's own origin --
+// proxied by Vite in dev (vite.config.ts) and by the vercel.json rewrite in
+// production. Same-origin is what makes the httpOnly session cookies
+// first-party; a cross-site API URL here would break sign-in.
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
-export function getAccessToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+// The session lives in httpOnly cookies the backend sets (see
+// backend/api/src/auth/auth-cookies.ts), so this client never sees a token.
+// Sessions from before that switch kept one in localStorage -- drop it.
+try {
+  localStorage.removeItem('hms_access_token')
+} catch {
+  // Storage can be unavailable (private mode, blocked site data) -- nothing to clean up then.
 }
 
-export function setAccessToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-export function clearAccessToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
-}
+/** The backend rejects cookie-authenticated writes without this header (its CSRF defence). */
+const CSRF_HEADER = 'X-HMS-CSRF'
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 type UnauthorizedHandler = () => void
 let unauthorizedHandler: UnauthorizedHandler | null = null
 
-/** AuthProvider registers this once, so an expired/revoked token can clear the
- *  session from here without apiClient needing React context. */
+/** AuthProvider registers this once, so an expired/revoked session can be
+ *  cleared from here without apiClient needing React context. */
 export function onUnauthorized(handler: UnauthorizedHandler): void {
   unauthorizedHandler = handler
 }
@@ -45,30 +44,54 @@ interface ApiEnvelope<T> {
   errors?: string[]
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getAccessToken()
+function send(path: string, options?: RequestInit): Promise<Response> {
+  const method = (options?.method ?? 'GET').toUpperCase()
 
-  const res = await fetch(`${API_BASE_URL}/api${path}`, {
+  return fetch(`${API_BASE_URL}/api${path}`, {
+    ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(SAFE_METHODS.has(method) ? {} : { [CSRF_HEADER]: '1' }),
       ...options?.headers,
     },
-    ...options,
   })
+}
+
+// Shared so a burst of requests that all 401 at once triggers one refresh, not one each.
+let refreshInFlight: Promise<boolean> | null = null
+
+/** Swaps the refresh cookie for a new access cookie. Resolves false when the session is really over. */
+function refreshSession(): Promise<boolean> {
+  refreshInFlight ??= send('/auth/refresh', { method: 'POST' })
+    .then((res) => res.ok)
+    .catch(() => false)
+    .finally(() => {
+      refreshInFlight = null
+    })
+  return refreshInFlight
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let res = await send(path, options)
+
+  // The access cookie is short-lived, so a 401 usually just means it expired:
+  // refresh once and retry. /auth/* is excluded -- a 401 there is a real
+  // answer (wrong password, bad code, dead refresh cookie), not an expiry.
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    if (await refreshSession()) {
+      res = await send(path, options)
+    }
+    if (res.status === 401) {
+      unauthorizedHandler?.()
+    }
+  }
 
   if (res.status === 204) return undefined as T
 
   const body = (await res.json().catch(() => null)) as ApiEnvelope<T> | null
 
   if (!res.ok || !body?.success) {
-    // Only an already-authenticated request being rejected means the session
-    // itself is invalid -- a 401 with no token attached is just a normal auth
-    // failure (e.g. wrong login password), not an expired session.
-    if (res.status === 401 && token) {
-      unauthorizedHandler?.()
-    }
-
     throw new ApiError(body?.message ?? 'Request failed', {
       status: res.status,
       errors: body?.errors,

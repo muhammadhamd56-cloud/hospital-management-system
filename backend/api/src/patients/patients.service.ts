@@ -76,14 +76,24 @@ export class PatientsService {
   }
 
   async findOne(caller: AuthenticatedUser, id: string): Promise<PatientDetailResponse> {
+    // A doctor's relationship with this patient grants access to the visits
+    // they share -- not to the patient's history with every other doctor
+    // (dates, specialties and free-text reasons are clinical information).
+    let ownDoctorId: string | null = null;
     if (caller.role === Role.DOCTOR) {
       await this.assertDoctorRelationship(caller.id, id);
+      const doctor = await this.prisma.doctor.findUnique({ where: { userId: caller.id }, select: { id: true } });
+      ownDoctorId = doctor?.id ?? null;
     }
 
     const patient = await this.prisma.user.findFirst({
       where: { id, role: Role.PATIENT },
       include: {
-        appointments: { include: DOCTOR_INCLUDE, orderBy: { scheduledAt: 'desc' } },
+        appointments: {
+          where: caller.role === Role.DOCTOR ? { doctorId: ownDoctorId ?? '' } : undefined,
+          include: DOCTOR_INCLUDE,
+          orderBy: { scheduledAt: 'desc' },
+        },
       },
     });
 

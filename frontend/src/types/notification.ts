@@ -24,6 +24,9 @@ export type NotificationType =
   | 'emergency_status_updated'
   | 'emergency_resolved'
   | 'emergency_cancelled'
+  | 'account_approval_requested'
+  | 'account_approved'
+  | 'account_rejected'
 
 export interface AppNotification {
   id: string

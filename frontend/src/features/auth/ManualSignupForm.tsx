@@ -88,6 +88,13 @@ export function ManualSignupForm() {
   return (
     <form className="flex w-full flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
       <RoleSelector roles={AUTH_ROLES} value={role} onChange={setRole} />
+      {role !== 'patient' && (
+        <p className="rounded-lg border border-surface-border bg-surface-alt px-3 py-2 text-xs text-ink-muted" role="note">
+          {role === 'doctor' ? 'Doctor' : 'Staff'} accounts can see patient information, so an administrator reviews
+          each one before it can be used. You&apos;ll be able to sign in straight away and will be emailed once
+          it&apos;s approved.
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Input label="First name" error={errors.firstName?.message} {...register('firstName')} />
         <Input label="Last name" error={errors.lastName?.message} {...register('lastName')} />

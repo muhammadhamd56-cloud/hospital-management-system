@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
+  ApprovalStatus,
   InvoiceStatus,
   PaymentMethod,
   Role,
@@ -153,6 +154,9 @@ function buildPatient(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvalReviewedAt: null,
+    approvalNote: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -175,8 +179,10 @@ describe('BillingService', () => {
     doctor: { findUnique: jest.Mock };
     appointment: { findMany: jest.Mock };
     chatMessage: { findMany: jest.Mock };
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
-  let stripeService: { createCheckoutSession: jest.Mock; refundPayment: jest.Mock };
+  let stripeService: { createCheckoutSession: jest.Mock; refundPayment: jest.Mock; expireCheckoutSession: jest.Mock };
   let auditLogService: { log: jest.Mock };
   let notificationsService: { create: jest.Mock };
   let platformSettingsService: { getConsultationMargin: jest.Mock };
@@ -196,8 +202,15 @@ describe('BillingService', () => {
       doctor: { findUnique: jest.fn() },
       appointment: { findMany: jest.fn().mockResolvedValue([]) },
       chatMessage: { findMany: jest.fn().mockResolvedValue([]) },
+      // Runs the callback against the same mocks, as if inside the transaction.
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
-    stripeService = { createCheckoutSession: jest.fn(), refundPayment: jest.fn() };
+    stripeService = {
+      createCheckoutSession: jest.fn(),
+      refundPayment: jest.fn(),
+      expireCheckoutSession: jest.fn().mockResolvedValue(undefined),
+    };
     auditLogService = { log: jest.fn().mockResolvedValue(undefined) };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     platformSettingsService = { getConsultationMargin: jest.fn().mockResolvedValue(0) };
@@ -389,6 +402,7 @@ describe('BillingService', () => {
         id: 'invoice-1',
         description: 'August visit',
         amount: 100,
+        previousSessionId: null,
       });
       expect(result).toEqual({ url: 'https://checkout.stripe.com/session-1' });
     });
@@ -633,7 +647,7 @@ describe('BillingService', () => {
 
       expect(prisma.invoice.update).toHaveBeenCalledWith({
         where: { id: 'inv-1' },
-        data: { status: InvoiceStatus.CANCELLED },
+        data: { status: InvoiceStatus.CANCELLED, stripeCheckoutSessionId: null },
       });
       expect(auditLogService.log).toHaveBeenCalledWith(
         expect.objectContaining({ actorId: null, entityType: 'Invoice', entityId: 'inv-1' }),
@@ -754,6 +768,19 @@ describe('BillingService', () => {
       expect(result).toMatchObject({ status: 'paid', amountPaid: 500, remaining: 0 });
     });
 
+    it('locks the invoice row before reading its balance, inside one transaction', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice());
+      prisma.invoice.update.mockResolvedValue(buildInvoice({ payments: [buildPayment({ amount: 50 })] }));
+
+      await service.recordPayment(admin, 'invoice-1', { amount: 50, method: PaymentMethod.CASH }, 'admin-1');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.invoice.findUnique.mock.invocationCallOrder[0],
+      );
+    });
+
     it('rejects a doctor caller recording a payment for a patient they have no relationship with', async () => {
       prisma.invoice.findUnique.mockResolvedValue(buildInvoice());
       prisma.doctor.findUnique.mockResolvedValue(buildDoctor());
@@ -793,10 +820,37 @@ describe('BillingService', () => {
 
       expect(prisma.invoice.update).toHaveBeenCalledWith({
         where: { id: 'invoice-1' },
-        data: { status: InvoiceStatus.CANCELLED },
+        data: { status: InvoiceStatus.CANCELLED, stripeCheckoutSessionId: null },
         include: INVOICE_INCLUDE,
       });
       expect(result.status).toBe('cancelled');
+    });
+
+    it('cancels an invoice whose payments have all been fully refunded, so it stops showing as owed', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        buildInvoice({ payments: [buildPayment({ amount: 150, refunds: [buildRefund({ amount: 150 })] })] }),
+      );
+      prisma.invoice.update.mockResolvedValue(buildInvoice({ status: InvoiceStatus.CANCELLED }));
+
+      await expect(service.cancel(admin, 'invoice-1')).resolves.toMatchObject({ status: 'cancelled' });
+    });
+
+    it('still refuses while a partially refunded payment leaves money held', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(
+        buildInvoice({ payments: [buildPayment({ amount: 150, refunds: [buildRefund({ amount: 50 })] })] }),
+      );
+
+      await expect(service.cancel(admin, 'invoice-1')).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it('expires an open Stripe checkout so the patient cannot pay a cancelled invoice', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ stripeCheckoutSessionId: 'cs_open' }));
+      prisma.invoice.update.mockResolvedValue(buildInvoice({ status: InvoiceStatus.CANCELLED }));
+
+      await service.cancel(admin, 'invoice-1');
+
+      expect(stripeService.expireCheckoutSession).toHaveBeenCalledWith('cs_open');
     });
   });
 
@@ -898,7 +952,7 @@ describe('BillingService', () => {
 
       const result = await service.refundPayment(admin, 'inv-1', 'payment-1', { amount: 60 });
 
-      expect(stripeService.refundPayment).toHaveBeenCalledWith('pi_123', 6000);
+      expect(stripeService.refundPayment).toHaveBeenCalledWith('pi_123', 6000, 'refund:payment-1:0:6000');
       expect(prisma.refund.create).toHaveBeenCalledWith({
         data: { paymentId: 'payment-1', amount: 60, reason: undefined, stripeRefundId: 're_123', refundedById: 'admin-1' },
       });
@@ -928,6 +982,19 @@ describe('BillingService', () => {
         where: { id: 'inv-1' },
         data: { status: InvoiceStatus.PARTIALLY_PAID, paidAt: null },
       });
+    });
+
+    it('locks the invoice row before computing the refundable balance', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(buildInvoice({ payments: [buildPayment({ amount: 50 })] }));
+      prisma.invoice.findUniqueOrThrow.mockResolvedValue(
+        buildInvoice({ payments: [buildPayment({ amount: 50, refunds: [buildRefund({ amount: 50 })] })] }),
+      );
+
+      await service.refundPayment(admin, 'invoice-1', 'payment-1', {});
+
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.invoice.findUnique.mock.invocationCallOrder[0],
+      );
     });
 
     it('rejects a doctor caller refunding a payment for a patient they have no relationship with', async () => {

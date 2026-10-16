@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { Department, Doctor, User } from '@prisma/client';
+import { ApprovalStatus, Role, type Department, type Doctor, type Prisma, type User } from '@prisma/client';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListDoctorsDto } from './dto/list-doctors.dto';
 
@@ -92,32 +93,56 @@ export const DOCTOR_PROFILE_INCLUDE = {
 export class DoctorsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listDoctors(query: ListDoctorsDto): Promise<DirectoryDoctorResponse[]> {
+  /**
+   * Staff roles get the internal directory, contact details included.
+   * Patients get the same listing without doctors' email and phone -- the
+   * same fields the public profile omits -- and can't search by email, so
+   * the directory can't be used to harvest or probe staff contact details.
+   * Filtering and the limit run in the database rather than over the
+   * whole doctors table in memory.
+   */
+  async listDoctors(query: ListDoctorsDto, caller: AuthenticatedUser): Promise<DirectoryDoctorResponse[]> {
+    const showContacts = caller.role !== Role.PATIENT;
+    // Every word must match some field, so "ada cardio" finds Dr. Ada in Cardiology.
+    const words = query.q?.trim().split(/\s+/).filter(Boolean) ?? [];
+    const contains = (word: string) => ({ contains: word, mode: 'insensitive' as const });
+
+    const filters: Prisma.DoctorWhereInput[] = [];
+    // A doctor nobody has vetted yet isn't offered to anyone but admins.
+    if (caller.role !== Role.ADMIN) {
+      filters.push({ user: { approvalStatus: ApprovalStatus.APPROVED } });
+    }
+    if (query.department) {
+      filters.push({ department: { name: query.department } });
+    }
+    for (const word of words) {
+      filters.push({
+        OR: [
+          { user: { firstName: contains(word) } },
+          { user: { lastName: contains(word) } },
+          { specialization: contains(word) },
+          ...(showContacts ? [{ user: { email: contains(word) } }] : []),
+        ],
+      });
+    }
+
     const doctors = await this.prisma.doctor.findMany({
-      where: query.department ? { department: { name: query.department } } : undefined,
+      where: filters.length === 0 ? undefined : filters.length === 1 ? filters[0] : { AND: filters },
       include: DOCTOR_PROFILE_INCLUDE,
       orderBy: { rating: 'desc' },
+      take: query.limit ?? 20,
     });
 
-    const needle = query.q?.trim().toLowerCase();
-    const filtered = needle
-      ? doctors.filter((doctor) => {
-          const fullName = `${doctor.user.firstName} ${doctor.user.lastName}`.toLowerCase();
-          return (
-            fullName.includes(needle) ||
-            doctor.specialization.toLowerCase().includes(needle) ||
-            doctor.user.email.toLowerCase().includes(needle)
-          );
-        })
-      : doctors;
-
-    return filtered.slice(0, query.limit ?? 20).map(toDirectoryDoctor);
+    return doctors.map((doctor) => {
+      const directory = toDirectoryDoctor(doctor);
+      return showContacts ? directory : { ...directory, email: null, phone: null };
+    });
   }
 
   /** Unauthenticated: backs the doctor's shareable public profile link. */
   async getPublicProfile(id: string): Promise<PublicDoctorProfileResponse> {
-    const doctor = await this.prisma.doctor.findUnique({
-      where: { id },
+    const doctor = await this.prisma.doctor.findFirst({
+      where: { id, user: { approvalStatus: ApprovalStatus.APPROVED } },
       include: DOCTOR_PROFILE_INCLUDE,
     });
 

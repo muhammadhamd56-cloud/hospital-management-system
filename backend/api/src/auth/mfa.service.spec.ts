@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { generate, generateSecret } from 'otplib';
-import { Role, type User } from '@prisma/client';
+import { ApprovalStatus, Role, type User } from '@prisma/client';
 import { MfaService } from './mfa.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from './password.util';
@@ -40,6 +40,9 @@ function buildUser(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvalReviewedAt: null,
+    approvalNote: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,

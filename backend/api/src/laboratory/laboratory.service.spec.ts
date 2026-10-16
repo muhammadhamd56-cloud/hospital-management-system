@@ -69,8 +69,8 @@ describe('LaboratoryService', () => {
     doctor: { findUnique: jest.Mock };
     user: { findUnique: jest.Mock };
     staff: { findUnique: jest.Mock };
-    appointment: { findMany: jest.Mock };
-    chatMessage: { findMany: jest.Mock };
+    appointment: { findMany: jest.Mock; findFirst: jest.Mock };
+    chatMessage: { findMany: jest.Mock; findFirst: jest.Mock };
   };
   let notificationsService: { create: jest.Mock };
 
@@ -80,8 +80,8 @@ describe('LaboratoryService', () => {
       doctor: { findUnique: jest.fn() },
       user: { findUnique: jest.fn() },
       staff: { findUnique: jest.fn() },
-      appointment: { findMany: jest.fn().mockResolvedValue([]) },
-      chatMessage: { findMany: jest.fn().mockResolvedValue([]) },
+      appointment: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
+      chatMessage: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
     };
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
@@ -225,6 +225,7 @@ describe('LaboratoryService', () => {
         .mockResolvedValueOnce(buildDoctor({ id: 'doctor-1', userId: 'doctor-user-1' })) // requireOwnDoctorId lookup
         .mockResolvedValueOnce(buildDoctor({ id: 'doctor-1' })); // doctorExists check
       prisma.user.findUnique.mockResolvedValue({ id: 'patient-1', role: Role.PATIENT });
+      prisma.appointment.findFirst.mockResolvedValue({ id: 'appt-1' });
       prisma.labTest.create.mockResolvedValue(buildLabTestWithRelations());
 
       await service.request(doctorCaller, { ...dto, doctorId: 'someone-elses-doctor-id' });
@@ -233,6 +234,14 @@ describe('LaboratoryService', () => {
       expect(prisma.labTest.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ doctorId: 'doctor-1' }) }),
       );
+    });
+
+    it('refuses a DOCTOR ordering tests for a patient they have no appointment or chat with', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ id: 'doctor-1', userId: 'doctor-user-1' }));
+      prisma.user.findUnique.mockResolvedValue({ id: 'patient-1', role: Role.PATIENT });
+
+      await expect(service.request(doctorCaller, dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.labTest.create).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when a DOCTOR caller has no linked doctor profile', async () => {

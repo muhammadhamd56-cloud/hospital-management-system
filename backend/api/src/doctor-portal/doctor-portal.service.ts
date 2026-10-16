@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { SendMessageDto } from '../chat/dto/send-message.dto';
 import { NotificationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -145,11 +145,25 @@ export class DoctorPortalService {
       throw new BadRequestException('Only scheduled sessions can be updated');
     }
 
-    const updated = await this.prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status },
-      include: APPOINTMENT_PATIENT_INCLUDE,
-    });
+    if (status === 'COMPLETED' && appointment.scheduledAt.getTime() > Date.now()) {
+      throw new BadRequestException("A session can't be marked completed before it has started");
+    }
+
+    let updated;
+    try {
+      // Conditional on SCHEDULED so this can't overwrite a patient's
+      // simultaneous cancel (or vice versa).
+      updated = await this.prisma.appointment.update({
+        where: { id: appointmentId, status: 'SCHEDULED' },
+        data: { status },
+        include: APPOINTMENT_PATIENT_INCLUDE,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new ConflictException('This session was just updated. Refresh to see its current status.');
+      }
+      throw error;
+    }
 
     if (status === 'CANCELLED') {
       const doctorName = `${doctor.user.firstName} ${doctor.user.lastName}`.trim();

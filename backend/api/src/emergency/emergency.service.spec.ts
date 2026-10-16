@@ -7,6 +7,7 @@ import {
   NotificationType,
   Role,
   StaffType,
+  Prisma,
   type EmergencyCase,
 } from '@prisma/client';
 import { EmergencyService } from './emergency.service';
@@ -80,6 +81,7 @@ describe('EmergencyService', () => {
     user: { findMany: jest.Mock };
     staff: { findUnique: jest.Mock; findMany: jest.Mock };
     doctor: { findUnique: jest.Mock };
+    $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
   let auditLogService: { log: jest.Mock; findForEntity: jest.Mock };
@@ -97,6 +99,8 @@ describe('EmergencyService', () => {
       user: { findMany: jest.fn().mockResolvedValue([]) },
       staff: { findUnique: jest.fn(), findMany: jest.fn() },
       doctor: { findUnique: jest.fn() },
+      // Runs the callback against the same mocks, as if inside the transaction.
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     auditLogService = { log: jest.fn().mockResolvedValue(undefined), findForEntity: jest.fn().mockResolvedValue([]) };
@@ -119,6 +123,26 @@ describe('EmergencyService', () => {
 
       await expect(service.create(patient, {})).rejects.toBeInstanceOf(ConflictException);
       expect(prisma.emergencyCase.create).not.toHaveBeenCalled();
+    });
+
+    it('checks and creates inside one serializable transaction', async () => {
+      prisma.emergencyCase.findFirst.mockResolvedValue(null);
+      prisma.emergencyCase.create.mockResolvedValue(buildCaseWithRelations());
+
+      await service.create(patient, {});
+
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    });
+
+    it('maps a serialization failure (two simultaneous requests) to the same 409 as an existing active case', async () => {
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('serialization failure', { code: 'P2034', clientVersion: 'test' }),
+      );
+
+      await expect(service.create(patient, {})).rejects.toBeInstanceOf(ConflictException);
+      expect(notificationsService.create).not.toHaveBeenCalled();
     });
 
     it('creates a bare case immediately with no type/description supplied, defaulting type to OTHER', async () => {
@@ -251,6 +275,7 @@ describe('EmergencyService', () => {
 
       expect(prisma.emergencyCase.update).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: 'case-1', status: EmergencyStatus.NEW },
           data: expect.objectContaining({ status: EmergencyStatus.ACKNOWLEDGED, acknowledgedById: 'nurse-user-1' }),
         }),
       );
@@ -262,6 +287,19 @@ describe('EmergencyService', () => {
         '/emergency/cases/case-1',
       );
       expect(result.status).toBe('acknowledged');
+    });
+
+    it('409s without notifying anyone when another responder changed the case first', async () => {
+      prisma.emergencyCase.findUnique.mockResolvedValue(buildCase({ status: EmergencyStatus.NEW }));
+      prisma.emergencyCase.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: 'test' }),
+      );
+
+      await expect(
+        service.updateStatus(admin, 'case-1', { status: 'acknowledged' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(notificationsService.create).not.toHaveBeenCalled();
+      expect(auditLogService.log).not.toHaveBeenCalled();
     });
 
     it('resolves an ARRIVED case and notifies the patient with EMERGENCY_RESOLVED', async () => {
@@ -321,6 +359,7 @@ describe('EmergencyService', () => {
 
       expect(prisma.emergencyCase.update).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: 'case-1', status: EmergencyStatus.ACKNOWLEDGED },
           data: expect.objectContaining({
             status: EmergencyStatus.TEAM_ASSIGNED,
             assignedDoctorId: 'doctor-1',
@@ -369,6 +408,18 @@ describe('EmergencyService', () => {
 
       expect(result.priority).toBe('critical');
     });
+
+    it.each([EmergencyStatus.RESOLVED, EmergencyStatus.CANCELLED])(
+      'rejects reprioritizing a %s case',
+      async (status) => {
+        prisma.emergencyCase.findUnique.mockResolvedValue(buildCase({ status }));
+
+        await expect(
+          service.updatePriority(admin, 'case-1', { priority: 'critical' }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.emergencyCase.update).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('cancel', () => {

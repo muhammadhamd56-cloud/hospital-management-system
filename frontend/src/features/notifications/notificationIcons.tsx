@@ -21,6 +21,9 @@ import {
   UserCheck,
   Users,
   XOctagon,
+  ShieldCheck,
+  ShieldQuestion,
+  ShieldX,
 } from 'lucide-react'
 import type { AppNotification } from '@/types/notification'
 
@@ -50,4 +53,7 @@ export const NOTIFICATION_TYPE_ICONS: Record<AppNotification['type'], typeof Bel
   emergency_status_updated: Siren,
   emergency_resolved: CheckCircle2,
   emergency_cancelled: XOctagon,
+  account_approval_requested: ShieldQuestion,
+  account_approved: ShieldCheck,
+  account_rejected: ShieldX,
 }

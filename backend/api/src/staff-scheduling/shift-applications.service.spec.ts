@@ -53,7 +53,9 @@ describe('ShiftApplicationsService', () => {
   let prisma: {
     staff: { findUnique: jest.Mock };
     shiftOpening: { findUnique: jest.Mock; findUniqueOrThrow: jest.Mock; update: jest.Mock };
-    shiftApplication: { findMany: jest.Mock; findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
+    shiftApplication: { findMany: jest.Mock; findUnique: jest.Mock; create: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
   let auditLog: { log: jest.Mock };
   let notifications: { create: jest.Mock };
@@ -63,7 +65,18 @@ describe('ShiftApplicationsService', () => {
     prisma = {
       staff: { findUnique: jest.fn() },
       shiftOpening: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), update: jest.fn() },
-      shiftApplication: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
+      shiftApplication: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      // Interactive form runs the callback against the same mocks; array form resolves each op.
+      $transaction: jest.fn((arg: unknown) =>
+        typeof arg === 'function' ? (arg as (tx: unknown) => unknown)(prisma) : Promise.all(arg as unknown[]),
+      ),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
     auditLog = { log: jest.fn() };
     notifications = { create: jest.fn().mockResolvedValue(undefined) };
@@ -272,8 +285,14 @@ describe('ShiftApplicationsService', () => {
       expect(shiftsService.assignFromOpening).toHaveBeenCalledWith(
         expect.objectContaining({ staffId: STAFF_ID, createdById: ADMIN_ID, notify: false }),
       );
+      expect(prisma.shiftApplication.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'application-1', status: ApplicationStatus.PENDING },
+          data: expect.objectContaining({ status: ApplicationStatus.APPROVED, respondedById: ADMIN_ID }),
+        }),
+      );
       expect(prisma.shiftApplication.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: ApplicationStatus.APPROVED, resultingShiftId: 'shift-1' }) }),
+        expect.objectContaining({ data: { resultingShiftId: 'shift-1' } }),
       );
       expect(result.status).toBe('approved');
       expect(notifications.create).toHaveBeenCalledWith(
@@ -301,6 +320,61 @@ describe('ShiftApplicationsService', () => {
         BadRequestException,
       );
       expect(shiftsService.assignFromOpening).not.toHaveBeenCalled();
+    });
+
+    it('locks the opening row before re-counting approvals, so concurrent approvals cannot overfill it', async () => {
+      prisma.shiftApplication.findUnique.mockResolvedValue({
+        ...buildApplication(),
+        staff: staffWithUser,
+        opening: openingWithDept,
+      });
+      prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, applications: [] });
+      shiftsService.assignFromOpening.mockResolvedValue({ id: 'shift-1' });
+      prisma.shiftApplication.update.mockResolvedValue({
+        ...buildApplication({ status: ApplicationStatus.APPROVED }),
+        opening: openingWithDept,
+        staff: staffWithUser,
+      });
+
+      await service.respond('application-1', { decision: 'approve' }, ADMIN_ID);
+
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.shiftOpening.findUniqueOrThrow.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('rejects a second simultaneous approval of the same application without creating a shift', async () => {
+      prisma.shiftApplication.findUnique.mockResolvedValue({
+        ...buildApplication(),
+        staff: staffWithUser,
+        opening: openingWithDept,
+      });
+      prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, applications: [] });
+      prisma.shiftApplication.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.respond('application-1', { decision: 'approve' }, ADMIN_ID)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(shiftsService.assignFromOpening).not.toHaveBeenCalled();
+    });
+
+    it('gives the position back (application PENDING, opening reopened) when the shift cannot be created', async () => {
+      prisma.shiftApplication.findUnique.mockResolvedValue({
+        ...buildApplication(),
+        staff: staffWithUser,
+        opening: openingWithDept,
+      });
+      prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, positions: 1, applications: [] });
+      shiftsService.assignFromOpening.mockRejectedValue(new ConflictException('Overlaps another shift'));
+
+      await expect(service.respond('application-1', { decision: 'approve' }, ADMIN_ID)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.shiftApplication.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: ApplicationStatus.PENDING, respondedById: null }) }),
+      );
+      expect(prisma.shiftOpening.update).toHaveBeenLastCalledWith({ where: { id: openingWithDept.id }, data: { isOpen: true } });
+      expect(notifications.create).not.toHaveBeenCalled();
     });
 
     it('auto-closes the opening once the last position is filled', async () => {

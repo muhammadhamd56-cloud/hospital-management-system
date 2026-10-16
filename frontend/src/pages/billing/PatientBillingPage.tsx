@@ -72,7 +72,9 @@ export function PatientBillingPage() {
     hasHandledReturn.current = true
 
     if (paid === '1') {
-      toast.success('Payment received — thank you!')
+      // Stripe has accepted the payment; some methods (e.g. bank debits)
+      // only settle later, so don't claim it's received until the invoice says so.
+      toast.success('Payment submitted — thank you! Your invoice will update once it clears.')
       refresh()
     } else {
       toast('Payment cancelled')

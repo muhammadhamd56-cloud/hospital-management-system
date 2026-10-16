@@ -28,6 +28,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
 import { AssistantModule } from './assistant/assistant.module';
 import { PlatformSettingsModule } from './platform-settings/platform-settings.module';
 import { EmergencyModule } from './emergency/emergency.module';
+import { AccountApprovalsModule } from './account-approvals/account-approvals.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { EmergencyModule } from './emergency/emergency.module';
     AssistantModule,
     PlatformSettingsModule,
     EmergencyModule,
+    AccountApprovalsModule,
   ],
   providers: [
     // The e2e suite alone signs up dozens of accounts in a few seconds --

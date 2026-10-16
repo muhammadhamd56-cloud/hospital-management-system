@@ -29,6 +29,8 @@ function buildUser(overrides: Partial<AuthUser>): AuthUser {
     roleSelected: true,
     mustChangePassword: false,
     mfaEnabled: false,
+    approvalStatus: 'approved',
+    approvalNote: null,
     ...overrides,
   } as AuthUser
 }

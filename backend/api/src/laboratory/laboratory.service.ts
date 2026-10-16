@@ -3,6 +3,7 @@ import { LabTestStatus, NotificationType, Role, StaffType } from '@prisma/client
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { doctorHasPatient } from '../common/doctor-patient';
 import { RequestLabTestDto } from './dto/request-lab-test.dto';
 import { UpdateLabTestStatusDto } from './dto/update-lab-test-status.dto';
 import {
@@ -75,6 +76,11 @@ export class LaboratoryService {
     const patient = await this.prisma.user.findUnique({ where: { id: dto.patientId } });
 
     if (!patient || patient.role !== Role.PATIENT) {
+      throw new BadRequestException('Patient not found');
+    }
+
+    // Same error as an unknown patient, so the endpoint can't confirm which ids exist.
+    if (caller.role === Role.DOCTOR && !(await doctorHasPatient(this.prisma, doctorId, dto.patientId))) {
       throw new BadRequestException('Patient not found');
     }
 

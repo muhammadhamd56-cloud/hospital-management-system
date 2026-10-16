@@ -26,6 +26,16 @@ export function ProtectedRoute() {
     return <Navigate to={ROUTES.setPassword} replace />
   }
 
+  // Mirrors the backend gate: an unapproved doctor/staff account can reach
+  // nothing but its status page (every other API call would 403 anyway).
+  const awaitingApproval = user.roleSelected && user.approvalStatus !== 'approved'
+  if (awaitingApproval && location.pathname !== ROUTES.pendingApproval) {
+    return <Navigate to={ROUTES.pendingApproval} replace />
+  }
+  if (!awaitingApproval && location.pathname === ROUTES.pendingApproval) {
+    return <Navigate to={ROUTES.dashboard} replace />
+  }
+
   return <Outlet />
 }
 

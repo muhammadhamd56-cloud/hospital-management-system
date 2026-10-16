@@ -1,12 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { AccountApprovalsService } from '../account-approvals/account-approvals.service';
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Role, type User } from '@prisma/client';
+import { ApprovalStatus, Role, type User } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -49,6 +51,9 @@ function buildUser(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvalReviewedAt: null,
+    approvalNote: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -58,9 +63,10 @@ function buildUser(overrides: Partial<User> = {}): User {
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: {
-    user: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock };
+    user: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock; create: jest.Mock };
     $transaction: jest.Mock;
   };
+  let accountApprovalsService: { notifyAdminsOfRequest: jest.Mock };
   let jwtService: { sign: jest.Mock };
   let emailService: { sendOtpEmail: jest.Mock; sendPasswordResetEmail: jest.Mock };
   let tx: { user: { create: jest.Mock }; doctor: { create: jest.Mock }; department: { upsert: jest.Mock } };
@@ -73,10 +79,17 @@ describe('AuthService', () => {
     };
 
     prisma = {
-      user: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() },
+      // updateMany is the atomic "spend an attempt" claim; count 1 = claim succeeded.
+      user: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        create: jest.fn(),
+      },
       $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
     };
 
+    accountApprovalsService = { notifyAdminsOfRequest: jest.fn().mockResolvedValue(undefined) };
     jwtService = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
     emailService = {
       sendOtpEmail: jest.fn().mockResolvedValue(undefined),
@@ -89,6 +102,8 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: jwtService },
         { provide: EmailService, useValue: emailService },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: AccountApprovalsService, useValue: accountApprovalsService },
       ],
     }).compile();
 
@@ -127,7 +142,28 @@ describe('AuthService', () => {
       expect(createArgs.data.role).toBe(Role.PATIENT);
       expect(createArgs.data.roleSelected).toBe(true);
       expect(createArgs.data.emailVerified).toBe(false);
+      expect(createArgs.data.approvalStatus).toBe(ApprovalStatus.APPROVED);
       expect(tx.doctor.create).not.toHaveBeenCalled();
+    });
+
+    it.each(['doctor', 'staff'] as const)('creates a self-registered %s account PENDING admin approval', async (role) => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      const created = buildUser({ role: role === 'doctor' ? Role.DOCTOR : Role.STAFF, emailVerified: false });
+      tx.user.create.mockResolvedValue(created);
+      tx.department.upsert.mockResolvedValue({ id: 'dept-1', name: 'Cardiology' });
+      prisma.user.update.mockResolvedValue(created);
+
+      await service.signupLocal({
+        ...patientDto,
+        role,
+        ...(role === 'doctor'
+          ? { specialization: 'Cardiology', department: 'Cardiology', bio: 'Heart stuff', experienceYears: 10 }
+          : {}),
+      });
+
+      expect(tx.user.create.mock.calls[0][0].data.approvalStatus).toBe(ApprovalStatus.PENDING);
+      // Not yet: the email isn't proven, so the request isn't in the admins' queue.
+      expect(accountApprovalsService.notifyAdminsOfRequest).not.toHaveBeenCalled();
     });
 
     it('creates a linked Doctor row when role is doctor', async () => {
@@ -416,7 +452,7 @@ describe('AuthService', () => {
       );
     });
 
-    it('throws UnauthorizedException and increments attempts on an incorrect code', async () => {
+    it('spends an attempt atomically before comparing, then throws UnauthorizedException on an incorrect code', async () => {
       const user = await otpUser('123456');
       prisma.user.findUnique.mockResolvedValue(user);
 
@@ -424,10 +460,21 @@ describe('AuthService', () => {
         UnauthorizedException,
       );
 
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: user.id },
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: user.id, otpCodeHash: user.otpCodeHash, otpAttempts: { lt: 5 } },
         data: { otpAttempts: { increment: 1 } },
       });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses without comparing when a parallel guess already spent the last attempt', async () => {
+      const user = await otpUser('123456', { otpAttempts: 4 });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.updateMany.mockResolvedValue({ count: 0 });
+
+      // Even the correct code is refused once no attempt could be claimed.
+      await expect(service.verifyOtp({ email, code: '123456' })).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
     it('marks the account verified and clears OTP fields on a correct code', async () => {
@@ -439,6 +486,8 @@ describe('AuthService', () => {
       const result = await service.verifyOtp({ email, code: '123456' } as VerifyOtpDto);
 
       expect(result).toBe(verified);
+      expect(accountApprovalsService.notifyAdminsOfRequest).not.toHaveBeenCalled();
+      expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: user.id },
         data: { emailVerified: true, otpCodeHash: null, otpExpiresAt: null, otpAttempts: 0, otpLastSentAt: null },
@@ -555,6 +604,27 @@ describe('AuthService', () => {
     });
   });
 
+  describe('verifyOtp for a doctor/staff applicant', () => {
+    it("puts the request in the admins' queue once the email is verified", async () => {
+      const otpCodeHash = await hashPassword('123456');
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({
+          role: Role.DOCTOR,
+          emailVerified: false,
+          otpCodeHash,
+          otpExpiresAt: new Date(Date.now() + 60_000),
+          approvalStatus: ApprovalStatus.PENDING,
+        }),
+      );
+      const verified = buildUser({ role: Role.DOCTOR, emailVerified: true, approvalStatus: ApprovalStatus.PENDING });
+      prisma.user.update.mockResolvedValue(verified);
+
+      await service.verifyOtp({ email: 'ada@example.com', code: '123456' });
+
+      expect(accountApprovalsService.notifyAdminsOfRequest).toHaveBeenCalledWith(verified);
+    });
+  });
+
   describe('resetPassword', () => {
     const email = 'ada@example.com';
     const dto: ResetPasswordDto = { email, code: '123456', newPassword: 'longenough2' };
@@ -584,13 +654,24 @@ describe('AuthService', () => {
       await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('throws ForbiddenException after the max number of incorrect attempts', async () => {
+    it('refuses -- even the correct code -- once no attempt can be claimed (max reached, or spent by parallel guesses)', async () => {
       const user = await resetUser('123456', { passwordResetAttempts: 5 });
       prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(service.resetPassword({ ...dto, code: '999999' })).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('fails identically for an unknown email and a wrong code, so it cannot confirm which accounts exist', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      const unknown = await service.resetPassword(dto).catch((error: Error) => error);
+
+      prisma.user.findUnique.mockResolvedValue(await resetUser('123456'));
+      const wrongCode = await service.resetPassword({ ...dto, code: '000000' }).catch((error: Error) => error);
+
+      expect(unknown).toBeInstanceOf(BadRequestException);
+      expect(wrongCode).toBeInstanceOf(BadRequestException);
+      expect((wrongCode as Error).message).toBe((unknown as Error).message);
     });
 
     it('throws BadRequestException when the code has expired', async () => {
@@ -600,16 +681,15 @@ describe('AuthService', () => {
       await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('throws UnauthorizedException and increments attempts on an incorrect code', async () => {
+    it('spends an attempt atomically before comparing an incorrect code, and changes nothing else', async () => {
       const user = await resetUser('123456');
       prisma.user.findUnique.mockResolvedValue(user);
 
-      await expect(service.resetPassword({ ...dto, code: '000000' })).rejects.toBeInstanceOf(
-        UnauthorizedException,
-      );
+      await expect(service.resetPassword({ ...dto, code: '000000' })).rejects.toBeInstanceOf(BadRequestException);
 
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: user.id },
+      expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: user.id, passwordResetCodeHash: user.passwordResetCodeHash, passwordResetAttempts: { lt: 5 } },
         data: { passwordResetAttempts: { increment: 1 } },
       });
     });
@@ -621,9 +701,10 @@ describe('AuthService', () => {
 
       await service.resetPassword(dto);
 
-      expect(prisma.user.update).toHaveBeenCalledTimes(1);
-      const updateArgs = prisma.user.update.mock.calls[0][0];
-      expect(updateArgs.where).toEqual({ id: user.id });
+      // [0] = the attempt claim, [1] = the reset itself, conditional on the code still being current.
+      expect(prisma.user.updateMany).toHaveBeenCalledTimes(2);
+      const updateArgs = prisma.user.updateMany.mock.calls[1][0];
+      expect(updateArgs.where).toEqual({ id: user.id, passwordResetCodeHash: user.passwordResetCodeHash });
       expect(updateArgs.data.password).not.toBe('longenough2'); // hashed, not plaintext
       expect(updateArgs.data.passwordResetCodeHash).toBeNull();
       expect(updateArgs.data.passwordResetExpiresAt).toBeNull();
@@ -632,6 +713,13 @@ describe('AuthService', () => {
       expect(updateArgs.data.tokenVersion).toEqual({ increment: 1 });
       expect(updateArgs.data.failedLoginAttempts).toBe(0);
       expect(updateArgs.data.lockedUntil).toBeNull();
+    });
+
+    it('treats a code already used by a simultaneous request as invalid (single use)', async () => {
+      prisma.user.findUnique.mockResolvedValue(await resetUser('123456'));
+      prisma.user.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.resetPassword(dto)).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

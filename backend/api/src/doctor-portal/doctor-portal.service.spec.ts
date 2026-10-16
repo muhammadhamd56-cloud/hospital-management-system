@@ -311,7 +311,7 @@ describe('DoctorPortalService', () => {
       const result = await service.cancelAppointment('user-1', 'appt-1');
 
       expect(prisma.appointment.update).toHaveBeenCalledWith({
-        where: { id: 'appt-1' },
+        where: { id: 'appt-1', status: 'SCHEDULED' },
         data: { status: 'CANCELLED' },
         include: expect.anything(),
       });
@@ -336,6 +336,16 @@ describe('DoctorPortalService', () => {
       expect(prisma.appointment.update).not.toHaveBeenCalled();
     });
 
+    it('refuses to mark a session completed before it has started', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ id: 'doctor-1' }));
+      prisma.appointment.findUnique.mockResolvedValue(
+        buildAppointment({ doctorId: 'doctor-1', status: 'SCHEDULED', scheduledAt: new Date(Date.now() + 86_400_000) }),
+      );
+
+      await expect(service.completeAppointment('user-1', 'appt-1')).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
+    });
+
     it('completes the appointment without notifying the patient', async () => {
       prisma.doctor.findUnique.mockResolvedValue(buildDoctor({ id: 'doctor-1' }));
       prisma.appointment.findUnique.mockResolvedValue(buildAppointment({ doctorId: 'doctor-1', status: 'SCHEDULED' }));
@@ -345,7 +355,7 @@ describe('DoctorPortalService', () => {
       const result = await service.completeAppointment('user-1', 'appt-1');
 
       expect(prisma.appointment.update).toHaveBeenCalledWith({
-        where: { id: 'appt-1' },
+        where: { id: 'appt-1', status: 'SCHEDULED' },
         data: { status: 'COMPLETED' },
         include: expect.anything(),
       });

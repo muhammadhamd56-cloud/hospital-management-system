@@ -65,6 +65,20 @@ describe('ConsultationMarginCard', () => {
     expect(mockUpdatePlatformSettings).not.toHaveBeenCalled()
   })
 
+  it('rejects an emptied field instead of silently saving a $0 margin', async () => {
+    const user = userEvent.setup()
+
+    render(<ConsultationMarginCard />)
+    await screen.findByText('$5.00')
+
+    await user.click(screen.getByRole('button', { name: /edit/i }))
+    await user.clear(screen.getByLabelText('Margin (USD)'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Enter a valid, non-negative amount'))
+    expect(mockUpdatePlatformSettings).not.toHaveBeenCalled()
+  })
+
   it('shows a friendly error and keeps editing open when the save fails', async () => {
     mockUpdatePlatformSettings.mockRejectedValue(new ApiError('Something went wrong', { status: 500 }))
     const user = userEvent.setup()

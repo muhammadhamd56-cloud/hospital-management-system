@@ -15,16 +15,15 @@ export function OAuthCallbackPage() {
     if (hasRun.current) return
     hasRun.current = true
 
-    const token = searchParams.get('token')
-    const error = searchParams.get('error')
-
-    if (error || !token) {
+    // On success the backend has already set the session cookies -- only a
+    // failure carries anything in the URL.
+    if (searchParams.get('error')) {
       toast.error('Google sign-in failed. Please try again.')
       navigate(ROUTES.login, { replace: true })
       return
     }
 
-    completeOAuthCallback(token)
+    completeOAuthCallback()
       .then(() => navigate(ROUTES.dashboard, { replace: true }))
       .catch(() => {
         toast.error('Could not complete sign-in')

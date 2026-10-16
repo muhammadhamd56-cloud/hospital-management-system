@@ -2,25 +2,27 @@
 // 'stripe' itself) -- ts-jest does not hoist jest.mock calls above imports
 // the way babel-jest does, so the mock factory has to come first textually.
 const mockSessionsCreate = jest.fn();
+const mockSessionsExpire = jest.fn();
 const mockConstructEvent = jest.fn();
 const mockRefundsCreate = jest.fn();
 const mockRefundsList = jest.fn();
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
-    checkout: { sessions: { create: mockSessionsCreate } },
+    checkout: { sessions: { create: mockSessionsCreate, expire: mockSessionsExpire } },
     webhooks: { constructEvent: mockConstructEvent },
     refunds: { create: mockRefundsCreate, list: mockRefundsList },
   }));
 });
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InvoiceStatus, PaymentMethod } from '@prisma/client';
+import { InvoiceStatus, PaymentMethod, Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { StripeService } from './stripe.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 function buildInvoiceRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,7 +45,10 @@ describe('StripeService', () => {
     invoice: { update: jest.Mock; findUnique: jest.Mock };
     payment: { create: jest.Mock; findFirst: jest.Mock };
     refund: { create: jest.Mock };
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
+  let auditLogService: { log: jest.Mock };
   let configService: { get: jest.Mock };
   let notificationsService: { create: jest.Mock };
 
@@ -51,10 +56,14 @@ describe('StripeService', () => {
     configService = { get: jest.fn((key: string) => values[key]) };
     prisma = {
       invoice: { update: jest.fn(), findUnique: jest.fn() },
-      payment: { create: jest.fn(), findFirst: jest.fn() },
+      payment: { create: jest.fn().mockResolvedValue({ id: 'payment-new' }), findFirst: jest.fn() },
       refund: { create: jest.fn().mockResolvedValue(undefined) },
+      // Runs the callback against the same mocks, as if inside the transaction.
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+    auditLogService = { log: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,6 +71,7 @@ describe('StripeService', () => {
         { provide: ConfigService, useValue: configService },
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notificationsService },
+        { provide: AuditLogService, useValue: auditLogService },
       ],
     }).compile();
 
@@ -70,6 +80,7 @@ describe('StripeService', () => {
 
   beforeEach(() => {
     mockSessionsCreate.mockReset();
+    mockSessionsExpire.mockReset();
     mockConstructEvent.mockReset();
     mockRefundsCreate.mockReset();
     mockRefundsList.mockReset();
@@ -150,6 +161,31 @@ describe('StripeService', () => {
         expect(result).toEqual({ url: 'https://checkout.stripe.com/cs_test_1' });
       });
 
+      it("expires the invoice's previous checkout session first, so two open tabs cannot both be paid", async () => {
+        mockSessionsCreate.mockResolvedValue({ id: 'cs_test_2', url: 'https://checkout.stripe.com/cs_test_2' });
+
+        await service.createCheckoutSession({
+          id: 'invoice-1',
+          description: 'August visit',
+          amount: 150,
+          previousSessionId: 'cs_test_1',
+        });
+
+        expect(mockSessionsExpire).toHaveBeenCalledWith('cs_test_1');
+        expect(mockSessionsExpire.mock.invocationCallOrder[0]).toBeLessThan(
+          mockSessionsCreate.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('still creates the new session when the previous one can no longer be expired', async () => {
+        mockSessionsExpire.mockRejectedValue(new Error('session already completed'));
+        mockSessionsCreate.mockResolvedValue({ id: 'cs_test_2', url: 'https://checkout.stripe.com/cs_test_2' });
+
+        await expect(
+          service.createCheckoutSession({ id: 'invoice-1', description: 'x', amount: 150, previousSessionId: 'cs_old' }),
+        ).resolves.toEqual({ url: 'https://checkout.stripe.com/cs_test_2' });
+      });
+
       it('throws when Stripe returns no session url', async () => {
         mockSessionsCreate.mockResolvedValue({ id: 'cs_test_1', url: null });
 
@@ -166,8 +202,19 @@ describe('StripeService', () => {
 
         const result = await service.refundPayment('pi_123', 6000);
 
-        expect(mockRefundsCreate).toHaveBeenCalledWith({ payment_intent: 'pi_123', amount: 6000 });
+        expect(mockRefundsCreate).toHaveBeenCalledWith({ payment_intent: 'pi_123', amount: 6000 }, undefined);
         expect(result).toEqual({ id: 're_123' });
+      });
+
+      it('passes the idempotency key through to Stripe', async () => {
+        mockRefundsCreate.mockResolvedValue({ id: 're_123' });
+
+        await service.refundPayment('pi_123', 6000, 'refund:payment-1:0:6000');
+
+        expect(mockRefundsCreate).toHaveBeenCalledWith(
+          { payment_intent: 'pi_123', amount: 6000 },
+          { idempotencyKey: 'refund:payment-1:0:6000' },
+        );
       });
     });
 
@@ -273,25 +320,115 @@ describe('StripeService', () => {
         expect(prisma.invoice.update).not.toHaveBeenCalled();
       });
 
-      it('ignores a stale/replayed session that does not match the invoice\'s current checkout session', async () => {
+      it('rejects a request whose signature does not verify with a 400, not a 500', async () => {
+        mockConstructEvent.mockImplementation(() => {
+          throw new Error('No signatures found matching the expected signature');
+        });
+
+        await expect(service.handleWebhook(Buffer.from('{}'), 'bad')).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('records a payment taken through an older checkout session -- the card was charged, so it must not be dropped', async () => {
         mockConstructEvent.mockReturnValue(buildEvent());
         prisma.invoice.findUnique.mockResolvedValue(
-          buildInvoiceRow({ stripeCheckoutSessionId: 'cs_a_different_session' }),
+          buildInvoiceRow({ stripeCheckoutSessionId: 'cs_a_newer_session' }),
         );
 
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
-        expect(prisma.invoice.update).not.toHaveBeenCalled();
+        expect(prisma.payment.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ amount: 150, stripePaymentIntentId: 'pi_test_1' }) }),
+        );
+        expect(prisma.invoice.update).toHaveBeenCalledWith({
+          where: { id: 'invoice-1' },
+          data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
+        });
       });
 
-      it('is a no-op when the invoice is already paid (safe against Stripe redelivering the same webhook)', async () => {
+      it('takes the invoice row lock before reading the balance', async () => {
         mockConstructEvent.mockReturnValue(buildEvent());
-        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow({ status: InvoiceStatus.PAID }));
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow());
 
         await service.handleWebhook(Buffer.from('{}'), 'sig');
 
-        expect(prisma.invoice.update).not.toHaveBeenCalled();
+        expect(prisma.$queryRaw).toHaveBeenCalled();
+        expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+          prisma.invoice.findUnique.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('is a no-op when this payment intent was already recorded (Stripe redelivering the same event)', async () => {
+        mockConstructEvent.mockReturnValue(buildEvent());
+        prisma.invoice.findUnique.mockResolvedValue(
+          buildInvoiceRow({
+            status: InvoiceStatus.PAID,
+            payments: [{ amount: 150, stripePaymentIntentId: 'pi_test_1', refunds: [] }],
+          }),
+        );
+
+        await service.handleWebhook(Buffer.from('{}'), 'sig');
+
         expect(prisma.payment.create).not.toHaveBeenCalled();
+        expect(prisma.invoice.update).not.toHaveBeenCalled();
+        expect(notificationsService.create).not.toHaveBeenCalled();
+      });
+
+      it('treats a unique-constraint race on the payment intent as already recorded', async () => {
+        mockConstructEvent.mockReturnValue(buildEvent());
+        prisma.$transaction.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' }),
+        );
+
+        await expect(service.handleWebhook(Buffer.from('{}'), 'sig')).resolves.toBeUndefined();
+        expect(notificationsService.create).not.toHaveBeenCalled();
+      });
+
+      it('counts refunded money as unpaid when deciding whether the invoice is now settled', async () => {
+        mockConstructEvent.mockReturnValue(buildEvent({ amount_total: 10000, payment_intent: 'pi_second' }));
+        prisma.invoice.findUnique.mockResolvedValue(
+          buildInvoiceRow({ payments: [{ amount: 150, stripePaymentIntentId: 'pi_first', refunds: [{ amount: 100 }] }] }),
+        );
+
+        await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+        // 150 paid - 100 refunded + 100 now = 150 of 150.
+        expect(prisma.invoice.update).toHaveBeenCalledWith({
+          where: { id: 'invoice-1' },
+          data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
+        });
+        expect(auditLogService.log).not.toHaveBeenCalled();
+      });
+
+      it('records money taken on a cancelled invoice without reviving it, and flags it for review', async () => {
+        mockConstructEvent.mockReturnValue(buildEvent());
+        prisma.invoice.findUnique.mockResolvedValue(buildInvoiceRow({ status: InvoiceStatus.CANCELLED }));
+
+        await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+        expect(prisma.payment.create).toHaveBeenCalled();
+        expect(prisma.invoice.update).toHaveBeenCalledWith({
+          where: { id: 'invoice-1' },
+          data: { status: InvoiceStatus.CANCELLED, paidAt: null },
+        });
+        expect(auditLogService.log).toHaveBeenCalledWith(
+          expect.objectContaining({ metadata: expect.objectContaining({ needsReview: 'invoice_cancelled' }) }),
+        );
+      });
+
+      it('flags a charge that exceeds the remaining balance (e.g. cash recorded while checkout was open)', async () => {
+        mockConstructEvent.mockReturnValue(buildEvent());
+        prisma.invoice.findUnique.mockResolvedValue(
+          buildInvoiceRow({ payments: [{ amount: 40, stripePaymentIntentId: null, refunds: [] }] }),
+        );
+
+        await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+        expect(prisma.payment.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ amount: 150 }) }),
+        );
+        expect(auditLogService.log).toHaveBeenCalledWith(
+          expect.objectContaining({ metadata: expect.objectContaining({ needsReview: 'overpayment', excess: 40 }) }),
+        );
       });
 
       it('marks the invoice paid when the session matches and it is not already paid', async () => {

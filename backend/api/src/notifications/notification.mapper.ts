@@ -25,7 +25,10 @@ export type ClientNotificationType =
   | 'emergency_team_assigned'
   | 'emergency_status_updated'
   | 'emergency_resolved'
-  | 'emergency_cancelled';
+  | 'emergency_cancelled'
+  | 'account_approval_requested'
+  | 'account_approved'
+  | 'account_rejected';
 
 export interface NotificationResponse {
   id: string;
@@ -63,6 +66,9 @@ const TYPE_TO_CLIENT: Record<Notification['type'], ClientNotificationType> = {
   EMERGENCY_STATUS_UPDATED: 'emergency_status_updated',
   EMERGENCY_RESOLVED: 'emergency_resolved',
   EMERGENCY_CANCELLED: 'emergency_cancelled',
+  ACCOUNT_APPROVAL_REQUESTED: 'account_approval_requested',
+  ACCOUNT_APPROVED: 'account_approved',
+  ACCOUNT_REJECTED: 'account_rejected',
 };
 
 export function toNotificationResponse(notification: Notification): NotificationResponse {

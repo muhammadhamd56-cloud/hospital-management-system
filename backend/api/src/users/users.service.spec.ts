@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { Role, type User } from '@prisma/client';
+import { ApprovalStatus, Role, type User } from '@prisma/client';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AccountApprovalsService } from '../account-approvals/account-approvals.service';
 import { hashPassword } from '../auth/password.util';
 
 function buildUser(overrides: Partial<User> = {}): User {
@@ -38,6 +39,9 @@ function buildUser(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvalReviewedAt: null,
+    approvalNote: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -46,6 +50,7 @@ function buildUser(overrides: Partial<User> = {}): User {
 
 describe('UsersService', () => {
   let service: UsersService;
+  let accountApprovalsService: { notifyAdminsOfRequest: jest.Mock };
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock; delete: jest.Mock };
     bed: { updateMany: jest.Mock };
@@ -53,6 +58,7 @@ describe('UsersService', () => {
   };
 
   beforeEach(async () => {
+    accountApprovalsService = { notifyAdminsOfRequest: jest.fn().mockResolvedValue(undefined) };
     prisma = {
       user: { findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
       bed: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -60,7 +66,11 @@ describe('UsersService', () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [UsersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        UsersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AccountApprovalsService, useValue: accountApprovalsService },
+      ],
     }).compile();
 
     service = module.get(UsersService);
@@ -174,9 +184,9 @@ describe('UsersService', () => {
   });
 
   describe('selectRole', () => {
-    it('sets the role and roleSelected=true on first call', async () => {
+    it('picking doctor sets the role but leaves the account PENDING admin approval, and alerts admins', async () => {
       prisma.user.findUnique.mockResolvedValue(buildUser({ roleSelected: false }));
-      const updated = buildUser({ role: Role.DOCTOR, roleSelected: true });
+      const updated = buildUser({ role: Role.DOCTOR, roleSelected: true, approvalStatus: ApprovalStatus.PENDING });
       prisma.user.update.mockResolvedValue(updated);
 
       const result = await service.selectRole('user-1', 'doctor');
@@ -184,8 +194,32 @@ describe('UsersService', () => {
       expect(result).toBe(updated);
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
-        data: { role: Role.DOCTOR, roleSelected: true },
+        data: { role: Role.DOCTOR, roleSelected: true, approvalStatus: ApprovalStatus.PENDING },
       });
+      expect(accountApprovalsService.notifyAdminsOfRequest).toHaveBeenCalledWith(updated);
+    });
+
+    it('picking staff also needs approval', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ roleSelected: false }));
+      prisma.user.update.mockResolvedValue(buildUser({ role: Role.STAFF }));
+
+      await service.selectRole('user-1', 'staff');
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ approvalStatus: ApprovalStatus.PENDING }) }),
+      );
+    });
+
+    it('picking patient is approved straight away, with no admin alert', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ roleSelected: false }));
+      prisma.user.update.mockResolvedValue(buildUser({ role: Role.PATIENT, roleSelected: true }));
+
+      await service.selectRole('user-1', 'patient');
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ approvalStatus: ApprovalStatus.APPROVED }) }),
+      );
+      expect(accountApprovalsService.notifyAdminsOfRequest).not.toHaveBeenCalled();
     });
 
     it('throws ForbiddenException on a second call — role can only be picked once', async () => {

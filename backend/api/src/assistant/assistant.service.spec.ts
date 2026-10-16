@@ -10,7 +10,7 @@ jest.mock('@anthropic-ai/sdk', () => {
 });
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { InternalServerErrorException } from '@nestjs/common';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 import Anthropic from '@anthropic-ai/sdk';
@@ -77,7 +77,7 @@ describe('AssistantService', () => {
 
     it('throws a clear error instead of silently failing', async () => {
       await expect(service.chat(patient, { message: 'Show my appointments' })).rejects.toBeInstanceOf(
-        InternalServerErrorException,
+        ServiceUnavailableException,
       );
       expect(mockMessagesCreate).not.toHaveBeenCalled();
     });
@@ -183,6 +183,30 @@ describe('AssistantService', () => {
       const result = await service.chat(patient, { message: 'take me home' });
 
       expect(result.action).toEqual({ type: 'navigate_to_page', path: '/dashboard' });
+    });
+
+    it("sends the model neither the user's email nor an open appointment's free-text reason", async () => {
+      appointmentsService.listMine.mockResolvedValue([
+        {
+          id: 'appt-1',
+          doctorName: 'Dr. Grace Hopper',
+          scheduledAt: '2099-01-01T10:00:00.000Z',
+          mode: 'online',
+          status: 'scheduled',
+          reason: 'Follow-up on HIV treatment',
+        },
+      ]);
+      mockMessagesCreate.mockResolvedValueOnce({ content: [textBlock('This is your appointment.')] });
+
+      await service.chat(patient, {
+        message: 'What is this?',
+        context: { path: '/my-appointments', search: '?appointmentId=appt-1' },
+      });
+
+      const sent = JSON.stringify(mockMessagesCreate.mock.calls[0][0]);
+      expect(sent).toContain('Dr. Grace Hopper'); // the context itself still arrives
+      expect(sent).not.toContain(patient.email);
+      expect(sent).not.toContain('HIV');
     });
 
     it('returns plain text with no action when the model does not call a tool', async () => {

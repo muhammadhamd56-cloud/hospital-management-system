@@ -21,6 +21,19 @@ enum Role {
   STAFF
 }
 
+/**
+ * Whether an account may use the app beyond its own profile. Doctor and
+ * staff accounts that sign themselves up start PENDING until an admin
+ * vets them -- the DOCTOR/STAFF role grants access to patient data, so it
+ * can't be self-granted. Everyone else (patients, admin-created accounts)
+ * is APPROVED from the start.
+ */
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id                      String    @id @default(cuid())
   /**
@@ -53,6 +66,17 @@ model User {
    * (Google flow) or explicitly chosen a role at manual signup.
    */
   roleSelected            Boolean   @default(false)
+  /**
+   * See ApprovalStatus. Enforced by JwtAuthGuard on every route except the
+   * user's own /users/me endpoints. Defaults to APPROVED, so accounts that
+   * existed before approval was introduced keep working.
+   */
+  approvalStatus          ApprovalStatus @default(APPROVED)
+  approvalReviewedAt      DateTime?
+  /**
+   * Shown to the applicant when their request is rejected.
+   */
+  approvalNote            String?
   /**
    * Google accounts are verified by Google itself at signup. Local
    * accounts start false and must complete OTP email verification.
@@ -141,6 +165,8 @@ model User {
   emergencyNotes             EmergencyNote[]
 
   @@index([role])
+  // The admin review queue lists PENDING accounts.
+  @@index([approvalStatus])
 }
 
 /**
@@ -377,11 +403,11 @@ model Invoice {
   overdueNotifiedAt DateTime?
 
   /**
-   * Set when a patient starts an online payment (Stripe Checkout Session
-   * id). Lets the webhook handler confirm a `checkout.session.completed`
-   * event belongs to THIS invoice's most recent attempt -- without it, a
-   * stale/replayed webhook for an abandoned earlier session could
-   * incorrectly mark the invoice paid.
+   * The invoice's most recent Stripe Checkout Session id. Starting a new
+   * one (or cancelling the invoice) expires this one, so a patient can't
+   * complete two open checkout tabs and pay twice. The webhook does NOT
+   * require a match: a session that really took money is always recorded
+   * (deduped on Payment.stripePaymentIntentId).
    */
   stripeCheckoutSessionId String? @unique
 
@@ -447,8 +473,10 @@ model Payment {
    * Stripe's PaymentIntent id for a payment taken via Checkout -- needed to
    * call stripe.refunds.create() against it. Null for cash/bank/manually
    * recorded card payments, which have nothing to refund through Stripe.
+   * Unique so a redelivered (or concurrently delivered) Stripe webhook can
+   * never record the same charge twice.
    */
-  stripePaymentIntentId String?
+  stripePaymentIntentId String? @unique
 
   createdAt DateTime @default(now())
 
@@ -514,6 +542,9 @@ enum NotificationType {
   EMERGENCY_STATUS_UPDATED
   EMERGENCY_RESOLVED
   EMERGENCY_CANCELLED
+  ACCOUNT_APPROVAL_REQUESTED
+  ACCOUNT_APPROVED
+  ACCOUNT_REJECTED
 }
 
 model Notification {

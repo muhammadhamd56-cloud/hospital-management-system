@@ -30,7 +30,8 @@ export function ConsultationMarginCard() {
   }
 
   async function handleSave() {
-    const parsed = Number(draft)
+    // Number('') is 0 -- an emptied field must not silently save a $0 margin.
+    const parsed = draft.trim() === '' ? Number.NaN : Number(draft)
 
     if (!Number.isFinite(parsed) || parsed < 0) {
       toast.error('Enter a valid, non-negative amount')

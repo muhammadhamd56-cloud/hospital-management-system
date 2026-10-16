@@ -1,6 +1,8 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BedStatus, Prisma, Role, type Bed, type Department, type User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
+import { doctorHasPatient, doctorPatientIds } from '../common/doctor-patient';
 
 export interface BedResponse {
   id: string;
@@ -22,14 +24,15 @@ type BedWithPatient = Bed & {
   department: Pick<Department, 'name'>;
 };
 
-function toBedResponse(bed: BedWithPatient): BedResponse {
+/** `showPatient` false keeps the occupancy but hides who's in the bed. */
+function toBedResponse(bed: BedWithPatient, showPatient = true): BedResponse {
   return {
     id: bed.id,
     label: bed.label,
     department: bed.department.name,
     status: bed.status.toLowerCase() as BedResponse['status'],
-    patientId: bed.patientId,
-    patientName: bed.patient ? `${bed.patient.firstName} ${bed.patient.lastName}`.trim() : null,
+    patientId: showPatient ? bed.patientId : null,
+    patientName: showPatient && bed.patient ? `${bed.patient.firstName} ${bed.patient.lastName}`.trim() : null,
   };
 }
 
@@ -42,20 +45,28 @@ const PATIENT_INCLUDE = {
 export class BedsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(): Promise<BedListResponse> {
+  /**
+   * ADMIN sees every occupant. A DOCTOR sees the whole ward's occupancy (to
+   * find a free bed) but only the names of their own patients -- doctor
+   * accounts can be self-registered, so the role alone mustn't reveal who
+   * is admitted.
+   */
+  async findAll(caller: AuthenticatedUser): Promise<BedListResponse> {
     const beds = await this.prisma.bed.findMany({
       include: PATIENT_INCLUDE,
       orderBy: [{ department: { name: 'asc' } }, { label: 'asc' }],
     });
 
+    const ownPatients = caller.role === Role.DOCTOR ? new Set(await this.doctorPatients(caller.id)) : null;
+
     return {
-      beds: beds.map(toBedResponse),
+      beds: beds.map((bed) => toBedResponse(bed, !ownPatients || (bed.patientId !== null && ownPatients.has(bed.patientId)))),
       totalCount: beds.length,
       availableCount: beds.filter((bed) => bed.status === BedStatus.AVAILABLE).length,
     };
   }
 
-  async assign(bedId: string, patientId: string): Promise<BedResponse> {
+  async assign(caller: AuthenticatedUser, bedId: string, patientId: string): Promise<BedResponse> {
     const bed = await this.prisma.bed.findUnique({ where: { id: bedId } });
 
     if (!bed) {
@@ -69,6 +80,10 @@ export class BedsService {
     const patient = await this.prisma.user.findUnique({ where: { id: patientId } });
 
     if (!patient || patient.role !== Role.PATIENT) {
+      throw new BadRequestException('Patient not found');
+    }
+
+    if (caller.role === Role.DOCTOR && !(await this.isOwnPatient(caller.id, patientId))) {
       throw new BadRequestException('Patient not found');
     }
 
@@ -97,7 +112,7 @@ export class BedsService {
     }
   }
 
-  async release(bedId: string): Promise<BedResponse> {
+  async release(caller: AuthenticatedUser, bedId: string): Promise<BedResponse> {
     const bed = await this.prisma.bed.findUnique({ where: { id: bedId } });
 
     if (!bed) {
@@ -108,6 +123,10 @@ export class BedsService {
       throw new BadRequestException('Bed is not occupied');
     }
 
+    if (caller.role === Role.DOCTOR && !(bed.patientId && (await this.isOwnPatient(caller.id, bed.patientId)))) {
+      throw new ForbiddenException("Only an admin or the patient's own doctor can release this bed");
+    }
+
     const updated = await this.prisma.bed.update({
       where: { id: bedId },
       data: { status: BedStatus.AVAILABLE, patientId: null },
@@ -115,5 +134,15 @@ export class BedsService {
     });
 
     return toBedResponse(updated);
+  }
+
+  private async doctorPatients(userId: string): Promise<string[]> {
+    const doctor = await this.prisma.doctor.findUnique({ where: { userId }, select: { id: true } });
+    return doctor ? doctorPatientIds(this.prisma, doctor.id) : [];
+  }
+
+  private async isOwnPatient(userId: string, patientId: string): Promise<boolean> {
+    const doctor = await this.prisma.doctor.findUnique({ where: { userId }, select: { id: true } });
+    return doctor ? doctorHasPatient(this.prisma, doctor.id, patientId) : false;
   }
 }
