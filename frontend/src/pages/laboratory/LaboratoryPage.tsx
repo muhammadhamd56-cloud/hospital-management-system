@@ -101,10 +101,13 @@ export function LaboratoryPage() {
             {filteredTests.length} test{filteredTests.length === 1 ? '' : 's'}
           </p>
         </div>
-        <Button onClick={() => setRequestOpen(true)}>
-          <FlaskConical className="size-4" aria-hidden="true" />
-          Request Test
-        </Button>
+        {/* POST /laboratory/tests is admin/doctor-only */}
+        {(user?.role === 'admin' || user?.role === 'doctor') && (
+          <Button onClick={() => setRequestOpen(true)}>
+            <FlaskConical className="size-4" aria-hidden="true" />
+            Request Test
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

@@ -63,4 +63,13 @@ describe('OAuthCallbackPage', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not complete sign-in'))
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(ROUTES.login, { replace: true }))
   })
+
+  it('sends an MFA-enabled Google sign-in to the code step instead of completing the session', async () => {
+    renderAt('/oauth/callback?mfa=challenge-token')
+
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith(`${ROUTES.login}?mfa=challenge-token`, { replace: true }),
+    )
+    expect(mockCompleteOAuthCallback).not.toHaveBeenCalled()
+  })
 })

@@ -1,3 +1,4 @@
+import { formatCalendarDate } from '@/utils/datetime'
 import { useEffect, useState } from 'react'
 import { CalendarPlus, Lock, Pencil, Trash2, Unlock } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -129,7 +130,7 @@ export function OpeningsPanel() {
                     <StaffTypeBadge staffType={opening.requiredStaffType} />
                   </TableCell>
                   <TableCell>
-                    {formatDate(opening.date)}
+                    {formatCalendarDate(opening.date)}
                     <span className="block text-xs text-ink-muted">
                       {formatTime(opening.startTime)}–{formatTime(opening.endTime)}
                     </span>

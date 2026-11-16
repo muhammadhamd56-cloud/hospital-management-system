@@ -94,8 +94,10 @@ export class BedsService {
     }
 
     try {
+      // Conditional on still being AVAILABLE: two concurrent assigns of
+      // different patients to this bed must not both succeed.
       const updated = await this.prisma.bed.update({
-        where: { id: bedId },
+        where: { id: bedId, status: BedStatus.AVAILABLE },
         data: { status: BedStatus.OCCUPIED, patientId },
         include: PATIENT_INCLUDE,
       });
@@ -107,6 +109,9 @@ export class BedsService {
       // succeed even if both raced past the findUnique check.
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictException('This patient is already assigned to a bed');
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new ConflictException('Bed is no longer available');
       }
       throw error;
     }

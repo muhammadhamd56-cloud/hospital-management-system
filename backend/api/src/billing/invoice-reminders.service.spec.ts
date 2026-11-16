@@ -101,6 +101,20 @@ describe('InvoiceRemindersService', () => {
     expect(sent).toBe(0);
   });
 
+  it('still sends a notice for a past-due invoice that was partially refunded and still has a balance', async () => {
+    const invoice = buildOverdueInvoice({
+      payments: [
+        { id: 'payment-1', amount: 150, recordedBy: null, refunds: [{ amount: 40 }], createdAt: new Date() },
+      ],
+    });
+    prisma.invoice.findMany.mockResolvedValue([invoice]);
+
+    const sent = await service.sendOverdueNotices();
+
+    expect(emailService.sendInvoiceOverdueEmail).toHaveBeenCalled();
+    expect(sent).toBe(1);
+  });
+
   it('keeps processing remaining invoices when one fails partway through', async () => {
     const first = buildOverdueInvoice({ id: 'invoice-1' });
     const second = buildOverdueInvoice({ id: 'invoice-2', patientId: 'patient-2' });

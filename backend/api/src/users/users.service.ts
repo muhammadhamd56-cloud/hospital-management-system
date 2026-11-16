@@ -33,7 +33,7 @@ export class UsersService {
       data: {
         ...(dto.firstName !== undefined && { firstName: dto.firstName }),
         ...(dto.lastName !== undefined && { lastName: dto.lastName }),
-        ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(dto.phone !== undefined && { phone: dto.phone === '' ? null : dto.phone }),
         ...(dto.dateOfBirth !== undefined && {
           dateOfBirth: dto.dateOfBirth === '' ? null : new Date(dto.dateOfBirth),
         }),
@@ -124,6 +124,9 @@ export class UsersService {
         // reasoning on the forgot-password path.
         failedLoginAttempts: 0,
         lockedUntil: null,
+        // Sign out every other session (e.g. a stolen refresh cookie); the
+        // controller re-issues cookies for the caller's own session.
+        tokenVersion: { increment: 1 },
       },
     });
   }

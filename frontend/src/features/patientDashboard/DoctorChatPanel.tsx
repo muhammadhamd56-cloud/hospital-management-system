@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageCircle, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
@@ -62,6 +62,11 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
   }, [appointments, inboxDoctors])
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null)
+  // Read inside async callbacks to tell whether the user switched conversations meanwhile.
+  const selectedDoctorIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    selectedDoctorIdRef.current = selectedDoctorId
+  }, [selectedDoctorId])
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -71,26 +76,38 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
   const scrollRef = useAutoScrollToBottom(thread)
 
   useEffect(() => {
-    if (selectedDoctorId || doctorOptions.length === 0) return
+    // Wait for the inbox too: a ?doctorId= deep link may only be in the inbox
+    // (a thread without an appointment), and once a default is picked it sticks.
+    if (selectedDoctorId || doctorOptions.length === 0 || isInboxLoading) return
 
     if (initialDoctorId && doctorOptions.some((doctor) => doctor.doctorId === initialDoctorId)) {
       setSelectedDoctorId(initialDoctorId)
     } else {
       setSelectedDoctorId(doctorOptions[0].doctorId)
     }
-  }, [doctorOptions, selectedDoctorId, initialDoctorId])
+  }, [doctorOptions, selectedDoctorId, initialDoctorId, isInboxLoading])
 
   useEffect(() => {
     if (!selectedDoctorId) return
 
+    // Drop a slower response for a previously selected doctor.
+    let stale = false
     setIsLoading(true)
     getChatThread(selectedDoctorId)
-      .then((res) => setThread(res.thread))
+      .then((res) => {
+        if (!stale) setThread(res.thread)
+      })
       .catch((error) => {
+        if (stale) return
         const message = error instanceof ApiError ? error.message : 'Failed to load conversation'
         toast.error(message)
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [selectedDoctorId])
 
   const selectedDoctor = doctorOptions.find((doctor) => doctor.doctorId === selectedDoctorId)
@@ -122,7 +139,8 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
         imageUrl: imageUrl ?? undefined,
       })
       setTimeout(() => {
-        setThread(updated)
+        // Only replace the thread if this conversation is still the one open.
+        if (selectedDoctorIdRef.current === doctorId) setThread(updated)
         setIsTyping(false)
         setIsSending(false)
       }, 600)

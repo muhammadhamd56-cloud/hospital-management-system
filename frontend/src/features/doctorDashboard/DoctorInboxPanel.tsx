@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MessageCircle, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
@@ -25,6 +25,11 @@ interface DoctorInboxPanelProps {
 
 export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialPatientId }: DoctorInboxPanelProps) {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
+  // Read inside async callbacks to tell whether the doctor switched conversations meanwhile.
+  const selectedPatientIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    selectedPatientIdRef.current = selectedPatientId
+  }, [selectedPatientId])
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -45,14 +50,24 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
   useEffect(() => {
     if (!selectedPatientId) return
 
+    // Drop a slower response for a previously selected patient.
+    let stale = false
     setIsLoading(true)
     getDoctorChatThread(selectedPatientId)
-      .then((res) => setThread(res.thread))
+      .then((res) => {
+        if (!stale) setThread(res.thread)
+      })
       .catch((error) => {
+        if (stale) return
         const message = error instanceof ApiError ? error.message : 'Failed to load conversation'
         toast.error(message)
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [selectedPatientId])
 
   async function handleSend() {
@@ -80,7 +95,8 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
         body: body || undefined,
         imageUrl: imageUrl ?? undefined,
       })
-      setThread(updated)
+      // Only replace the thread if this conversation is still the one open.
+      if (selectedPatientIdRef.current === patientId) setThread(updated)
     } catch (error) {
       setThread((prev) => prev.filter((message) => message.id !== optimisticMessage.id))
       const message = error instanceof ApiError ? error.message : 'Failed to send message'

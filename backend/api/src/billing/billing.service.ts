@@ -116,6 +116,10 @@ export function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceRespons
   let status: InvoiceDisplayStatus;
   if (invoice.status === InvoiceStatus.CANCELLED) {
     status = 'cancelled';
+  } else if (remaining > 0.01 && isPastDue) {
+    // Checked before the refund labels: money still owed past the due date is
+    // overdue (for revenue overview + reminders) even if a refund happened.
+    status = 'overdue';
   } else if (totalRefunded > 0 && amountPaid <= 0.01) {
     status = 'refunded';
   } else if (totalRefunded > 0) {
@@ -497,8 +501,12 @@ export class BillingService {
       await tx.invoice.update({
         where: { id: invoiceId },
         data: {
+          // A cancelled invoice stays cancelled (e.g. refunding a payment that
+          // landed after cancellation) -- otherwise it becomes owed again.
           status:
-            response.remaining <= 0.01
+            updatedInvoice.status === InvoiceStatus.CANCELLED
+              ? InvoiceStatus.CANCELLED
+              : response.remaining <= 0.01
               ? InvoiceStatus.PAID
               : response.amountPaid > 0.01
                 ? InvoiceStatus.PARTIALLY_PAID

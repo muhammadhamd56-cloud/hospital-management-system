@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { AuditAction, InvoiceStatus, NotificationType, PaymentMethod, Prisma } from '@prisma/client';
@@ -96,10 +96,19 @@ export class StripeService {
       throw new InternalServerErrorException('Failed to start checkout session');
     }
 
-    await this.prisma.invoice.update({
-      where: { id: invoice.id },
+    // Compare-and-swap: only record this session if no concurrent request
+    // (e.g. a double-clicked "Pay") swapped in its own since we read the
+    // invoice. Otherwise two live sessions could both be paid -- so the loser
+    // expires the session it just created instead of leaving it payable.
+    const swapped = await this.prisma.invoice.updateMany({
+      where: { id: invoice.id, stripeCheckoutSessionId: invoice.previousSessionId ?? null },
       data: { stripeCheckoutSessionId: session.id },
     });
+
+    if (swapped.count === 0) {
+      await this.expireCheckoutSession(session.id);
+      throw new ConflictException('A payment for this invoice is already being started. Please try again.');
+    }
 
     return { url: session.url };
   }

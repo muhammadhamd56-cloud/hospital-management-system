@@ -15,7 +15,7 @@ jest.mock('stripe', () => {
 });
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InvoiceStatus, PaymentMethod, Prisma } from '@prisma/client';
 import Stripe from 'stripe';
@@ -42,7 +42,7 @@ function buildInvoiceRow(overrides: Record<string, unknown> = {}) {
 describe('StripeService', () => {
   let service: StripeService;
   let prisma: {
-    invoice: { update: jest.Mock; findUnique: jest.Mock };
+    invoice: { update: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock };
     payment: { create: jest.Mock; findFirst: jest.Mock };
     refund: { create: jest.Mock };
     $transaction: jest.Mock;
@@ -55,7 +55,7 @@ describe('StripeService', () => {
   async function buildService(values: Record<string, string | undefined>) {
     configService = { get: jest.fn((key: string) => values[key]) };
     prisma = {
-      invoice: { update: jest.fn(), findUnique: jest.fn() },
+      invoice: { update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn() },
       payment: { create: jest.fn().mockResolvedValue({ id: 'payment-new' }), findFirst: jest.fn() },
       refund: { create: jest.fn().mockResolvedValue(undefined) },
       // Runs the callback against the same mocks, as if inside the transaction.
@@ -154,8 +154,9 @@ describe('StripeService', () => {
             ],
           }),
         );
-        expect(prisma.invoice.update).toHaveBeenCalledWith({
-          where: { id: 'invoice-1' },
+        // Compare-and-swap against the session id read with the invoice.
+        expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+          where: { id: 'invoice-1', stripeCheckoutSessionId: null },
           data: { stripeCheckoutSessionId: 'cs_test_1' },
         });
         expect(result).toEqual({ url: 'https://checkout.stripe.com/cs_test_1' });
@@ -192,7 +193,17 @@ describe('StripeService', () => {
         await expect(
           service.createCheckoutSession({ id: 'invoice-1', description: 'August visit', amount: 150 }),
         ).rejects.toBeInstanceOf(InternalServerErrorException);
-        expect(prisma.invoice.update).not.toHaveBeenCalled();
+        expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('expires its own new session and 409s when a concurrent request already swapped in another', async () => {
+        mockSessionsCreate.mockResolvedValue({ id: 'cs_loser', url: 'https://checkout.stripe.com/cs_loser' });
+        prisma.invoice.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.createCheckoutSession({ id: 'invoice-1', description: 'x', amount: 150, previousSessionId: 'cs_old' }),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(mockSessionsExpire).toHaveBeenCalledWith('cs_loser');
       });
     });
 

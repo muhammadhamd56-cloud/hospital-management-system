@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/Input'
 import { PasswordInput } from '@/components/ui/PasswordInput'
@@ -30,7 +30,19 @@ export function ManualLoginForm() {
   const { login, verifyMfa } = useAuth()
   const navigate = useNavigate()
   const [role, setRole] = useState<Role>('patient')
-  const [mfaToken, setMfaToken] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Google sign-in for an MFA account lands here with ?mfa=<challenge>.
+  const [mfaToken, setMfaToken] = useState<string | null>(() => searchParams.get('mfa'))
+  useEffect(() => {
+    if (searchParams.has('mfa')) {
+      // Keep the challenge out of browser history once captured.
+      setSearchParams((params) => {
+        params.delete('mfa')
+        return params
+      }, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const {
     register,
     handleSubmit,

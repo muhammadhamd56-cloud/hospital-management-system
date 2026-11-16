@@ -1,4 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Response } from 'express';
+import { AuthService } from '../auth/auth.service';
+import { setAuthCookies } from '../auth/auth-cookies';
+import type { AppConfig } from '../config/configuration';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DemoAccountGuard } from '../demo/demo-account.guard';
 import { MfaService } from '../auth/mfa.service';
@@ -22,6 +27,8 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly mfaService: MfaService,
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
   ) {}
 
   @Get('me')
@@ -55,8 +62,12 @@ export class UsersController {
   async setPassword(
     @CurrentUser() currentUser: AuthenticatedUser,
     @Body() dto: SetPasswordDto,
+    @Res({ passthrough: true }) res: Response,
   ): Promise<UserResponseDto> {
     const user = await this.usersService.setPassword(currentUser.id, dto);
+    // setPassword bumped tokenVersion (signing out every other session); keep
+    // this one alive with a fresh token pair.
+    setAuthCookies(res, this.authService.issueTokens(user), this.configService.get<AppConfig['cookies']>('cookies') as AppConfig['cookies']);
     return new UserResponseDto(user);
   }
 

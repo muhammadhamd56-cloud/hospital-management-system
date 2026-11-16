@@ -83,7 +83,11 @@ export function PatientBillingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  const amountDue = useMemo(() => invoices.reduce((sum, i) => sum + i.remaining, 0), [invoices])
+  // A cancelled invoice keeps remaining = amount on the API side but isn't owed.
+  const amountDue = useMemo(
+    () => invoices.filter((i) => i.status !== 'cancelled').reduce((sum, i) => sum + i.remaining, 0),
+    [invoices],
+  )
 
   // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
   // Same "unpaid" definition already used to decide whether "Pay now" shows.

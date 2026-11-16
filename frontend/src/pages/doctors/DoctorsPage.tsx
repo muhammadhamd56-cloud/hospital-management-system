@@ -1,3 +1,4 @@
+import { useAuth } from '@/features/auth/useAuth'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { Search, UserPlus, Eye } from 'lucide-react'
@@ -43,6 +44,7 @@ const DEPARTMENT_FILTER_OPTIONS = [
 ]
 
 export function DoctorsPage() {
+  const { user } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [doctors, setDoctors] = useState<DirectoryDoctor[]>([])
@@ -118,10 +120,13 @@ export function DoctorsPage() {
             {filteredDoctors.length} doctor{filteredDoctors.length === 1 ? '' : 's'}
           </p>
         </div>
-        <Button onClick={() => setAddOpen(true)}>
-          <UserPlus className="size-4" aria-hidden="true" />
-          Add Doctor
-        </Button>
+        {/* POST /staff is admin-only */}
+        {user?.role === 'admin' && (
+          <Button onClick={() => setAddOpen(true)}>
+            <UserPlus className="size-4" aria-hidden="true" />
+            Add Doctor
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

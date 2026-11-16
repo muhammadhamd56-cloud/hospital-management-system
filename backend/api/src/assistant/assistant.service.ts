@@ -359,6 +359,8 @@ export class AssistantService {
   }
 
   private async listOwnAppointments(user: AuthenticatedUser) {
+    // STAFF can't reach /appointments, and findAllForAdmin only narrows for DOCTOR -- so gate here.
+    if (!isPatient(user.role) && !isDoctorOrAdmin(user.role)) return [];
     return isPatient(user.role)
       ? await this.appointmentsService.listMine(user.id)
       : await this.appointmentsService.findAllForAdmin(user);
@@ -414,6 +416,8 @@ export class AssistantService {
   }
 
   private async listOwnInvoices(user: AuthenticatedUser) {
+    // STAFF can't reach /billing, and billingService.findAll only narrows for DOCTOR -- so gate here.
+    if (!isPatient(user.role) && !isDoctorOrAdmin(user.role)) return [];
     return isPatient(user.role)
       ? await this.billingService.findMine(user.id)
       : await this.billingService.findAll(user);

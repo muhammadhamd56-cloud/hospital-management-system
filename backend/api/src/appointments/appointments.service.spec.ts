@@ -130,7 +130,8 @@ describe('AppointmentsService', () => {
   beforeEach(async () => {
     prisma = {
       appointment: {
-        findMany: jest.fn(),
+        // Default: no overlapping-session candidates.
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -307,26 +308,33 @@ describe('AppointmentsService', () => {
 
     it('throws ConflictException when the doctor already has a scheduled appointment at that time', async () => {
       prisma.doctor.findUnique.mockResolvedValue(bookableDoctor());
-      prisma.appointment.findFirst.mockResolvedValue(buildAppointment());
+      prisma.appointment.findMany.mockResolvedValueOnce([
+        { scheduledAt: new Date('2099-01-01T10:00:00.000Z'), doctor: { appointmentDurationMinutes: 30 } },
+      ]);
 
       await expect(service.book('patient-1', dto)).rejects.toBeInstanceOf(ConflictException);
 
-      expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+      expect(prisma.appointment.findMany).toHaveBeenCalledWith({
         where: {
           doctorId: 'doctor-1',
           status: AppointmentStatus.SCHEDULED,
-          // One 30-minute session-length either side of 10:00.
-          scheduledAt: { gt: new Date('2099-01-01T09:30:00.000Z'), lt: new Date('2099-01-01T10:30:00.000Z') },
+          // Anything that started up to the longest session length (240 min)
+          // before 10:00, up to this 30-minute session's end.
+          scheduledAt: { gt: new Date('2099-01-01T06:00:00.000Z'), lt: new Date('2099-01-01T10:30:00.000Z') },
         },
-        select: { id: true },
+        select: { scheduledAt: true, doctor: { select: { appointmentDurationMinutes: true } } },
       });
       expect(prisma.appointment.create).not.toHaveBeenCalled();
     });
 
     it("rejects a session that overlaps the doctor's existing one without starting at the same instant", async () => {
       prisma.doctor.findUnique.mockResolvedValue(bookableDoctor({ appointmentDurationMinutes: 30 }));
-      // First findFirst = doctor overlap check; the 10:00 session overlaps 10:05.
-      prisma.appointment.findFirst.mockResolvedValueOnce({ id: 'appt-at-10' }).mockResolvedValueOnce(null);
+      // First findMany = doctor overlap check; the 10:00 session overlaps 10:05.
+      prisma.appointment.findMany
+        .mockResolvedValueOnce([
+          { scheduledAt: new Date('2099-01-01T10:00:00.000Z'), doctor: { appointmentDurationMinutes: 30 } },
+        ])
+        .mockResolvedValueOnce([]);
 
       await expect(
         service.book('patient-1', { ...dto, scheduledAt: '2099-01-01T10:05:00.000Z' }),
@@ -336,10 +344,39 @@ describe('AppointmentsService', () => {
 
     it('rejects a booking that overlaps one of the patient\'s own sessions with another doctor', async () => {
       prisma.doctor.findUnique.mockResolvedValue(bookableDoctor());
-      prisma.appointment.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'other-doctor-appt' });
+      prisma.appointment.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { scheduledAt: new Date('2099-01-01T10:00:00.000Z'), doctor: { appointmentDurationMinutes: 30 } },
+        ]);
 
       await expect(service.book('patient-1', dto)).rejects.toThrow('You already have another appointment at that time');
       expect(prisma.appointment.create).not.toHaveBeenCalled();
+    });
+
+    it("uses the existing session's own length: a 60-min visit at 9:30 still blocks a 15-min one at 10:00", async () => {
+      prisma.doctor.findUnique.mockResolvedValue(bookableDoctor({ appointmentDurationMinutes: 15 }));
+      prisma.appointment.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { scheduledAt: new Date('2099-01-01T09:30:00.000Z'), doctor: { appointmentDurationMinutes: 60 } },
+        ]);
+
+      await expect(service.book('patient-1', dto)).rejects.toThrow('You already have another appointment at that time');
+      expect(prisma.appointment.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a session that starts exactly when an earlier one ends', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(bookableDoctor());
+      prisma.appointment.findMany
+        .mockResolvedValueOnce([
+          { scheduledAt: new Date('2099-01-01T09:30:00.000Z'), doctor: { appointmentDurationMinutes: 30 } },
+        ])
+        .mockResolvedValueOnce([]);
+      prisma.appointment.create.mockResolvedValue(buildAppointmentWithDoctorAndPatient());
+
+      await service.book('patient-1', dto);
+      expect(prisma.appointment.create).toHaveBeenCalled();
     });
 
     it('refuses to book a doctor who has marked themselves unavailable', async () => {
@@ -496,6 +533,18 @@ describe('AppointmentsService', () => {
   });
 
   describe('cancel', () => {
+    const FUTURE = new Date('2099-01-01T10:00:00.000Z');
+
+    it('refuses to cancel a session whose start time has already passed (it may have happened)', async () => {
+      prisma.appointment.findUnique.mockResolvedValue(
+        buildAppointment({ patientId: 'patient-1', scheduledAt: new Date('2000-01-01T10:00:00.000Z') }),
+      );
+
+      await expect(service.cancel('patient-1', 'appt-1')).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
+      expect(billingService.cancelInvoiceForAppointment).not.toHaveBeenCalled();
+    });
+
     it('throws NotFoundException when the appointment does not exist', async () => {
       prisma.appointment.findUnique.mockResolvedValue(null);
 
@@ -522,7 +571,7 @@ describe('AppointmentsService', () => {
     );
 
     it('409s when the doctor completed the session between the check and the write', async () => {
-      prisma.appointment.findUnique.mockResolvedValue(buildAppointment({ patientId: 'patient-1' }));
+      prisma.appointment.findUnique.mockResolvedValue(buildAppointment({ patientId: 'patient-1', scheduledAt: FUTURE }));
       prisma.appointment.update.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: 'test' }),
       );
@@ -532,7 +581,7 @@ describe('AppointmentsService', () => {
     });
 
     it('cancels the appointment and notifies the doctor', async () => {
-      prisma.appointment.findUnique.mockResolvedValue(buildAppointment({ patientId: 'patient-1' }));
+      prisma.appointment.findUnique.mockResolvedValue(buildAppointment({ patientId: 'patient-1', scheduledAt: FUTURE }));
       const updated = buildAppointmentWithDoctorAndPatient({
         patientId: 'patient-1',
         status: AppointmentStatus.CANCELLED,

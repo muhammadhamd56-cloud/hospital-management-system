@@ -127,6 +127,9 @@ export class TasksService {
     }
 
     const reassigned = dto.assignedToId !== undefined && dto.assignedToId !== existing.assignedToId;
+    // A new deadline also needs its own due-soon / overdue notifications.
+    const dueChanged = dueAt.getTime() !== existing.dueAt.getTime();
+    const resetReminders = reassigned || dueChanged;
 
     const task = await this.prisma.task.update({
       where: { id },
@@ -138,8 +141,8 @@ export class TasksService {
         departmentId,
         assignedToId: dto.assignedToId ?? existing.assignedToId,
         // A reassignment gets a fresh notification window on the new assignee.
-        reminderSentAt: reassigned ? null : existing.reminderSentAt,
-        overdueNotifiedAt: reassigned ? null : existing.overdueNotifiedAt,
+        reminderSentAt: resetReminders ? null : existing.reminderSentAt,
+        overdueNotifiedAt: resetReminders ? null : existing.overdueNotifiedAt,
       },
       include: INCLUDE,
     });

@@ -257,10 +257,14 @@ export class ShiftsService {
     const departmentId =
       dto.department !== undefined ? await this.resolveDepartmentId(dto.department) : existing.departmentId;
 
-    const scheduleChanged = dto.staffId !== undefined || dto.startTime !== undefined || dto.endTime !== undefined;
+    const scheduleChanged =
+      dto.staffId !== undefined || dto.startTime !== undefined || dto.endTime !== undefined || dto.date !== undefined;
 
     const newStatus = dto.status ? toPrismaShiftStatus(dto.status) : existing.status;
     const isNewlyCancelled = newStatus === ShiftStatus.CANCELLED && existing.status !== ShiftStatus.CANCELLED;
+    // Un-cancelling: the slot may have been rebooked while this shift was
+    // cancelled (the overlap check ignores cancelled shifts).
+    const isReactivated = existing.status === ShiftStatus.CANCELLED && newStatus !== ShiftStatus.CANCELLED;
 
     const updateData = {
       staffId,
@@ -292,6 +296,38 @@ export class ShiftsService {
               tx,
             );
 
+            return tx.staffShift.update({ where: { id }, data: updateData, include: INCLUDE });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+          throw new ConflictException(CONFLICT_MESSAGE);
+        }
+        throw error;
+      }
+    } else if (isReactivated) {
+      // Times unchanged, so only re-check what can have changed meanwhile:
+      // the staff member's active flag and overlapping live shifts.
+      try {
+        shift = await this.prisma.$transaction(
+          async (tx) => {
+            const staff = await tx.staff.findUnique({ where: { id: staffId } });
+            if (!staff?.isActive) {
+              throw new BadRequestException('This staff member is not active and cannot be scheduled');
+            }
+            const overlapping = await tx.staffShift.findFirst({
+              where: {
+                staffId,
+                status: { not: ShiftStatus.CANCELLED },
+                id: { not: id },
+                startTime: { lt: endTime },
+                endTime: { gt: startTime },
+              },
+            });
+            if (overlapping) {
+              throw new ConflictException(CONFLICT_MESSAGE);
+            }
             return tx.staffShift.update({ where: { id }, data: updateData, include: INCLUDE });
           },
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -464,6 +500,13 @@ export class ShiftsService {
     try {
       shift = await this.prisma.$transaction(
         async (tx) => {
+          // Same active check a direct assignment gets (assertValidAssignment):
+          // the applicant may have been deactivated since applying.
+          const staff = await tx.staff.findUnique({ where: { id: params.staffId } });
+          if (!staff?.isActive) {
+            throw new BadRequestException('This staff member is not active and cannot be scheduled');
+          }
+
           await this.assertNoSchedulingConflict(
             {
               staffId: params.staffId,

@@ -73,6 +73,7 @@ describe('MfaService', () => {
 
   describe('startSetup', () => {
     it('generates and saves a new secret, returning it with a scannable QR code', async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaEnabled: false }));
       const result = await service.startSetup('user-1', 'ada@example.com');
 
       expect(prisma.user.update).toHaveBeenCalledWith({
@@ -81,6 +82,13 @@ describe('MfaService', () => {
       });
       expect(result.secret).toEqual(expect.any(String));
       expect(result.qrCodeDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    });
+
+    it('refuses to overwrite the secret while MFA is already enabled', async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaEnabled: true }));
+
+      await expect(service.startSetup('user-1', 'ada@example.com')).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 

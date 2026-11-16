@@ -30,6 +30,9 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
   const [availability, setAvailability] = useState<DayAvailability[]>(defaultAvailability())
   const [leave, setLeave] = useState<Leave[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  // Which staff member the on-screen availability actually belongs to (null
+  // while loading or after a failed load) -- Save is blocked unless it matches.
+  const [loadedStaffId, setLoadedStaffId] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [leaveDate, setLeaveDate] = useState('')
   const [leaveReason, setLeaveReason] = useState('')
@@ -45,14 +48,27 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
   useEffect(() => {
     if (!staffId) return
 
+    // Ignore a slower response for a previously selected staff member -- it
+    // would otherwise show (and then save) their schedule under this one.
+    let stale = false
     setIsLoading(true)
+    setLoadedStaffId(null)
     Promise.all([getAvailability(staffId), listLeave(staffId)])
       .then(([availabilityRes, leaveRes]) => {
+        if (stale) return
         setAvailability(availabilityRes.availability)
         setLeave(leaveRes.leave)
+        setLoadedStaffId(staffId)
       })
-      .catch((error) => toast.error(error instanceof ApiError ? error.message : 'Failed to load availability'))
-      .finally(() => setIsLoading(false))
+      .catch((error) => {
+        if (!stale) toast.error(error instanceof ApiError ? error.message : 'Failed to load availability')
+      })
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [staffId])
 
   function updateDay(day: DayAvailability['dayOfWeek'], patch: Partial<DayAvailability>) {
@@ -60,6 +76,7 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
   }
 
   async function handleSaveAvailability() {
+    if (loadedStaffId !== staffId) return
     setIsSaving(true)
     try {
       const result = await saveAvailability(staffId, availability)
@@ -173,7 +190,7 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
               ))}
             </div>
             <div className="mt-4 flex justify-end">
-              <Button onClick={handleSaveAvailability} isLoading={isSaving}>
+              <Button onClick={handleSaveAvailability} isLoading={isSaving} disabled={loadedStaffId !== staffId}>
                 Save availability
               </Button>
             </div>

@@ -29,6 +29,14 @@ export class MfaService {
    * with a valid code from it.
    */
   async startSetup(userId: string, email: string): Promise<{ secret: string; qrCodeDataUrl: string }> {
+    // Overwriting the secret of an already-enabled MFA would instantly break the
+    // user's authenticator (and let a hijacked session take over the second
+    // factor without the password that disable() requires).
+    const existing = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (existing.mfaEnabled) {
+      throw new BadRequestException('MFA is already enabled. Disable it first to set it up again.');
+    }
+
     const secret = generateSecret();
     await this.prisma.user.update({ where: { id: userId }, data: { mfaSecret: secret } });
 

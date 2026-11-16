@@ -23,6 +23,14 @@ export function OAuthCallbackPage() {
       return
     }
 
+    // MFA-enabled account: Google sign-in only got us a challenge. Hand it to
+    // the login form, which asks for the authenticator code.
+    const mfaToken = searchParams.get('mfa')
+    if (mfaToken) {
+      navigate(`${ROUTES.login}?mfa=${encodeURIComponent(mfaToken)}`, { replace: true })
+      return
+    }
+
     completeOAuthCallback()
       .then(() => navigate(ROUTES.dashboard, { replace: true }))
       .catch(() => {

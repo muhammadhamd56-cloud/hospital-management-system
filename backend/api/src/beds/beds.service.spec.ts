@@ -214,7 +214,8 @@ describe('BedsService', () => {
       const result = await service.assign(admin, 'bed-1', 'user-1');
 
       expect(prisma.bed.update).toHaveBeenCalledWith({
-        where: { id: 'bed-1' },
+        // Conditional on still being available (concurrent assigns).
+        where: { id: 'bed-1', status: BedStatus.AVAILABLE },
         data: { status: BedStatus.OCCUPIED, patientId: 'user-1' },
         include: {
           patient: { select: { firstName: true, lastName: true } },

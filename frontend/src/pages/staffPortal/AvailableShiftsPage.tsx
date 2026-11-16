@@ -1,3 +1,4 @@
+import { formatCalendarDate } from '@/utils/datetime'
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarPlus, Inbox } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -137,7 +138,7 @@ export function AvailableShiftsPage() {
                       const deadlinePassed = new Date(opening.applicationDeadline).getTime() < Date.now()
                       return (
                         <TableRow key={opening.id}>
-                          <TableCell>{formatDate(opening.date)}</TableCell>
+                          <TableCell>{formatCalendarDate(opening.date)}</TableCell>
                           <TableCell>
                             <ShiftTypeBadge shiftType={opening.shiftType} />
                           </TableCell>
@@ -194,7 +195,7 @@ export function AvailableShiftsPage() {
                   <TableBody>
                     {sortedApplications.map((application) => (
                       <TableRow key={application.id}>
-                        <TableCell>{formatDate(application.opening.date)}</TableCell>
+                        <TableCell>{formatCalendarDate(application.opening.date)}</TableCell>
                         <TableCell>
                           <ShiftTypeBadge shiftType={application.opening.shiftType} />
                         </TableCell>

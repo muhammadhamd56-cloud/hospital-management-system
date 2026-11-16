@@ -174,8 +174,22 @@ export class AuthController {
     const clientUrl = this.configService.get<string>('clientUrl');
 
     try {
-      const profile = req.user as GoogleProfilePayload;
+      const profile = req.user as GoogleProfilePayload | null;
+      if (!profile) {
+        // Consent cancelled or Google returned an error (see GoogleAuthGuard.handleRequest).
+        throw new Error('Google authentication did not return a profile');
+      }
       const user = await this.authService.validateGoogleUser(profile);
+
+      // Google proves control of the email, not the second factor. MFA
+      // accounts get the same short-lived challenge as password login and
+      // finish via POST /auth/mfa/verify; no session cookies yet.
+      if (user.mfaEnabled) {
+        const mfaToken = this.mfaService.issueChallenge(user.id);
+        res.redirect(`${clientUrl}/oauth/callback?mfa=${encodeURIComponent(mfaToken)}`);
+        return;
+      }
+
       setAuthCookies(res, this.authService.issueTokens(user), this.cookieConfig());
 
       this.logger.log(`OAuth success for ${user.email}`);

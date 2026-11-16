@@ -1,3 +1,4 @@
+import { formatCalendarDate } from '@/utils/datetime'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { Modal } from '@/components/ui/Modal'
@@ -48,7 +49,7 @@ export function RespondApplicationModal({ application, decision, onClose, onResp
       title={decision === 'approve' ? 'Approve application?' : 'Reject application?'}
       description={
         application
-          ? `${application.staff.fullName} applied for the ${application.opening.shiftType} shift on ${new Date(application.opening.date).toLocaleDateString()}.`
+          ? `${application.staff.fullName} applied for the ${application.opening.shiftType} shift on ${formatCalendarDate(application.opening.date)}.`
           : undefined
       }
     >
