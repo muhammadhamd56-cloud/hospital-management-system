@@ -6,7 +6,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { randomInt } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { ApprovalStatus, Role, User } from '@prisma/client';
@@ -40,6 +40,10 @@ const PASSWORD_RESET_MAX_ATTEMPTS = 5;
  */
 const LOGIN_MAX_FAILED_ATTEMPTS = 10;
 const LOGIN_LOCKOUT_MINUTES = 15;
+
+/** A real bcrypt hash (current cost) of a random value, compared against
+ *  when the email is unknown so that path costs the same as a wrong password. */
+const TIMING_DUMMY_HASH = hashPassword(randomBytes(16).toString('hex'));
 
 @Injectable()
 export class AuthService {
@@ -250,8 +254,17 @@ export class AuthService {
     });
 
     // Only now -- with a proven email -- does the request reach the admins' queue.
+    // The email is already verified at this point: a failed admin notification
+    // must not turn this into a 500 (the user would think verification failed).
     if (verified.approvalStatus === ApprovalStatus.PENDING) {
-      await this.accountApprovalsService.notifyAdminsOfRequest(verified);
+      try {
+        await this.accountApprovalsService.notifyAdminsOfRequest(verified);
+      } catch (error) {
+        this.logger.error(
+          `Approval request notification failed for user ${verified.id}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
     }
 
     return verified;
@@ -261,6 +274,9 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
     if (!user || !user.password) {
+      // Spend the same bcrypt time as a real wrong-password check, so response
+      // timing doesn't reveal whether the email is registered.
+      await verifyPassword(dto.password, await TIMING_DUMMY_HASH);
       throw new UnauthorizedException(
         user
           ? 'This account uses Google sign-in. Use "Continue with Google" instead.'

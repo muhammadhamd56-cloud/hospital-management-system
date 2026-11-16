@@ -485,6 +485,10 @@ export class BillingService {
           Math.round(amount * 100),
           idempotencyKey,
         );
+        if (refund.status === 'failed' || refund.status === 'canceled') {
+          // Nothing went back to the patient -- don't record it as refunded.
+          throw new BadRequestException(`Stripe could not process this refund (${refund.failure_reason ?? refund.status})`);
+        }
         stripeRefundId = refund.id;
       }
 

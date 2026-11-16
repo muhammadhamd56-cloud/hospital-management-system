@@ -185,6 +185,13 @@ export class StripeService {
       return;
     }
 
+    // A refund can be accepted (and recorded) and then fail later, e.g. the
+    // card was closed. Subscribe the endpoint to these events in Stripe.
+    if (event.type === 'refund.failed' || event.type === 'refund.updated') {
+      await this.reverseFailedRefund(event.data.object as Stripe.Refund);
+      return;
+    }
+
     if (event.type !== 'checkout.session.completed' && event.type !== 'checkout.session.async_payment_succeeded') {
       return;
     }
@@ -389,5 +396,54 @@ export class StripeService {
       `A refund of ${synced.totalRefunded.toFixed(2)} was issued for Invoice ${formatInvoiceNumber(synced.invoice.invoiceNumber)}.`,
       `/billing?invoiceId=${synced.invoice.id}`,
     );
+  }
+
+  /**
+   * Undoes our Refund row for a Stripe refund that ended up failed or
+   * canceled -- that money never went back, so the invoice must count it as
+   * paid again. Idempotent: redeliveries (or a refund we never recorded) are
+   * no-ops. Runs under the same invoice lock as the other money writes.
+   */
+  private async reverseFailedRefund(refund: Stripe.Refund): Promise<void> {
+    if (refund.status !== 'failed' && refund.status !== 'canceled') return;
+
+    const recorded = await this.prisma.refund.findUnique({
+      where: { stripeRefundId: refund.id },
+      select: { payment: { select: { invoiceId: true } } },
+    });
+
+    if (!recorded) return;
+
+    const invoiceId = recorded.payment.invoiceId;
+
+    const reversed = await this.prisma.$transaction(async (tx) => {
+      await lockInvoice(tx, invoiceId);
+      const deleted = await tx.refund.deleteMany({ where: { stripeRefundId: refund.id } });
+      if (deleted.count === 0) return null;
+
+      const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { items: true, payments: { include: { refunds: true } } },
+      });
+      if (!invoice) return null;
+
+      const { amountPaid, remaining } = balanceOf(invoice);
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          status: statusFor(invoice, amountPaid, remaining),
+          paidAt: remaining <= 0.01 ? (invoice.paidAt ?? new Date()) : null,
+        },
+      });
+
+      return invoice;
+    }, MONEY_TX_OPTIONS);
+
+    if (reversed) {
+      this.logger.warn(
+        `Stripe refund ${refund.id} ${refund.status} (${refund.failure_reason ?? 'no reason given'}) -- ` +
+          `removed it from invoice ${reversed.id}; staff should follow up with the patient`,
+      );
+    }
   }
 }

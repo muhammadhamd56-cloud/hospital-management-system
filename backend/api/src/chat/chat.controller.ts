@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -7,7 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { ChatService, type ChatInboxDoctor } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
-import type { ChatMessageResponse } from './chat.mapper';
+import type { ChatThreadPage } from './chat-thread';
 
 /** Patient-side chat — a patient can message any doctor directly, no prior appointment required. */
 @Controller('chat')
@@ -26,9 +26,10 @@ export class ChatController {
   async getThread(
     @CurrentUser() user: AuthenticatedUser,
     @Param('doctorId') doctorId: string,
-  ): Promise<{ thread: ChatMessageResponse[] }> {
-    const thread = await this.chatService.getThread(user.id, doctorId);
-    return { thread };
+    // Message id: returns the page just older than it (for "load earlier").
+    @Query('before') before?: string,
+  ): Promise<ChatThreadPage> {
+    return this.chatService.getThread(user.id, doctorId, before);
   }
 
   @Post(':doctorId')
@@ -36,8 +37,7 @@ export class ChatController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('doctorId') doctorId: string,
     @Body() dto: SendMessageDto,
-  ): Promise<{ thread: ChatMessageResponse[] }> {
-    const thread = await this.chatService.sendMessage(user.id, doctorId, dto);
-    return { thread };
+  ): Promise<ChatThreadPage> {
+    return this.chatService.sendMessage(user.id, doctorId, dto);
   }
 }

@@ -100,6 +100,7 @@ export function ShiftOpeningFormModal({ isOpen, onClose, opening, onSaved }: Shi
             department: parsed.department || undefined,
             date: parsed.date,
             startTime,
+            localStartTime: parsed.startTime,
             endTime,
             shiftType: parsed.shiftType,
             positions: parsed.positions,

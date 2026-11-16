@@ -44,7 +44,7 @@ describe('StripeService', () => {
   let prisma: {
     invoice: { update: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock };
     payment: { create: jest.Mock; findFirst: jest.Mock };
-    refund: { create: jest.Mock };
+    refund: { create: jest.Mock; findUnique: jest.Mock; deleteMany: jest.Mock };
     $transaction: jest.Mock;
     $queryRaw: jest.Mock;
   };
@@ -57,7 +57,11 @@ describe('StripeService', () => {
     prisma = {
       invoice: { update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn() },
       payment: { create: jest.fn().mockResolvedValue({ id: 'payment-new' }), findFirst: jest.fn() },
-      refund: { create: jest.fn().mockResolvedValue(undefined) },
+      refund: {
+        create: jest.fn().mockResolvedValue(undefined),
+        findUnique: jest.fn().mockResolvedValue(null),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       // Runs the callback against the same mocks, as if inside the transaction.
       $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
       $queryRaw: jest.fn().mockResolvedValue([]),
@@ -230,6 +234,51 @@ describe('StripeService', () => {
     });
 
     describe('handleWebhook', () => {
+      describe('failed / canceled refunds', () => {
+        const paidInvoice = {
+          id: 'invoice-1',
+          status: 'PARTIALLY_PAID',
+          paidAt: null,
+          discount: 0,
+          tax: 0,
+          items: [{ quantity: 1, unitPrice: 100, discount: 0 }],
+          payments: [{ amount: 100, refunds: [] }],
+        };
+
+        it('removes our record of a refund that failed after being accepted, and re-marks the invoice paid', async () => {
+          mockConstructEvent.mockReturnValue({ type: 'refund.failed', data: { object: { id: 're_1', status: 'failed' } } });
+          prisma.refund.findUnique.mockResolvedValue({ payment: { invoiceId: 'invoice-1' } });
+          prisma.invoice.findUnique.mockResolvedValue(paidInvoice);
+
+          await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+          expect(prisma.refund.deleteMany).toHaveBeenCalledWith({ where: { stripeRefundId: 're_1' } });
+          expect(prisma.invoice.update).toHaveBeenCalledWith({
+            where: { id: 'invoice-1' },
+            data: { status: 'PAID', paidAt: expect.any(Date) },
+          });
+        });
+
+        it('ignores a refund.updated that is still pending or succeeded', async () => {
+          mockConstructEvent.mockReturnValue({ type: 'refund.updated', data: { object: { id: 're_1', status: 'succeeded' } } });
+
+          await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+          expect(prisma.refund.findUnique).not.toHaveBeenCalled();
+          expect(prisma.refund.deleteMany).not.toHaveBeenCalled();
+        });
+
+        it('is a no-op for a failed refund we never recorded (or a redelivery)', async () => {
+          mockConstructEvent.mockReturnValue({ type: 'refund.failed', data: { object: { id: 're_x', status: 'failed' } } });
+          prisma.refund.findUnique.mockResolvedValue(null);
+
+          await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+          expect(prisma.refund.deleteMany).not.toHaveBeenCalled();
+          expect(prisma.invoice.update).not.toHaveBeenCalled();
+        });
+      });
+
       function buildEvent(overrides: Record<string, unknown> = {}, type = 'checkout.session.completed') {
         return {
           type,

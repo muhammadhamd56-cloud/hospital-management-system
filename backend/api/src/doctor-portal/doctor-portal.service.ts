@@ -13,7 +13,7 @@ import {
   DoctorAppointmentResponse,
   toDoctorAppointmentResponse,
 } from '../appointments/appointment.mapper';
-import { ChatMessageResponse, toChatMessageResponse } from '../chat/chat.mapper';
+import { loadThreadPage, type ChatThreadPage } from '../chat/chat-thread';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
 import { CreateMedicalRecordDto } from '../medical-records/dto/create-medical-record.dto';
@@ -232,19 +232,13 @@ export class DoctorPortalService {
     }
   }
 
-  async getThread(userId: string, patientId: string): Promise<ChatMessageResponse[]> {
+  async getThread(userId: string, patientId: string, before?: string): Promise<ChatThreadPage> {
     const doctor = await this.requireLinkedDoctor(userId);
     await this.assertRelationship(doctor.id, patientId);
-
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { doctorId: doctor.id, patientId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return messages.map(toChatMessageResponse);
+    return loadThreadPage(this.prisma, { doctorId: doctor.id, patientId }, before);
   }
 
-  async sendMessage(userId: string, patientId: string, dto: SendMessageDto): Promise<ChatMessageResponse[]> {
+  async sendMessage(userId: string, patientId: string, dto: SendMessageDto): Promise<ChatThreadPage> {
     const body = dto.body?.trim() ?? '';
     if (!body && !dto.imageUrl) {
       throw new BadRequestException('Message cannot be empty');
@@ -266,12 +260,7 @@ export class DoctorPortalService {
       `/messages?doctorId=${doctor.id}`,
     );
 
-    const thread = await this.prisma.chatMessage.findMany({
-      where: { doctorId: doctor.id, patientId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return thread.map(toChatMessageResponse);
+    return loadThreadPage(this.prisma, { doctorId: doctor.id, patientId });
   }
 
   async listPatientMedicalRecords(userId: string, patientId: string): Promise<MedicalRecordResponse[]> {

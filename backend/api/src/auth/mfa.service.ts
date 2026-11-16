@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, BadRequestException, HttpException, HttpStatus, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { generateSecret, generateURI, verify } from 'otplib';
 import * as QRCode from 'qrcode';
@@ -9,10 +9,15 @@ import { hashPassword, verifyPassword } from './password.util';
 
 const MFA_CHALLENGE_EXPIRY = '5m';
 const BACKUP_CODE_COUNT = 8;
+/** Wrong codes allowed per account before the code step locks. */
+const MFA_MAX_FAILED_ATTEMPTS = 5;
+const MFA_LOCKOUT_MINUTES = 15;
 
 interface MfaChallengePayload {
   sub: string;
   purpose: 'mfa-challenge';
+  /** Matched against User.mfaChallengeId -- makes the challenge single-use. */
+  jti: string;
 }
 
 @Injectable()
@@ -99,8 +104,11 @@ export class MfaService {
    * JwtPayload (no email/role/tokenVersion) so JwtStrategy.validate() can
    * never mistake it for a real access token even if someone tried.
    */
-  issueChallenge(userId: string): string {
-    const payload: MfaChallengePayload = { sub: userId, purpose: 'mfa-challenge' };
+  async issueChallenge(userId: string): Promise<string> {
+    const jti = randomBytes(16).toString('hex');
+    // Only the newest challenge is valid; issuing one supersedes any other.
+    await this.prisma.user.update({ where: { id: userId }, data: { mfaChallengeId: jti } });
+    const payload: MfaChallengePayload = { sub: userId, purpose: 'mfa-challenge', jti };
     return this.jwtService.sign(payload, { expiresIn: MFA_CHALLENGE_EXPIRY });
   }
 
@@ -125,29 +133,86 @@ export class MfaService {
       throw new UnauthorizedException('Invalid login session');
     }
 
+    if (user.mfaLockedUntil && user.mfaLockedUntil.getTime() > Date.now()) {
+      const minutes = Math.ceil((user.mfaLockedUntil.getTime() - Date.now()) / 60_000);
+      throw new HttpException(
+        `Too many incorrect codes. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Single-use: a used, superseded (newer login) or locked-out challenge no
+    // longer matches the stored id.
+    if (!payload.jti || payload.jti !== user.mfaChallengeId) {
+      throw new UnauthorizedException('This login attempt has expired. Please sign in again.');
+    }
+
+    const verified = await this.checkCode(user, code);
+
+    if (!verified) {
+      await this.registerFailedAttempt(user);
+      throw new UnauthorizedException('Incorrect code');
+    }
+
+    // Consume the challenge atomically: of two concurrent requests with the
+    // same token (and a valid code) only one gets through.
+    const consumed = await this.prisma.user.updateMany({
+      where: { id: user.id, mfaChallengeId: payload.jti },
+      data: {
+        mfaChallengeId: null,
+        mfaFailedAttempts: 0,
+        mfaLockedUntil: null,
+        ...(verified.usedBackupHash && {
+          mfaBackupCodeHashes: user.mfaBackupCodeHashes.filter((h) => h !== verified.usedBackupHash),
+        }),
+      },
+    });
+
+    if (consumed.count === 0) {
+      throw new UnauthorizedException('This login attempt has expired. Please sign in again.');
+    }
+
+    return user;
+  }
+
+  /** TOTP first, then a single-use backup code. Returns null if neither matches. */
+  private async checkCode(user: User, code: string): Promise<{ usedBackupHash: string | null } | null> {
     // otplib's verify() throws (rather than returning { valid: false }) for
     // input that isn't shaped like a TOTP token at all -- a backup code is
     // exactly that case (10 hex chars, not 6 digits), so that must fall
     // through to the backup-code check below, not bubble up as an error.
-    const isValidTotp = await verify({ secret: user.mfaSecret, token: code })
+    const isValidTotp = await verify({ secret: user.mfaSecret as string, token: code })
       .then((result) => result.valid)
       .catch(() => false);
 
     if (isValidTotp) {
-      return user;
+      return { usedBackupHash: null };
     }
 
-    // Fall back to a backup code -- single-use, consumed on success.
+    // Fall back to a backup code -- single-use, consumed by the caller on success.
     for (const hash of user.mfaBackupCodeHashes) {
       if (await verifyPassword(code, hash)) {
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { mfaBackupCodeHashes: user.mfaBackupCodeHashes.filter((h) => h !== hash) },
-        });
-        return user;
+        return { usedBackupHash: hash };
       }
     }
 
-    throw new UnauthorizedException('Incorrect code');
+    return null;
+  }
+
+  /** Counts a wrong code against the account; at the limit, locks the code
+   *  step and kills the outstanding challenge (forcing a fresh password login). */
+  private async registerFailedAttempt(user: User): Promise<void> {
+    const lockExpired = user.mfaLockedUntil !== null && user.mfaLockedUntil.getTime() <= Date.now();
+    const attempts = (lockExpired ? 0 : user.mfaFailedAttempts) + 1;
+    const lock = attempts >= MFA_MAX_FAILED_ATTEMPTS;
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        mfaFailedAttempts: lock ? 0 : attempts,
+        mfaLockedUntil: lock ? new Date(Date.now() + MFA_LOCKOUT_MINUTES * 60_000) : lockExpired ? null : undefined,
+        ...(lock && { mfaChallengeId: null }),
+      },
+    });
   }
 }

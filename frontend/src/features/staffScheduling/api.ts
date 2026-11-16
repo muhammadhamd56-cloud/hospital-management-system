@@ -235,6 +235,8 @@ export interface ShiftOpeningInput {
   department?: string
   date: string
   startTime: string
+  /** Local wall-clock start ("HH:mm") -- checked against staff availability hours. */
+  localStartTime: string
   endTime: string
   shiftType: ShiftType
   positions: number

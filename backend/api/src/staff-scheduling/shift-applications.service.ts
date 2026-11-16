@@ -3,7 +3,7 @@ import { ApplicationStatus, AuditAction, NotificationType } from '@prisma/client
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ShiftsService } from './shifts.service';
+import { parseLocalMinutes, ShiftsService } from './shifts.service';
 import { ApplyShiftDto } from './dto/apply-shift.dto';
 import { RespondShiftApplicationDto } from './dto/respond-shift-application.dto';
 import {
@@ -108,7 +108,9 @@ export class ShiftApplicationsService {
     // would run -- rejected here, before an application is even created,
     // so a nurse never wastes time applying to something that could never
     // be approved.
-    const localStartMinutes = opening.startTime.getUTCHours() * 60 + opening.startTime.getUTCMinutes();
+    const localStartMinutes = opening.localStartTime
+      ? parseLocalMinutes(opening.localStartTime)
+      : opening.startTime.getUTCHours() * 60 + opening.startTime.getUTCMinutes();
     await this.shiftsService.assertNoSchedulingConflict({
       staffId: staff.id,
       startTime: opening.startTime,
@@ -280,6 +282,7 @@ export class ShiftApplicationsService {
         departmentId: freshOpening.departmentId,
         date: freshOpening.date,
         startTime: freshOpening.startTime,
+        localStartTime: freshOpening.localStartTime,
         endTime: freshOpening.endTime,
         shiftType: freshOpening.shiftType,
         createdById: actorId,

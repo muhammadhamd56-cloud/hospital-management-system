@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength } from 'class-validator';
+import { TIME_OF_DAY_PATTERN } from './create-template.dto';
 import { CLIENT_STAFF_TYPES, type ClientStaffType } from './create-staff.dto';
 import { SHIFT_TYPES, type ClientShiftType } from './create-shift.dto';
 
@@ -19,6 +20,13 @@ export class CreateShiftOpeningDto {
 
   @IsDateString({}, { message: 'Enter a valid end time' })
   endTime!: string;
+
+  /** The start time as the admin's local wall clock ("HH:mm") -- startTime is
+   *  UTC, which can't be compared against staff availability hours (local).
+   *  Optional for older clients; without it the UTC hour is used. */
+  @IsOptional()
+  @Matches(TIME_OF_DAY_PATTERN, { message: 'Enter a valid start time (HH:mm)' })
+  localStartTime?: string;
 
   @IsIn(SHIFT_TYPES)
   shiftType!: ClientShiftType;

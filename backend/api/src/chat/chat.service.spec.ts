@@ -63,7 +63,7 @@ describe('ChatService', () => {
         'Hi',
         '/messages?patientId=patient-1',
       );
-      expect(thread).toHaveLength(1);
+      expect(thread.thread).toHaveLength(1);
     });
 
     it('sends an image-only message when body is empty', async () => {

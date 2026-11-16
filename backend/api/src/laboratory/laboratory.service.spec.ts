@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { LabTestCategory, LabTestStatus, NotificationType, Role, StaffType, type Doctor, type LabTest } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { LabTestCategory, LabTestStatus, NotificationType, Prisma, Role, StaffType, type Doctor, type LabTest } from '@prisma/client';
 import { LaboratoryService } from './laboratory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -269,12 +269,34 @@ describe('LaboratoryService', () => {
       const result = await service.updateStatus(admin, 'test-1', dto);
 
       expect(prisma.labTest.update).toHaveBeenCalledWith({
-        where: { id: 'test-1' },
+        where: { id: 'test-1', status: LabTestStatus.PENDING },
         data: { status: LabTestStatus.IN_PROGRESS, resultSummary: null, completedAt: null },
         include: expect.anything(),
       });
       expect(notificationsService.create).not.toHaveBeenCalled();
       expect(result.status).toBe('in-progress');
+    });
+
+    it('refuses to reopen a completed test (which would re-send result-ready notifications)', async () => {
+      prisma.labTest.findUnique.mockResolvedValue(buildLabTest({ status: LabTestStatus.COMPLETED }));
+
+      await expect(service.updateStatus(admin, 'test-1', { status: 'pending' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.labTest.update).not.toHaveBeenCalled();
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('409s without notifying when another update changed the status first', async () => {
+      prisma.labTest.findUnique.mockResolvedValue(buildLabTest({ status: LabTestStatus.IN_PROGRESS }));
+      prisma.labTest.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record not found', { code: 'P2025', clientVersion: 'test' }),
+      );
+
+      await expect(
+        service.updateStatus(admin, 'test-1', { status: 'completed', resultSummary: 'Normal' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(notificationsService.create).not.toHaveBeenCalled();
     });
 
     it('sets completedAt and notifies both patient and doctor when transitioning into completed', async () => {

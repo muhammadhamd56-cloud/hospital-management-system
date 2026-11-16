@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, DayOfWeek, NotificationType, Prisma, ShiftStatus, ShiftType } from '@prisma/client';
+import { ApplicationStatus, AuditAction, DayOfWeek, NotificationType, Prisma, ShiftStatus, ShiftType } from '@prisma/client';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -351,6 +351,7 @@ export class ShiftsService {
     });
 
     if (isNewlyCancelled) {
+      await this.releaseOpeningSlot(this.prisma, shift.id);
       await this.notifyStaff(
         shift,
         NotificationType.SHIFT_CANCELLED,
@@ -383,7 +384,12 @@ export class ShiftsService {
       throw new BadRequestException('Only shifts still in Scheduled status can be deleted -- cancel it instead');
     }
 
-    await this.prisma.staffShift.delete({ where: { id } });
+    // Release the opening slot first: deleting the shift nulls the
+    // application's resultingShiftId (SetNull), losing the link.
+    await this.prisma.$transaction(async (tx) => {
+      await this.releaseOpeningSlot(tx, id);
+      await tx.staffShift.delete({ where: { id } });
+    });
 
     await this.auditLog.log({
       actorId,
@@ -452,6 +458,37 @@ export class ShiftsService {
     }
   }
 
+  /**
+   * A shift produced by an approved ShiftApplication is being cancelled or
+   * deleted: that application must stop counting toward the opening's
+   * capacity (it's counted from APPROVED applications), or the opening stays
+   * "full" forever. Reopens the opening only if it was closed for being full
+   * -- an opening an admin closed early with places left stays closed -- and
+   * only while it can still be applied to.
+   */
+  private async releaseOpeningSlot(db: Db, shiftId: string): Promise<void> {
+    const application = await db.shiftApplication.findFirst({
+      where: { resultingShiftId: shiftId, status: ApplicationStatus.APPROVED },
+      include: { opening: { include: { applications: { select: { status: true } } } } },
+    });
+
+    if (!application) return;
+
+    await db.shiftApplication.update({
+      where: { id: application.id },
+      data: { status: ApplicationStatus.WITHDRAWN },
+    });
+
+    const { opening } = application;
+    const approvedBefore = opening.applications.filter((a) => a.status === ApplicationStatus.APPROVED).length;
+    const now = Date.now();
+    const stillApplicable = opening.applicationDeadline.getTime() > now && opening.startTime.getTime() > now;
+
+    if (!opening.isOpen && approvedBefore >= opening.positions && stillApplicable) {
+      await db.shiftOpening.update({ where: { id: opening.id }, data: { isOpen: true } });
+    }
+  }
+
   private async assertValidAssignment(params: AssignmentCheck, db: Db = this.prisma): Promise<void> {
     // Preserves the original check order (timing, then staff existence,
     // then leave/availability/overlap) -- callers/tests rely on a
@@ -485,13 +522,17 @@ export class ShiftsService {
     departmentId?: string | null;
     date: Date;
     startTime: Date;
+    /** The opening's local wall-clock start ("HH:mm"); null for openings created before it was stored. */
+    localStartTime?: string | null;
     endTime: Date;
     shiftType: ShiftType;
     createdById: string;
     notes?: string;
     notify?: boolean;
   }): Promise<ShiftWithStaff> {
-    const localStartMinutes = params.startTime.getUTCHours() * 60 + params.startTime.getUTCMinutes();
+    const localStartMinutes = params.localStartTime
+      ? parseLocalMinutes(params.localStartTime)
+      : params.startTime.getUTCHours() * 60 + params.startTime.getUTCMinutes();
 
     // Serializable, same reasoning as create() -- an approved application
     // and a directly-scheduled shift racing for the same slot must not
@@ -597,7 +638,7 @@ function parseLocalDate(dateStr: string): Date {
 }
 
 /** Parses a local "HH:mm" wall-clock string into minutes since midnight. */
-function parseLocalMinutes(time: string): number {
+export function parseLocalMinutes(time: string): number {
   const [hour, minute] = time.split(':').map(Number);
   return hour * 60 + minute;
 }

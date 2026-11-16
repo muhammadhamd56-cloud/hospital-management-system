@@ -87,7 +87,7 @@ export class AuthController {
     const user = await this.authService.loginLocal(dto);
 
     if (user.mfaEnabled) {
-      return { mfaRequired: true, mfaToken: this.mfaService.issueChallenge(user.id) };
+      return { mfaRequired: true, mfaToken: await this.mfaService.issueChallenge(user.id) };
     }
 
     return this.startSession(user, res);
@@ -185,7 +185,7 @@ export class AuthController {
       // accounts get the same short-lived challenge as password login and
       // finish via POST /auth/mfa/verify; no session cookies yet.
       if (user.mfaEnabled) {
-        const mfaToken = this.mfaService.issueChallenge(user.id);
+        const mfaToken = await this.mfaService.issueChallenge(user.id);
         res.redirect(`${clientUrl}/oauth/callback?mfa=${encodeURIComponent(mfaToken)}`);
         return;
       }

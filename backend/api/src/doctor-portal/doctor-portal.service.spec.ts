@@ -428,12 +428,14 @@ describe('DoctorPortalService', () => {
 
       const result = await service.getThread('user-1', 'patient-1');
 
+      // Newest page first, reversed to oldest-first for display.
       expect(prisma.chatMessage.findMany).toHaveBeenCalledWith({
         where: { doctorId: 'doctor-1', patientId: 'patient-1' },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 51,
       });
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({ id: 'msg-1', sender: 'patient', body: 'Hello doctor' });
+      expect(result.thread).toHaveLength(1);
+      expect(result.thread[0]).toMatchObject({ id: 'msg-1', sender: 'patient', body: 'Hello doctor' });
     });
 
     it('returns the mapped thread when the doctor has a relationship with the patient via a prior message', async () => {
@@ -442,7 +444,8 @@ describe('DoctorPortalService', () => {
       prisma.chatMessage.findFirst.mockResolvedValue(buildChatMessage());
       prisma.chatMessage.findMany.mockResolvedValue([buildChatMessage()]);
 
-      await expect(service.getThread('user-1', 'patient-1')).resolves.toHaveLength(1);
+      const page = await service.getThread('user-1', 'patient-1');
+      expect(page.thread).toHaveLength(1);
     });
   });
 
@@ -487,8 +490,8 @@ describe('DoctorPortalService', () => {
         'hi',
         '/messages?doctorId=doctor-1',
       );
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({ sender: 'doctor', body: 'hi' });
+      expect(result.thread).toHaveLength(1);
+      expect(result.thread[0]).toMatchObject({ sender: 'doctor', body: 'hi' });
     });
   });
 

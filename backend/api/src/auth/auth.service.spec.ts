@@ -51,6 +51,9 @@ function buildUser(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    mfaFailedAttempts: 0,
+    mfaLockedUntil: null,
+    mfaChallengeId: null,
     approvalStatus: ApprovalStatus.APPROVED,
     approvalReviewedAt: null,
     approvalNote: null,
@@ -622,6 +625,24 @@ describe('AuthService', () => {
       await service.verifyOtp({ email: 'ada@example.com', code: '123456' });
 
       expect(accountApprovalsService.notifyAdminsOfRequest).toHaveBeenCalledWith(verified);
+    });
+
+    it('still succeeds when notifying the admins fails -- the email is already verified', async () => {
+      const otpCodeHash = await hashPassword('123456');
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({
+          role: Role.DOCTOR,
+          emailVerified: false,
+          otpCodeHash,
+          otpExpiresAt: new Date(Date.now() + 60_000),
+          approvalStatus: ApprovalStatus.PENDING,
+        }),
+      );
+      const verified = buildUser({ role: Role.DOCTOR, emailVerified: true, approvalStatus: ApprovalStatus.PENDING });
+      prisma.user.update.mockResolvedValue(verified);
+      accountApprovalsService.notifyAdminsOfRequest.mockRejectedValue(new Error('email provider down'));
+
+      await expect(service.verifyOtp({ email: 'ada@example.com', code: '123456' })).resolves.toBe(verified);
     });
   });
 

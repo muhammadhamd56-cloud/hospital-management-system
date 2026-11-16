@@ -18,6 +18,7 @@ function buildOpening(overrides: Partial<ShiftOpening> = {}): ShiftOpening {
     departmentId: null,
     date: new Date('2026-09-01T00:00:00.000Z'),
     startTime: new Date('2026-09-01T08:00:00.000Z'),
+    localStartTime: null,
     endTime: new Date('2026-09-01T16:00:00.000Z'),
     shiftType: ShiftType.MORNING,
     positions: 1,

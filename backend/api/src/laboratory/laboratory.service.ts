@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { LabTestStatus, NotificationType, Role, StaffType } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { LabTestStatus, NotificationType, Prisma, Role, StaffType } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -108,17 +108,35 @@ export class LaboratoryService {
     }
 
     const status = toPrismaLabTestStatus(dto.status);
+
+    // A released result is final: reopening it would let it be "completed"
+    // again and re-send the result-ready notifications. The summary itself
+    // can still be corrected while it stays COMPLETED.
+    if (existing.status === LabTestStatus.COMPLETED && status !== LabTestStatus.COMPLETED) {
+      throw new BadRequestException('A completed lab test cannot be reopened');
+    }
+
     const justCompleted = status === LabTestStatus.COMPLETED && existing.status !== LabTestStatus.COMPLETED;
 
-    const updated = await this.prisma.labTest.update({
-      where: { id },
-      data: {
-        status,
-        resultSummary: dto.resultSummary ?? existing.resultSummary,
-        completedAt: justCompleted ? new Date() : existing.completedAt,
-      },
-      include: LAB_TEST_INCLUDE,
-    });
+    // Conditional on the status we read, so two concurrent "complete" calls
+    // can't both see the transition and both notify.
+    let updated;
+    try {
+      updated = await this.prisma.labTest.update({
+        where: { id, status: existing.status },
+        data: {
+          status,
+          resultSummary: dto.resultSummary ?? existing.resultSummary,
+          completedAt: justCompleted ? new Date() : existing.completedAt,
+        },
+        include: LAB_TEST_INCLUDE,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new ConflictException('This lab test was just updated by someone else. Please refresh.');
+      }
+      throw error;
+    }
 
     if (justCompleted) {
       const patientName = `${updated.patient.firstName} ${updated.patient.lastName}`.trim();

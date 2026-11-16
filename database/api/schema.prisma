@@ -137,6 +137,19 @@ model User {
   mfaEnabled              Boolean   @default(false)
   mfaSecret               String?
   mfaBackupCodeHashes     String[]  @default([])
+  /**
+   * Per-account brute-force guard for the MFA code step (the per-IP
+   * throttle alone lets an attacker who has the password spread guesses
+   * across IPs). Locks the code step after too many wrong codes.
+   */
+  mfaFailedAttempts       Int       @default(0)
+  mfaLockedUntil          DateTime?
+  /**
+   * jti of the one outstanding MFA challenge token. A challenge is only
+   * accepted while it matches, and it is cleared on use -- so each
+   * challenge (and the code typed with it) works exactly once.
+   */
+  mfaChallengeId          String?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -765,6 +778,13 @@ model ShiftOpening {
   department          Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   date                DateTime
   startTime           DateTime
+  /**
+   * Start time as the admin's local wall clock ("HH:mm"), compared against
+   * staff availableFrom/availableTo (also local). startTime is UTC, so its
+   * hour is wrong for that comparison outside UTC. Null on rows created
+   * before this column existed (those fall back to the UTC hour).
+   */
+  localStartTime      String?
   endTime             DateTime
   shiftType           ShiftType
   /**
