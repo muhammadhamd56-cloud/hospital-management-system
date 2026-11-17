@@ -26,6 +26,7 @@ import { StaffPortalModule } from './staff-portal/staff-portal.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { AdminAiModule } from './admin-ai/admin-ai.module';
 import { PlatformSettingsModule } from './platform-settings/platform-settings.module';
 import { EmergencyModule } from './emergency/emergency.module';
 import { AccountApprovalsModule } from './account-approvals/account-approvals.module';
@@ -60,6 +61,7 @@ import { AccountApprovalsModule } from './account-approvals/account-approvals.mo
     StaffPortalModule,
     AnnouncementsModule,
     AssistantModule,
+    AdminAiModule,
     PlatformSettingsModule,
     EmergencyModule,
     AccountApprovalsModule,

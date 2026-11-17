@@ -3,10 +3,13 @@ import { Outlet } from 'react-router'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Navbar } from '@/components/layout/Navbar'
 import { AssistantWidget } from '@/features/assistant/AssistantWidget'
+import { AdminCopilot } from '@/features/adminCopilot/AdminCopilot'
+import { useAuth } from '@/features/auth/useAuth'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
 export function DashboardLayout() {
   const [isSidebarOpen, setSidebarOpen] = useState(false)
+  const { user } = useAuth()
   useDocumentTitle()
 
   return (
@@ -18,7 +21,7 @@ export function DashboardLayout() {
           <Outlet />
         </main>
       </div>
-      <AssistantWidget />
+      {user?.role === 'admin' ? <AdminCopilot /> : <AssistantWidget />}
     </div>
   )
 }

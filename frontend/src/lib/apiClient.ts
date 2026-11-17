@@ -72,7 +72,11 @@ function refreshSession(): Promise<boolean> {
   return refreshInFlight
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+/**
+ * The raw Response, with the same cookies, CSRF header and refresh-once-on-401
+ * as every other call. For callers that read the body themselves (streams).
+ */
+export async function fetchWithSession(path: string, options?: RequestInit): Promise<Response> {
   let res = await send(path, options)
 
   // The access cookie is short-lived, so a 401 usually just means it expired:
@@ -86,6 +90,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       unauthorizedHandler?.()
     }
   }
+  return res
+}
+
+/** Turns a non-2xx Response from this API into an ApiError. */
+export async function toApiError(res: Response): Promise<ApiError> {
+  const body = (await res.json().catch(() => null)) as ApiEnvelope<unknown> | null
+  return new ApiError(body?.message ?? 'Request failed', { status: res.status, errors: body?.errors })
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetchWithSession(path, options)
 
   if (res.status === 204) return undefined as T
 

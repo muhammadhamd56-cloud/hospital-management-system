@@ -35,12 +35,12 @@ enum ApprovalStatus {
 }
 
 model User {
-  id                      String    @id @default(cuid())
+  id                      String         @id @default(cuid())
   /**
    * Null for accounts created via manual email/password signup.
    */
-  googleId                String?   @unique
-  email                   String    @unique
+  googleId                String?        @unique
+  email                   String         @unique
   /**
    * Null for accounts created via Google — they have nothing to compare against.
    */
@@ -60,12 +60,12 @@ model User {
   address                 String?
   emergencyContactName    String?
   emergencyContactPhone   String?
-  role                    Role      @default(PATIENT)
+  role                    Role           @default(PATIENT)
   /**
    * True once the user has completed the one-time post-signup role picker
    * (Google flow) or explicitly chosen a role at manual signup.
    */
-  roleSelected            Boolean   @default(false)
+  roleSelected            Boolean        @default(false)
   /**
    * See ApprovalStatus. Enforced by JwtAuthGuard on every route except the
    * user's own /users/me endpoints. Defaults to APPROVED, so accounts that
@@ -81,14 +81,14 @@ model User {
    * Google accounts are verified by Google itself at signup. Local
    * accounts start false and must complete OTP email verification.
    */
-  emailVerified           Boolean   @default(false)
+  emailVerified           Boolean        @default(false)
   /**
    * Hashed 6-digit OTP for email verification. Null once verified or if
    * no code has been requested yet.
    */
   otpCodeHash             String?
   otpExpiresAt            DateTime?
-  otpAttempts             Int       @default(0)
+  otpAttempts             Int            @default(0)
   otpLastSentAt           DateTime?
   /**
    * Hashed 6-digit code for a pending "forgot password" request. Kept
@@ -97,19 +97,19 @@ model User {
    */
   passwordResetCodeHash   String?
   passwordResetExpiresAt  DateTime?
-  passwordResetAttempts   Int       @default(0)
+  passwordResetAttempts   Int            @default(0)
   passwordResetLastSentAt DateTime?
   /**
    * Bumped on logout so previously issued JWTs (which embed the version
    * at issue time) stop passing JwtStrategy.validate() immediately.
    */
-  tokenVersion            Int       @default(0)
+  tokenVersion            Int            @default(0)
   /**
    * True for accounts an admin just provisioned with a server-generated temp
    * password -- forces a password change via the existing set-password flow
    * before the account can do anything else.
    */
-  mustChangePassword      Boolean   @default(false)
+  mustChangePassword      Boolean        @default(false)
   /**
    * Consecutive failed loginLocal attempts for this account specifically --
    * separate from (and in addition to) the per-IP throttling on POST
@@ -118,7 +118,7 @@ model User {
    * reset. Not incremented by MFA challenge failures (mfa.service.ts) --
    * those already require a correct password first.
    */
-  failedLoginAttempts     Int       @default(0)
+  failedLoginAttempts     Int            @default(0)
   /**
    * Set once failedLoginAttempts crosses the threshold in auth.service.ts;
    * loginLocal rejects attempts until this passes, then the counter resets
@@ -134,15 +134,15 @@ model User {
    * confirmed). mfaBackupCodeHashes are single-use recovery codes, hashed
    * the same way as a password; each is removed from the array on use.
    */
-  mfaEnabled              Boolean   @default(false)
+  mfaEnabled              Boolean        @default(false)
   mfaSecret               String?
-  mfaBackupCodeHashes     String[]  @default([])
+  mfaBackupCodeHashes     String[]       @default([])
   /**
    * Per-account brute-force guard for the MFA code step (the per-IP
    * throttle alone lets an attacker who has the password spread guesses
    * across IPs). Locks the code step after too many wrong codes.
    */
-  mfaFailedAttempts       Int       @default(0)
+  mfaFailedAttempts       Int            @default(0)
   mfaLockedUntil          DateTime?
   /**
    * jti of the one outstanding MFA challenge token. A challenge is only
@@ -150,8 +150,8 @@ model User {
    * challenge (and the code typed with it) works exactly once.
    */
   mfaChallengeId          String?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
 
   doctorProfile              Doctor?
   appointments               Appointment[]
@@ -176,6 +176,11 @@ model User {
   emergencyCasesAssignedBy   EmergencyCase[]    @relation("EmergencyAssignedBy")
   emergencyCasesResolved     EmergencyCase[]    @relation("EmergencyResolvedBy")
   emergencyNotes             EmergencyNote[]
+  aiConversations            AiConversation[]   @relation("AiConversationOwner")
+  aiRuns                     AiRun[]            @relation("AiRunUser")
+  aiProposalsRequested       AiActionProposal[] @relation("AiProposalRequester")
+  aiProposalsDecided         AiActionProposal[] @relation("AiProposalDecider")
+  aiFeedback                 AiFeedback[]       @relation("AiFeedbackUser")
 
   @@index([role])
   // The admin review queue lists PENDING accounts.
@@ -1166,4 +1171,186 @@ model EmergencyNote {
   createdAt DateTime      @default(now())
 
   @@index([caseId])
+}
+
+// ---------------------------------------------------------------------------
+// Admin AI Copilot (backend/api/src/admin-ai). Stores conversation history,
+// run/tool telemetry and human-approval proposals. Deliberately holds no copy
+// of hospital business data: tool results are never persisted, tool
+// arguments are reduced to their key names, and audit events go to the
+// existing AuditLog table rather than a parallel one.
+// ---------------------------------------------------------------------------
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum AiRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  BUDGET_EXCEEDED
+}
+
+enum AiToolStatus {
+  SUCCEEDED
+  FAILED
+  DENIED
+  INVALID
+}
+
+enum AiProposalStatus {
+  PENDING
+  EXECUTING
+  EXECUTED
+  FAILED
+  REJECTED
+  EXPIRED
+}
+
+enum AiFeedbackRating {
+  UP
+  DOWN
+}
+
+model AiConversation {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("AiConversationOwner", fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  /**
+   * Last dashboard module the conversation was used from -- UI context only,
+   * never an authorization input.
+   */
+  activeModule String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages  AiMessage[]
+  runs      AiRun[]
+  proposals AiActionProposal[]
+
+  @@index([userId, updatedAt])
+}
+
+model AiMessage {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AiMessageRole
+  content        String
+  /**
+   * The run that produced an ASSISTANT message (or was started by a USER one).
+   */
+  runId          String?
+  createdAt      DateTime       @default(now())
+
+  feedback AiFeedback[]
+
+  @@index([conversationId, createdAt])
+}
+
+model AiRun {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User           @relation("AiRunUser", fields: [userId], references: [id], onDelete: Cascade)
+  /**
+   * Client-supplied idempotency key: a retried submit of the same message
+   * returns the first run instead of starting a second one.
+   */
+  requestKey     String
+  status         AiRunStatus    @default(RUNNING)
+  provider       String
+  model          String
+  promptVersion  String
+  activeModule   String?
+  inputTokens    Int            @default(0)
+  outputTokens   Int            @default(0)
+  toolCalls      Int            @default(0)
+  latencyMs      Int?
+  errorCode      String?
+  startedAt      DateTime       @default(now())
+  finishedAt     DateTime?
+
+  toolInvocations AiToolInvocation[]
+  proposals       AiActionProposal[]
+
+  @@unique([userId, requestKey])
+  @@index([userId, startedAt])
+  @@index([startedAt])
+}
+
+model AiToolInvocation {
+  id         String       @id @default(cuid())
+  runId      String
+  run        AiRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  toolName   String
+  domain     String
+  status     AiToolStatus
+  /**
+   * Argument names only -- values can hold search text such as a patient name.
+   */
+  argKeys    String[]     @default([])
+  durationMs Int
+  errorCode  String?
+  createdAt  DateTime     @default(now())
+
+  @@index([runId])
+  @@index([toolName, createdAt])
+}
+
+/**
+ * A state-changing action the model proposed. Nothing runs until an admin
+ * approves this exact row: the stored params (and their hash) are what gets
+ * executed, re-validated at approval time, never anything re-generated.
+ */
+model AiActionProposal {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   AiConversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  runId          String?
+  run            AiRun?           @relation(fields: [runId], references: [id], onDelete: SetNull)
+  requestedById  String
+  requestedBy    User             @relation("AiProposalRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  actionType     String
+  params         Json
+  paramsHash     String
+  summary        String
+  status         AiProposalStatus @default(PENDING)
+  expiresAt      DateTime
+  decidedById    String?
+  decidedBy      User?            @relation("AiProposalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt      DateTime?
+  decisionNote   String?
+  executedAt     DateTime?
+  /**
+   * Small confirmation payload from the domain service (ids, statuses).
+   */
+  result         Json?
+  errorMessage   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([conversationId])
+  @@index([requestedById, status])
+  @@index([status, expiresAt])
+}
+
+model AiFeedback {
+  id        String           @id @default(cuid())
+  messageId String
+  message   AiMessage        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation("AiFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
+  rating    AiFeedbackRating
+  comment   String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([messageId, userId])
+  @@index([createdAt])
 }

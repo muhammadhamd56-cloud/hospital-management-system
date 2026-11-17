@@ -5,5 +5,6 @@ import { BedsService } from './beds.service';
 @Module({
   controllers: [BedsController],
   providers: [BedsService],
+  exports: [BedsService],
 })
 export class BedsModule {}

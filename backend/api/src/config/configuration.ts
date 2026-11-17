@@ -1,3 +1,5 @@
+import { loadAdminAiConfig, type AdminAiConfig } from '../admin-ai/admin-ai.config';
+
 export interface AppConfig {
   port: number;
   clientUrl: string;
@@ -32,6 +34,8 @@ export interface AppConfig {
     anthropicApiKey: string | undefined;
     model: string;
   };
+  /** Admin AI Copilot (src/admin-ai). Every flag defaults to the safe value. */
+  adminAi: AdminAiConfig;
 }
 
 export default (): AppConfig => ({
@@ -71,4 +75,5 @@ export default (): AppConfig => ({
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5',
   },
+  adminAi: loadAdminAiConfig(process.env),
 });

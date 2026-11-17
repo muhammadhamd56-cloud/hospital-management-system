@@ -7,5 +7,6 @@ import { EmergencyService } from './emergency.service';
   imports: [NotificationsModule],
   controllers: [EmergencyController],
   providers: [EmergencyService],
+  exports: [EmergencyService],
 })
 export class EmergencyModule {}
