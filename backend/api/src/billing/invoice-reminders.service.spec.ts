@@ -27,12 +27,12 @@ function buildOverdueInvoice(overrides: Record<string, unknown> = {}) {
 
 describe('InvoiceRemindersService', () => {
   let service: InvoiceRemindersService;
-  let prisma: { invoice: { findMany: jest.Mock; update: jest.Mock } };
+  let prisma: { invoice: { findMany: jest.Mock; updateMany: jest.Mock } };
   let emailService: { sendInvoiceOverdueEmail: jest.Mock };
   let notificationsService: { create: jest.Mock };
 
   beforeEach(async () => {
-    prisma = { invoice: { findMany: jest.fn(), update: jest.fn() } };
+    prisma = { invoice: { findMany: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
     emailService = { sendInvoiceOverdueEmail: jest.fn().mockResolvedValue(undefined) };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
 
@@ -64,7 +64,7 @@ describe('InvoiceRemindersService', () => {
     );
   });
 
-  it('emails and notifies the patient, then stamps overdueNotifiedAt, for each overdue invoice', async () => {
+  it('claims each overdue invoice (stamping overdueNotifiedAt), then emails and notifies the patient', async () => {
     const invoice = buildOverdueInvoice();
     prisma.invoice.findMany.mockResolvedValue([invoice]);
 
@@ -81,11 +81,47 @@ describe('InvoiceRemindersService', () => {
       expect.stringContaining('INV-0007'),
       '/billing?invoiceId=invoice-1',
     );
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: 'invoice-1' },
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+      where: { id: 'invoice-1', overdueNotifiedAt: null },
       data: { overdueNotifiedAt: expect.any(Date) },
     });
+    expect(prisma.invoice.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      emailService.sendInvoiceOverdueEmail.mock.invocationCallOrder[0],
+    );
     expect(sent).toBe(1);
+  });
+
+  it('skips an invoice another run already claimed, so the patient is not notified twice', async () => {
+    prisma.invoice.findMany.mockResolvedValue([buildOverdueInvoice()]);
+    prisma.invoice.updateMany.mockResolvedValue({ count: 0 });
+
+    const sent = await service.sendOverdueNotices();
+
+    expect(emailService.sendInvoiceOverdueEmail).not.toHaveBeenCalled();
+    expect(notificationsService.create).not.toHaveBeenCalled();
+    expect(sent).toBe(0);
+  });
+
+  it('sends only once when two overlapping runs both read the same invoice before either marks it', async () => {
+    // One shared row: both runs' findMany see it unmarked; the conditional
+    // updateMany is the compare-and-swap that lets exactly one of them win.
+    const row = { id: 'invoice-1', overdueNotifiedAt: null as Date | null };
+    prisma.invoice.findMany.mockImplementation(async () => [buildOverdueInvoice()]);
+    prisma.invoice.updateMany.mockImplementation(
+      async ({ where, data }: { where: { id: string; overdueNotifiedAt: null }; data: { overdueNotifiedAt: Date } }) => {
+        if (where.id !== row.id || row.overdueNotifiedAt !== where.overdueNotifiedAt) return { count: 0 };
+        row.overdueNotifiedAt = data.overdueNotifiedAt;
+        return { count: 1 };
+      },
+    );
+
+    const [first, second] = await Promise.all([service.sendOverdueNotices(), service.sendOverdueNotices()]);
+
+    expect(prisma.invoice.findMany).toHaveBeenCalledTimes(2);
+    expect(first + second).toBe(1);
+    expect(emailService.sendInvoiceOverdueEmail).toHaveBeenCalledTimes(1);
+    expect(notificationsService.create).toHaveBeenCalledTimes(1);
+    expect(row.overdueNotifiedAt).toBeInstanceOf(Date);
   });
 
   it('skips a candidate that is technically past due but already fully paid (re-derived via toInvoiceResponse, not trusted from the query alone)', async () => {
@@ -97,7 +133,7 @@ describe('InvoiceRemindersService', () => {
     const sent = await service.sendOverdueNotices();
 
     expect(emailService.sendInvoiceOverdueEmail).not.toHaveBeenCalled();
-    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
     expect(sent).toBe(0);
   });
 
@@ -119,7 +155,7 @@ describe('InvoiceRemindersService', () => {
     const first = buildOverdueInvoice({ id: 'invoice-1' });
     const second = buildOverdueInvoice({ id: 'invoice-2', patientId: 'patient-2' });
     prisma.invoice.findMany.mockResolvedValue([first, second]);
-    prisma.invoice.update.mockRejectedValueOnce(new Error('db hiccup')).mockResolvedValueOnce(undefined);
+    notificationsService.create.mockRejectedValueOnce(new Error('db hiccup')).mockResolvedValueOnce(undefined);
 
     const sent = await service.sendOverdueNotices();
 

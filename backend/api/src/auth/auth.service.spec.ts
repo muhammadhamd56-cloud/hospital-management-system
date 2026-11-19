@@ -6,9 +6,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ApprovalStatus, Role, type User } from '@prisma/client';
+import { createHash } from 'crypto';
+import { ApprovalStatus, AuditAction, Role, type User } from '@prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuthAuditService, UNKNOWN_USER_ENTITY_ID } from './auth-audit.service';
+import type { GoogleProfilePayload } from './types/google-profile.interface';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -70,6 +75,8 @@ describe('AuthService', () => {
     $transaction: jest.Mock;
   };
   let accountApprovalsService: { notifyAdminsOfRequest: jest.Mock };
+  /** The real AuthAuditService runs on top of this, so its error handling is exercised too. */
+  let auditLogService: { log: jest.Mock };
   let jwtService: { sign: jest.Mock };
   let emailService: { sendOtpEmail: jest.Mock; sendPasswordResetEmail: jest.Mock };
   let tx: { user: { create: jest.Mock }; doctor: { create: jest.Mock }; department: { upsert: jest.Mock } };
@@ -93,6 +100,7 @@ describe('AuthService', () => {
     };
 
     accountApprovalsService = { notifyAdminsOfRequest: jest.fn().mockResolvedValue(undefined) };
+    auditLogService = { log: jest.fn().mockResolvedValue(undefined) };
     jwtService = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
     emailService = {
       sendOtpEmail: jest.fn().mockResolvedValue(undefined),
@@ -107,6 +115,8 @@ describe('AuthService', () => {
         { provide: EmailService, useValue: emailService },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: AccountApprovalsService, useValue: accountApprovalsService },
+        AuthAuditService,
+        { provide: AuditLogService, useValue: auditLogService },
       ],
     }).compile();
 
@@ -775,6 +785,191 @@ describe('AuthService', () => {
         where: { id: 'user-1' },
         data: { tokenVersion: { increment: 1 } },
       });
+    });
+  });
+
+  describe('authentication audit trail', () => {
+    const loginDto: LoginDto = { email: 'Ada@Example.com ', password: 'correct-password', role: 'patient' };
+    const emailHash = createHash('sha256').update('ada@example.com').digest('hex');
+
+    /** Every argument ever passed to AuditLogService.log, serialised -- used to
+     *  prove no password, code or token leaks into metadata. */
+    const loggedText = () => JSON.stringify(auditLogService.log.mock.calls);
+
+    it('records a successful password login against the user', async () => {
+      const hashed = await hashPassword('correct-password');
+      prisma.user.findUnique.mockResolvedValue(buildUser({ password: hashed, mfaEnabled: true }));
+
+      await service.loginLocal(loginDto);
+
+      expect(auditLogService.log).toHaveBeenCalledWith({
+        actorId: 'user-1',
+        action: AuditAction.CREATE,
+        entityType: 'User',
+        entityId: 'user-1',
+        metadata: { event: 'auth.login.succeeded', method: 'password', mfaPending: true },
+      });
+      expect(loggedText()).not.toContain('correct-password');
+    });
+
+    it('records an unknown email and a wrong password identically, without the email or password', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await expect(service.loginLocal({ ...loginDto, password: 'guess-1' })).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+
+      const hashed = await hashPassword('correct-password');
+      prisma.user.findUnique.mockResolvedValue(buildUser({ password: hashed }));
+      await expect(service.loginLocal({ ...loginDto, password: 'guess-2' })).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+
+      const expected = {
+        actorId: null,
+        action: AuditAction.VIEW,
+        entityType: 'User',
+        entityId: UNKNOWN_USER_ENTITY_ID,
+        metadata: { event: 'auth.login.failed', method: 'password', reason: 'invalid_credentials', emailHash },
+      };
+      expect(auditLogService.log).toHaveBeenNthCalledWith(1, expected);
+      expect(auditLogService.log).toHaveBeenNthCalledWith(2, expected);
+      expect(loggedText()).not.toMatch(/guess-1|guess-2|ada@example\.com|user-1/i);
+    });
+
+    it('records a Google-only account the same way as bad credentials', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ password: null, googleId: 'g-1' }));
+
+      await expect(service.loginLocal(loginDto)).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(auditLogService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: null, entityId: UNKNOWN_USER_ENTITY_ID }),
+      );
+    });
+
+    it('records a locked account against the account, with no actor', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ password: 'hash', lockedUntil: new Date(Date.now() + 60_000) }),
+      );
+
+      await expect(service.loginLocal(loginDto)).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(auditLogService.log).toHaveBeenCalledWith({
+        actorId: null,
+        action: AuditAction.VIEW,
+        entityType: 'User',
+        entityId: 'user-1',
+        metadata: { event: 'auth.login.failed', method: 'password', reason: 'account_locked' },
+      });
+    });
+
+    it('never lets an audit failure break a successful login', async () => {
+      auditLogService.log.mockRejectedValue(new Error('database down'));
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const hashed = await hashPassword('correct-password');
+      const user = buildUser({ password: hashed });
+      prisma.user.findUnique.mockResolvedValue(user);
+
+      try {
+        await expect(service.loginLocal(loginDto)).resolves.toBe(user);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('auth.login.succeeded'),
+          expect.anything(),
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('never lets an audit failure change the error of a failed login', async () => {
+      auditLogService.log.mockRejectedValue(new Error('database down'));
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      try {
+        await expect(service.loginLocal(loginDto)).rejects.toThrow('Invalid email or password');
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('records a Google login, flagging a newly created account', async () => {
+      const profile = {
+        googleId: 'g-1',
+        email: 'ada@example.com',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        picture: null,
+      } as unknown as GoogleProfilePayload;
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(buildUser({ googleId: 'g-1' }));
+
+      await service.validateGoogleUser(profile);
+
+      expect(auditLogService.log).toHaveBeenCalledWith({
+        actorId: 'user-1',
+        action: AuditAction.CREATE,
+        entityType: 'User',
+        entityId: 'user-1',
+        metadata: { event: 'auth.login.google', method: 'google', mfaPending: false, newAccount: true },
+      });
+    });
+
+    it('records a Google login for an existing account', async () => {
+      const existing = buildUser({ googleId: 'g-1', picture: null });
+      prisma.user.findUnique.mockResolvedValue(existing);
+
+      await service.validateGoogleUser({
+        googleId: 'g-1',
+        email: existing.email,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        picture: null,
+      } as unknown as GoogleProfilePayload);
+
+      expect(auditLogService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining({ event: 'auth.login.google', newAccount: false }) }),
+      );
+    });
+
+    it('records logout', async () => {
+      prisma.user.update.mockResolvedValue(buildUser({ tokenVersion: 1 }));
+
+      await service.logout('user-1');
+
+      expect(auditLogService.log).toHaveBeenCalledWith({
+        actorId: 'user-1',
+        action: AuditAction.DELETE,
+        entityType: 'User',
+        entityId: 'user-1',
+        metadata: { event: 'auth.logout' },
+      });
+    });
+
+    it('records a completed password reset without the code or the new password', async () => {
+      const passwordResetCodeHash = await hashPassword('123456');
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ passwordResetCodeHash, passwordResetExpiresAt: new Date(Date.now() + 60_000) }),
+      );
+
+      await service.resetPassword({ email: 'ada@example.com', code: '123456', newPassword: 'longenough2' });
+
+      expect(auditLogService.log).toHaveBeenCalledWith({
+        actorId: 'user-1',
+        action: AuditAction.UPDATE,
+        entityType: 'User',
+        entityId: 'user-1',
+        metadata: { event: 'auth.password.reset' },
+      });
+      expect(loggedText()).not.toMatch(/123456|longenough2/);
+    });
+
+    it('does not record a password reset that failed', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resetPassword({ email: 'ada@example.com', code: '123456', newPassword: 'longenough2' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(auditLogService.log).not.toHaveBeenCalled();
     });
   });
 });

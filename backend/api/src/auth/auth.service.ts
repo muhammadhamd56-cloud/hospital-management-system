@@ -6,7 +6,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { randomBytes, randomInt } from 'crypto';
+import { createHash, randomBytes, randomInt } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { ApprovalStatus, Role, User } from '@prisma/client';
@@ -22,6 +22,7 @@ import type { LoginDto } from './dto/login.dto';
 import type { VerifyOtpDto } from './dto/verify-otp.dto';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
 import { hashPassword, needsRehash, verifyPassword } from './password.util';
+import { AUTH_AUDIT_EVENTS, AuthAuditService, type AuthAuditMetadata } from './auth-audit.service';
 
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_RESEND_COOLDOWN_SECONDS = 60;
@@ -55,6 +56,7 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
     private readonly accountApprovalsService: AccountApprovalsService,
+    private readonly authAudit: AuthAuditService,
   ) {}
 
   /**
@@ -66,18 +68,20 @@ export class AuthService {
     const existing = await this.prisma.user.findUnique({ where: { email: profile.email } });
 
     if (existing) {
-      if (existing.googleId !== profile.googleId || existing.picture !== profile.picture) {
-        return this.prisma.user.update({
-          where: { id: existing.id },
-          data: { googleId: profile.googleId, picture: profile.picture },
-        });
-      }
-      return existing;
+      const user =
+        existing.googleId !== profile.googleId || existing.picture !== profile.picture
+          ? await this.prisma.user.update({
+              where: { id: existing.id },
+              data: { googleId: profile.googleId, picture: profile.picture },
+            })
+          : existing;
+      await this.recordGoogleLogin(user, false);
+      return user;
     }
 
     this.logger.log(`Creating new user for ${profile.email}`);
 
-    return this.prisma.user.create({
+    const created = await this.prisma.user.create({
       data: {
         googleId: profile.googleId,
         email: profile.email,
@@ -88,6 +92,8 @@ export class AuthService {
         emailVerified: true,
       },
     });
+    await this.recordGoogleLogin(created, true);
+    return created;
   }
 
   /**
@@ -277,6 +283,7 @@ export class AuthService {
       // Spend the same bcrypt time as a real wrong-password check, so response
       // timing doesn't reveal whether the email is registered.
       await verifyPassword(dto.password, await TIMING_DUMMY_HASH);
+      await this.recordInvalidCredentials(dto.email);
       throw new UnauthorizedException(
         user
           ? 'This account uses Google sign-in. Use "Continue with Google" instead.'
@@ -286,6 +293,7 @@ export class AuthService {
 
     if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
       const minutesLeft = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60_000);
+      await this.recordFailedLogin(user.id, 'account_locked');
       throw new ForbiddenException(
         `Too many failed sign-in attempts. Please try again in ${minutesLeft} minute(s).`,
       );
@@ -295,6 +303,7 @@ export class AuthService {
 
     if (!isValid) {
       await this.registerFailedLogin(user);
+      await this.recordInvalidCredentials(dto.email);
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -317,16 +326,60 @@ export class AuthService {
     const actualRole = toClientRole(user.role);
 
     if (actualRole !== dto.role) {
+      await this.recordFailedLogin(user.id, 'role_mismatch');
       throw new ForbiddenException(
         `This account is registered as ${actualRole}, not ${dto.role}`,
       );
     }
 
     if (!user.emailVerified) {
+      await this.recordFailedLogin(user.id, 'email_unverified');
       throw new ForbiddenException('Please verify your email before signing in');
     }
 
+    // For an MFA account the session only starts after POST /auth/mfa/verify,
+    // which records auth.mfa.challenge_succeeded (or _failed) on its own.
+    await this.authAudit.record(AUTH_AUDIT_EVENTS.LOGIN_SUCCEEDED, {
+      actorId: user.id,
+      userId: user.id,
+      metadata: { method: 'password', mfaPending: user.mfaEnabled },
+    });
+
     return user;
+  }
+
+  /** A failure for an account that is known to exist (locked, wrong role,
+   *  unverified). No actor, since nobody is authenticated. */
+  private recordFailedLogin(userId: string, reason: NonNullable<AuthAuditMetadata['reason']>): Promise<void> {
+    return this.authAudit.record(AUTH_AUDIT_EVENTS.LOGIN_FAILED, {
+      actorId: null,
+      userId,
+      metadata: { method: 'password', reason },
+    });
+  }
+
+  /** Unknown email, Google-only account and wrong password all produce the
+   *  identical row (no actor, unattributed entity, same reason), so the trail
+   *  does not reveal which happened. A one-way hash of the normalised email
+   *  lets repeated attempts on one address be correlated; neither the email
+   *  nor the password is stored. */
+  private recordInvalidCredentials(email: string): Promise<void> {
+    const emailHash = createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+    return this.authAudit.record(AUTH_AUDIT_EVENTS.LOGIN_FAILED, {
+      actorId: null,
+      userId: null,
+      metadata: { method: 'password', reason: 'invalid_credentials', emailHash },
+    });
+  }
+
+  /** Google proved the email; for an MFA account the session still waits on
+   *  POST /auth/mfa/verify, which records its own outcome. */
+  private recordGoogleLogin(user: User, newAccount: boolean): Promise<void> {
+    return this.authAudit.record(AUTH_AUDIT_EVENTS.GOOGLE_LOGIN, {
+      actorId: user.id,
+      userId: user.id,
+      metadata: { method: 'google', mfaPending: user.mfaEnabled, newAccount },
+    });
   }
 
   /** Increments the account's failed-login counter and, once it crosses
@@ -457,6 +510,9 @@ export class AuthService {
     if (reset.count === 0) {
       throw invalid();
     }
+
+    // Not signed in, but proving the emailed code makes the owner the actor.
+    await this.authAudit.record(AUTH_AUDIT_EVENTS.PASSWORD_RESET, { actorId: user.id, userId: user.id });
   }
 
   issueAccessToken(user: User): string {
@@ -564,5 +620,7 @@ export class AuthService {
       where: { id: userId },
       data: { tokenVersion: { increment: 1 } },
     });
+
+    await this.authAudit.record(AUTH_AUDIT_EVENTS.LOGOUT, { actorId: userId, userId });
   }
 }

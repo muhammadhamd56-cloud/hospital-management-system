@@ -5,6 +5,7 @@ import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccountApprovalsService } from '../account-approvals/account-approvals.service';
 import { hashPassword } from '../auth/password.util';
+import { AUTH_AUDIT_EVENTS, AuthAuditService } from '../auth/auth-audit.service';
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -54,6 +55,7 @@ function buildUser(overrides: Partial<User> = {}): User {
 describe('UsersService', () => {
   let service: UsersService;
   let accountApprovalsService: { notifyAdminsOfRequest: jest.Mock };
+  let authAudit: { record: jest.Mock };
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock; delete: jest.Mock };
     bed: { updateMany: jest.Mock };
@@ -62,6 +64,7 @@ describe('UsersService', () => {
 
   beforeEach(async () => {
     accountApprovalsService = { notifyAdminsOfRequest: jest.fn().mockResolvedValue(undefined) };
+    authAudit = { record: jest.fn().mockResolvedValue(undefined) };
     prisma = {
       user: { findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
       bed: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -73,6 +76,7 @@ describe('UsersService', () => {
         UsersService,
         { provide: PrismaService, useValue: prisma },
         { provide: AccountApprovalsService, useValue: accountApprovalsService },
+        { provide: AuthAuditService, useValue: authAudit },
       ],
     }).compile();
 
@@ -308,6 +312,48 @@ describe('UsersService', () => {
         data: { status: 'AVAILABLE', patientId: null },
       });
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('setPassword audit trail', () => {
+    it('records a first password as auth.password.set, without the password', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ password: null }));
+      prisma.user.update.mockResolvedValue(buildUser({ password: 'hashed' }));
+
+      await service.setPassword('user-1', { newPassword: 'brandnewpass123' });
+
+      expect(authAudit.record).toHaveBeenCalledWith(AUTH_AUDIT_EVENTS.PASSWORD_SET, {
+        actorId: 'user-1',
+        userId: 'user-1',
+        metadata: { required: false },
+      });
+      expect(JSON.stringify(authAudit.record.mock.calls)).not.toContain('brandnewpass123');
+    });
+
+    it('records a change of an existing password as auth.password.changed, flagging a forced change', async () => {
+      const existingHash = await hashPassword('existing-pass');
+      prisma.user.findUnique.mockResolvedValue(buildUser({ password: existingHash, mustChangePassword: true }));
+      prisma.user.update.mockResolvedValue(buildUser({ password: 'new-hashed' }));
+
+      await service.setPassword('user-1', { currentPassword: 'existing-pass', newPassword: 'brandnewpass123' });
+
+      expect(authAudit.record).toHaveBeenCalledWith(AUTH_AUDIT_EVENTS.PASSWORD_CHANGED, {
+        actorId: 'user-1',
+        userId: 'user-1',
+        metadata: { required: true },
+      });
+      const logged = JSON.stringify(authAudit.record.mock.calls);
+      expect(logged).not.toMatch(/existing-pass|brandnewpass123/);
+    });
+
+    it('does not record a rejected password change', async () => {
+      const existingHash = await hashPassword('existing-pass');
+      prisma.user.findUnique.mockResolvedValue(buildUser({ password: existingHash }));
+
+      await expect(
+        service.setPassword('user-1', { currentPassword: 'wrong', newPassword: 'brandnewpass123' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(authAudit.record).not.toHaveBeenCalled();
     });
   });
 });

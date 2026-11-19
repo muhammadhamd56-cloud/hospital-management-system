@@ -382,20 +382,69 @@ describe('ShiftsService', () => {
       expect(groupIds.size).toBe(1);
     });
 
-    it('rolls back every shift already created when a later occurrence conflicts', async () => {
-      prisma.staff.findUnique.mockResolvedValue(buildStaff());
-      let callCount = 0;
-      prisma.staffShift.findFirst.mockImplementation(() => {
-        callCount += 1;
-        // First occurrence is clear, second occurrence conflicts.
-        return Promise.resolve(callCount === 2 ? buildShift() : null);
+    /**
+     * A fake database for createRecurring: shifts written through the tx
+     * client are staged, visible to later overlap checks in the same
+     * transaction, and only committed if the callback resolves -- like a
+     * real COMMIT/ROLLBACK.
+     */
+    function useFakeShiftDb() {
+      const committed: Array<{ id: string; startTime: Date; endTime: Date }> = [];
+      prisma.$transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) => {
+        const staged: Array<{ id: string; startTime: Date; endTime: Date }> = [];
+        const visible = () => [...committed, ...staged];
+        const tx = {
+          staff: { findUnique: jest.fn().mockResolvedValue(buildStaff()) },
+          staffLeave: { findUnique: jest.fn().mockResolvedValue(null) },
+          staffAvailability: { findUnique: jest.fn().mockResolvedValue(null) },
+          staffShift: {
+            findFirst: jest.fn(async ({ where }: { where: { startTime: { lt: Date }; endTime: { gt: Date } } }) =>
+              visible().find((row) => row.startTime < where.startTime.lt && row.endTime > where.endTime.gt) ?? null,
+            ),
+            create: jest.fn(async ({ data }: { data: { startTime: Date; endTime: Date; groupId: string } }) => {
+              const row = {
+                ...buildShift({ id: `shift-${visible().length + 1}`, ...data }),
+                staff: { ...buildStaff(), user: null, department: null },
+              };
+              staged.push(row);
+              return row;
+            }),
+          },
+        };
+        const result = await fn(tx);
+        committed.push(...staged);
+        return result;
       });
-      prisma.staffShift.create.mockImplementation(({ data }) =>
-        Promise.resolve({
-          ...buildShift({ id: 'shift-created-1', startTime: data.startTime, endTime: data.endTime, groupId: data.groupId }),
-          staff: { ...buildStaff(), user: null, department: null },
-        }),
+      return committed;
+    }
+
+    it('creates every occurrence inside ONE Serializable transaction, validating each one', async () => {
+      const committed = useFakeShiftDb();
+
+      const result = await service.createRecurring(
+        { staffId: 'staff-1', shiftType: 'morning', occurrences: threeMondays },
+        'admin-1',
       );
+
+      expect(result).toHaveLength(3);
+      expect(committed).toHaveLength(3);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }),
+      );
+      // Nothing written outside the transaction client.
+      expect(prisma.staffShift.create).not.toHaveBeenCalled();
+    });
+
+    it('creates no shifts at all when a later occurrence conflicts (no partial batch, no compensating delete)', async () => {
+      const committed = useFakeShiftDb();
+      // An existing shift that clashes with the SECOND Monday only.
+      committed.push({
+        id: 'existing',
+        startTime: new Date('2026-08-24T10:00:00.000Z'),
+        endTime: new Date('2026-08-24T12:00:00.000Z'),
+      });
 
       await expect(
         service.createRecurring(
@@ -404,7 +453,131 @@ describe('ShiftsService', () => {
         ),
       ).rejects.toBeInstanceOf(ConflictException);
 
-      expect(prisma.staffShift.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['shift-created-1'] } } });
+      expect(committed.map((row) => row.id)).toEqual(['existing']);
+      expect(prisma.staffShift.deleteMany).not.toHaveBeenCalled();
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a batch whose own occurrences overlap each other, creating nothing', async () => {
+      const committed = useFakeShiftDb();
+
+      await expect(
+        service.createRecurring(
+          { staffId: 'staff-1', shiftType: 'morning', occurrences: [threeMondays[0], threeMondays[0]] },
+          'admin-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(committed).toEqual([]);
+    });
+
+    it('creates no shifts when a later occurrence fails validation (staff on leave)', async () => {
+      prisma.staff.findUnique.mockResolvedValue(buildStaff());
+      prisma.staffShift.findFirst.mockResolvedValue(null);
+      prisma.staffLeave.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'leave-1' });
+      const committed: unknown[] = [];
+      prisma.$transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) => {
+        const staged: unknown[] = [];
+        const tx = {
+          ...prisma,
+          staffShift: {
+            ...prisma.staffShift,
+            create: jest.fn(async ({ data }) => {
+              const row = { ...buildShift(data), staff: { ...buildStaff(), user: null, department: null } };
+              staged.push(row);
+              return row;
+            }),
+          },
+        };
+        const result = await fn(tx);
+        committed.push(...staged);
+        return result;
+      });
+
+      await expect(
+        service.createRecurring(
+          { staffId: 'staff-1', shiftType: 'morning', occurrences: threeMondays },
+          'admin-1',
+        ),
+      ).rejects.toThrow('Staff member is on leave on this date');
+
+      expect(prisma.staffLeave.findUnique).toHaveBeenCalledTimes(3);
+      expect(committed).toEqual([]);
+      expect(prisma.staffShift.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('maps a serialization failure on the batch transaction to a ConflictException', async () => {
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('could not serialize access', { code: 'P2034', clientVersion: 'test' }),
+      );
+
+      await expect(
+        service.createRecurring(
+          { staffId: 'staff-1', shiftType: 'morning', occurrences: threeMondays },
+          'admin-1',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.staffShift.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assignFromOpeningInTx', () => {
+    const params = {
+      staffId: 'staff-1',
+      date: new Date('2026-08-20T00:00:00.000Z'),
+      startTime: new Date('2026-08-20T08:00:00.000Z'),
+      localStartTime: '08:00',
+      endTime: new Date('2026-08-20T16:00:00.000Z'),
+      shiftType: ShiftType.MORNING,
+      createdById: 'admin-1',
+    };
+
+    it("runs the same checks and the create on the caller's transaction client, opening no transaction of its own", async () => {
+      const tx = {
+        staff: { findUnique: jest.fn().mockResolvedValue(buildStaff()) },
+        staffLeave: { findUnique: jest.fn().mockResolvedValue(null) },
+        staffAvailability: { findUnique: jest.fn().mockResolvedValue(null) },
+        staffShift: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue({ ...buildShift(), staff: { ...buildStaff(), user: null } }),
+        },
+      };
+
+      const shift = await service.assignFromOpeningInTx(tx as never, params);
+
+      expect(shift.id).toBe('shift-1');
+      expect(tx.staffShift.findFirst).toHaveBeenCalled();
+      expect(tx.staffShift.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ staffId: 'staff-1', createdById: 'admin-1' }) }),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.staffShift.create).not.toHaveBeenCalled();
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException (and creates nothing) when the slot overlaps an existing shift', async () => {
+      const tx = {
+        staff: { findUnique: jest.fn().mockResolvedValue(buildStaff()) },
+        staffLeave: { findUnique: jest.fn().mockResolvedValue(null) },
+        staffAvailability: { findUnique: jest.fn().mockResolvedValue(null) },
+        staffShift: { findFirst: jest.fn().mockResolvedValue(buildShift()), create: jest.fn() },
+      };
+
+      await expect(service.assignFromOpeningInTx(tx as never, params)).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.staffShift.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an inactive staff member', async () => {
+      const tx = {
+        staff: { findUnique: jest.fn().mockResolvedValue(buildStaff({ isActive: false })) },
+        staffShift: { create: jest.fn() },
+      };
+
+      await expect(service.assignFromOpeningInTx(tx as never, params)).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.staffShift.create).not.toHaveBeenCalled();
     });
   });
 

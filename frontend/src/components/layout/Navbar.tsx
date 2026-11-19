@@ -60,7 +60,9 @@ export function Navbar({ onMenuClick }: NavbarProps) {
         <button
           type="button"
           onClick={toggleTheme}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label="Dark mode"
+          aria-pressed={theme === 'dark'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           className="rounded-lg p-2 text-ink-muted hover:bg-surface-alt"
         >
           {theme === 'dark' ? (

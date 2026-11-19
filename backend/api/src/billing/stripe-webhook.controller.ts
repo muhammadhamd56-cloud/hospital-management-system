@@ -1,4 +1,5 @@
 import { BadRequestException, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { StripeService } from './stripe.service';
 
@@ -8,7 +9,10 @@ import { StripeService } from './stripe.service';
  * request body (see main.ts, which registers a raw body parser for this
  * exact path before the global JSON parser -- signature verification
  * needs the untouched bytes, not the re-serialized parsed object).
+ * Exempt from the global per-IP throttle: Stripe delivers bursts from a small
+ * set of IPs, and a 429 would only cause retries. The signature check guards it.
  */
+@SkipThrottle()
 @Controller('billing/webhooks')
 export class StripeWebhookController {
   constructor(private readonly stripeService: StripeService) {}

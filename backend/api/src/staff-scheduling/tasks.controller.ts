@@ -7,7 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import type { TaskDisplayStatus } from './tasks.mapper';
+import { ListTasksQueryDto } from './dto/list-queries.dto';
 import { TaskResponse } from './tasks.mapper';
 import { TasksService } from './tasks.service';
 
@@ -20,11 +20,8 @@ export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
   @Get()
-  async findAll(
-    @Query('assignedToId') assignedToId?: string,
-    @Query('department') department?: string,
-    @Query('status') status?: TaskDisplayStatus,
-  ): Promise<{ tasks: TaskResponse[] }> {
+  async findAll(@Query() query: ListTasksQueryDto): Promise<{ tasks: TaskResponse[] }> {
+    const { assignedToId, department, status } = query;
     const tasks = await this.tasksService.findAll({ assignedToId, department, status });
     return { tasks };
   }

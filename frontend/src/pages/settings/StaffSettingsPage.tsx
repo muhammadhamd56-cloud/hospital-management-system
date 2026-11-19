@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { AccountInfoForm } from '@/features/auth/AccountInfoForm'
 import { SetPasswordCard } from '@/features/auth/SetPasswordCard'
+import { MfaCard } from '@/features/mfa/MfaCard'
 import { STAFF_TYPE_LABELS } from '@/types/staffScheduling'
 import { getMyProfile } from '@/features/staffPortal/api'
 import type { StaffPortalProfile } from '@/types/staffPortal'
@@ -42,7 +43,11 @@ export function StaffSettingsPage() {
         <SetPasswordCard />
       </div>
 
-      <Card className="animate-fade-in" style={{ animationDelay: '120ms' }}>
+      <div className="animate-fade-in" style={{ animationDelay: '120ms' }}>
+        <MfaCard />
+      </div>
+
+      <Card className="animate-fade-in" style={{ animationDelay: '180ms' }}>
         <CardHeader>
           <CardTitle>Staff Profile</CardTitle>
           <CardDescription>Managed by your administrator.</CardDescription>

@@ -12,7 +12,7 @@ import { PendingApprovalPage } from '@/pages/auth/PendingApprovalPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { PublicDoctorProfilePage } from '@/pages/doctors/PublicDoctorProfilePage'
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/ProtectedRoute'
-import { LaboratoryRoute, RoleRoute } from '@/routes/RoleRoute'
+import { EmergencyRoute, LaboratoryRoute, RoleRoute } from '@/routes/RoleRoute'
 import { RouteErrorBoundary } from '@/routes/RouteErrorBoundary'
 import { ROUTES } from '@/constants/routes'
 
@@ -96,9 +96,18 @@ export const router = createBrowserRouter([
               { path: ROUTES.messages, lazy: messagesSwitch, handle: { title: 'Messages' } },
               { path: ROUTES.medicalRecords, lazy: medicalRecordsSwitch, handle: { title: 'Medical Records' } },
               { path: ROUTES.billing, lazy: billingSwitch, handle: { title: 'Billing' } },
+              // Deliberately no RoleRoute: GET /announcements is readable by every
+              // authenticated role (AnnouncementsController.findAll has no @Roles;
+              // only POST is ADMIN-only, and the page shows the publish form to
+              // admins only). The sidebar simply doesn't list it for patients.
               { path: ROUTES.announcements, lazy: announcementsPage, handle: { title: 'Announcements' } },
+              // EmergencyRouteSwitch gates itself, since it also role-switches the page.
               { path: ROUTES.emergency, lazy: emergencySwitch, handle: { title: 'Emergency' } },
-              { path: ROUTES.emergencyCase, lazy: emergencyCaseDetailPage, handle: { title: 'Emergency Case' } },
+              {
+                // Same gate as /emergency: patient, admin, doctor, or nurse-type staff.
+                element: <EmergencyRoute />,
+                children: [{ path: ROUTES.emergencyCase, lazy: emergencyCaseDetailPage, handle: { title: 'Emergency Case' } }],
+              },
               {
                 element: <RoleRoute allow={['patient']} />,
                 children: [

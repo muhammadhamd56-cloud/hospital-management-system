@@ -8,6 +8,7 @@ import * as express from 'express';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { csrfProtection } from './common/middleware/csrf.middleware';
+import { createAccessLogMiddleware, isAccessLogEnabled } from './common/middleware/access-log.middleware';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -47,6 +48,10 @@ async function bootstrap(): Promise<void> {
   app.use(helmet());
   app.use(compression());
   app.use(cookieParser());
+  if (isAccessLogEnabled()) {
+    // Before csrfProtection, so CSRF rejections get an access-log line and request id too.
+    app.use(createAccessLogMiddleware());
+  }
   app.use(csrfProtection);
   app.enableCors({
     origin: configService.get<string>('clientUrl'),
@@ -83,7 +88,7 @@ async function bootstrap(): Promise<void> {
   // Lets Prisma disconnect and in-flight requests finish when Render sends SIGTERM on a redeploy.
   app.enableShutdownHooks();
 
-  const port = configService.get<number>('port') ?? 3001;
+  const port = configService.get<number>('port') ?? 3000;
   await app.listen(port);
   logger.log(`Server listening on http://localhost:${port}/api`);
   if (serveApiDocs) {

@@ -68,10 +68,18 @@ describe('EmergencyRouteSwitch', () => {
     expect(screen.getByText('emergency center page')).toBeInTheDocument()
   })
 
-  it('redirects a non-nurse staff account away instead of rendering the center', () => {
+  it('shows an access-denied message to a non-nurse staff account instead of rendering the center', () => {
     mockUseAuth.mockReturnValue({ user: buildUser({ role: 'staff', staffType: 'receptionist' }) })
     renderSwitch()
     expect(screen.queryByText('emergency center page')).not.toBeInTheDocument()
     expect(screen.queryByText('patient emergency page')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /you don't have access to this page/i })).toBeInTheDocument()
+  })
+
+  it('shows an access-denied message to a staff account not yet linked to the roster', () => {
+    mockUseAuth.mockReturnValue({ user: buildUser({ role: 'staff', staffType: null }) })
+    renderSwitch()
+    expect(screen.queryByText('emergency center page')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /you don't have access to this page/i })).toBeInTheDocument()
   })
 })

@@ -12,8 +12,10 @@ const TASK_INCLUDE = { assignedTo: { select: { userId: true } } } as const;
 /**
  * Periodically nudges staff about tasks due soon, and separately flags ones
  * that just went overdue. reminderSentAt/overdueNotifiedAt each gate their
- * own one-time notification regardless of how often the cron fires --
- * same pattern as AppointmentRemindersService.
+ * own one-time notification regardless of how often the cron fires, and
+ * each row is claimed with a conditional updateMany before sending, so
+ * overlapping runs/instances can't both send -- same pattern as
+ * AppointmentRemindersService.
  */
 @Injectable()
 export class TaskRemindersService {
@@ -46,6 +48,15 @@ export class TaskRemindersService {
     let sent = 0;
     for (const task of dueSoon) {
       try {
+        // Claim before sending: if two runs overlap (a slow run, or more than
+        // one instance), only the one that stamps reminderSentAt first sends.
+        // Deliberately at-most-once, same as AppointmentRemindersService.
+        const claimed = await this.prisma.task.updateMany({
+          where: { id: task.id, reminderSentAt: null },
+          data: { reminderSentAt: new Date() },
+        });
+        if (claimed.count !== 1) continue;
+
         if (task.assignedTo.userId) {
           await this.notifications.create(
             task.assignedTo.userId,
@@ -56,7 +67,6 @@ export class TaskRemindersService {
           );
         }
 
-        await this.prisma.task.update({ where: { id: task.id }, data: { reminderSentAt: new Date() } });
         sent += 1;
       } catch (error) {
         this.logger.error(`Failed to send due-soon nudge for task ${task.id}: ${(error as Error).message}`);
@@ -81,6 +91,13 @@ export class TaskRemindersService {
     let sent = 0;
     for (const task of overdue) {
       try {
+        // Same claim-before-send as sendDueSoonNudges(), on overdueNotifiedAt.
+        const claimed = await this.prisma.task.updateMany({
+          where: { id: task.id, overdueNotifiedAt: null },
+          data: { overdueNotifiedAt: new Date() },
+        });
+        if (claimed.count !== 1) continue;
+
         if (task.assignedTo.userId) {
           await this.notifications.create(
             task.assignedTo.userId,
@@ -91,7 +108,6 @@ export class TaskRemindersService {
           );
         }
 
-        await this.prisma.task.update({ where: { id: task.id }, data: { overdueNotifiedAt: new Date() } });
         sent += 1;
       } catch (error) {
         this.logger.error(`Failed to send overdue notice for task ${task.id}: ${(error as Error).message}`);

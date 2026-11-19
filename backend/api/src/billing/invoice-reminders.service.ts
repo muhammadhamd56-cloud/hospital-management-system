@@ -59,6 +59,17 @@ export class InvoiceRemindersService {
           continue;
         }
 
+        // Claim before sending: if two runs overlap (a slow run, or more than
+        // one instance), only the one that stamps overdueNotifiedAt first
+        // sends. Deliberately at-most-once, same as AppointmentRemindersService
+        // -- a duplicate notice is worse than the rare missed one if sending
+        // fails after the claim.
+        const claimed = await this.prisma.invoice.updateMany({
+          where: { id: invoice.id, overdueNotifiedAt: null },
+          data: { overdueNotifiedAt: new Date() },
+        });
+        if (claimed.count !== 1) continue;
+
         const patientName = `${invoice.patient.firstName} ${invoice.patient.lastName}`.trim();
 
         await this.emailService.sendInvoiceOverdueEmail(invoice.patient.email, {
@@ -75,11 +86,6 @@ export class InvoiceRemindersService {
           `Invoice ${response.invoiceNumber} for ${response.remaining.toFixed(2)} is overdue.`,
           `/billing?invoiceId=${invoice.id}`,
         );
-
-        await this.prisma.invoice.update({
-          where: { id: invoice.id },
-          data: { overdueNotifiedAt: new Date() },
-        });
 
         sent += 1;
       } catch (error) {

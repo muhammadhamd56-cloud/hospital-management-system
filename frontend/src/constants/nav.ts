@@ -23,11 +23,13 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { ROUTES } from '@/constants/routes'
+import { canAccessEmergency } from '@/features/emergency/access'
 import type { NavItem } from '@/types/nav'
 
-/** Primary sidebar navigation. Items without a `path` render disabled — their
- *  module hasn't been built yet — so the sidebar reflects the full intended
- *  IA without linking anywhere real. */
+/** Primary sidebar navigation. Every current item links to a real route;
+ *  `roles` and the optional `visible` predicate decide who sees it. (The
+ *  sidebar still renders a path-less item as disabled, since `NavItem.path`
+ *  is optional, but no entry here relies on that.) */
 const OPS_ONLY: NavItem['roles'] = ['admin', 'doctor']
 
 export const NAV_ITEMS: NavItem[] = [
@@ -39,7 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ['patient', 'admin', 'doctor', 'staff'],
     // Role.STAFF is shared by every non-doctor staff type -- only nurses
     // staff the Emergency Center, same gating LaboratoryPage uses below.
-    visible: (user) => user.role !== 'staff' || user.staffType === 'nurse',
+    visible: (user) => canAccessEmergency(user),
   },
   { label: 'Find Doctor', icon: UserSearch, path: ROUTES.findDoctor, roles: ['patient'] },
   { label: 'Book Appointment', icon: CalendarPlus, path: ROUTES.bookAppointment, roles: ['patient'] },

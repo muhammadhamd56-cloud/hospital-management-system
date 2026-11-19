@@ -7,7 +7,8 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { RespondShiftApplicationDto } from './dto/respond-shift-application.dto';
 import { ShiftApplicationResponse } from './shift-applications.mapper';
-import { ShiftApplicationsService, ShiftApplicationFilters } from './shift-applications.service';
+import { ShiftApplicationsService } from './shift-applications.service';
+import { ListShiftApplicationsQueryDto } from './dto/list-queries.dto';
 
 /** Admin-only review of shift applications. Nurses/staff submit and track
  *  their own through staff-portal, which shares this same service. */
@@ -18,11 +19,8 @@ export class ShiftApplicationsController {
   constructor(private readonly shiftApplicationsService: ShiftApplicationsService) {}
 
   @Get()
-  async findAll(
-    @Query('openingId') openingId?: string,
-    @Query('staffId') staffId?: string,
-    @Query('status') status?: ShiftApplicationFilters['status'],
-  ): Promise<{ applications: ShiftApplicationResponse[] }> {
+  async findAll(@Query() query: ListShiftApplicationsQueryDto): Promise<{ applications: ShiftApplicationResponse[] }> {
+    const { openingId, staffId, status } = query;
     const applications = await this.shiftApplicationsService.listAll({ openingId, staffId, status });
     return { applications };
   }

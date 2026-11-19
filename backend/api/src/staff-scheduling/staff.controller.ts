@@ -6,7 +6,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
-import { ClientStaffType, CreateStaffDto } from './dto/create-staff.dto';
+import { CreateStaffDto } from './dto/create-staff.dto';
+import { ListStaffQueryDto } from './dto/list-queries.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { StaffResponse } from './staff.mapper';
 import { StaffService } from './staff.service';
@@ -24,10 +25,8 @@ export class StaffController {
 
   @ApiOperation({ summary: 'List the staff scheduling roster, optionally filtered by type or department' })
   @Get()
-  async findAll(
-    @Query('staffType') staffType?: ClientStaffType,
-    @Query('department') department?: string,
-  ): Promise<{ staff: StaffResponse[] }> {
+  async findAll(@Query() query: ListStaffQueryDto): Promise<{ staff: StaffResponse[] }> {
+    const { staffType, department } = query;
     const staff = await this.staffService.findAll({ staffType, department });
     return { staff };
   }

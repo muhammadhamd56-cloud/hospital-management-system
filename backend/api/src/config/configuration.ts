@@ -34,6 +34,11 @@ export interface AppConfig {
     anthropicApiKey: string | undefined;
     model: string;
   };
+  mfa: {
+    /** Raw MFA_ENCRYPTION_KEY (32 bytes as base64 or 64 hex chars). Required
+     *  in production; unset elsewhere means MFA secrets are stored as plain text. */
+    encryptionKey: string | undefined;
+  };
   /** Admin AI Copilot (src/admin-ai). Every flag defaults to the safe value. */
   adminAi: AdminAiConfig;
 }
@@ -74,6 +79,9 @@ export default (): AppConfig => ({
   assistant: {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5',
+  },
+  mfa: {
+    encryptionKey: process.env.MFA_ENCRYPTION_KEY?.trim() || undefined,
   },
   adminAi: loadAdminAiConfig(process.env),
 });

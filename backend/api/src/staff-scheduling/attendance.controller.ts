@@ -10,6 +10,7 @@ import { AttendanceResponse } from './attendance.mapper';
 import { AttendanceService } from './attendance.service';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
+import { ListAttendanceQueryDto } from './dto/list-queries.dto';
 
 /** Simple, database-driven attendance tracking tied 1:1 to a shift -- no
  *  biometric integration. */
@@ -23,11 +24,8 @@ export class AttendanceController {
 
   @ApiOperation({ summary: 'List attendance records, optionally filtered by staff or date range' })
   @Get()
-  async findAll(
-    @Query('staffId') staffId?: string,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-  ): Promise<{ attendance: AttendanceResponse[] }> {
+  async findAll(@Query() query: ListAttendanceQueryDto): Promise<{ attendance: AttendanceResponse[] }> {
+    const { staffId, dateFrom, dateTo } = query;
     const attendance = await this.attendanceService.findAll({ staffId, dateFrom, dateTo });
     return { attendance };
   }

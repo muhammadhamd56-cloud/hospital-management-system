@@ -3,7 +3,7 @@ import { ApprovalStatus, AppointmentStatus, NotificationType, Prisma, Role } fro
 import { PrismaService } from '../prisma/prisma.service';
 import { toPrismaMode } from '../common/session.mapper';
 import { NotificationsService } from '../notifications/notifications.service';
-import { BillingService } from '../billing/billing.service';
+import { BillingService, type InvoiceResponse } from '../billing/billing.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { BookAppointmentDto } from './dto/book-appointment.dto';
 import {
@@ -130,13 +130,42 @@ export class AppointmentsService {
     // both pass the conflict check before either commits -- Postgres aborts
     // the loser with a serialization failure (caught below) instead of
     // silently allowing a double-booking.
+    //
+    // The consultation invoice is created in the same transaction, so a
+    // failure while invoicing rolls the appointment back with it -- we never
+    // keep an unbilled appointment (whose slot would then also block the
+    // patient's retry as a "time conflict").
     let appointment: Awaited<ReturnType<AppointmentsService['createAppointmentRow']>>;
+    let invoice: InvoiceResponse | null;
     try {
-      appointment = await this.prisma.$transaction(
-        (tx) =>
-          this.createAppointmentRow(tx, patientId, dto, scheduledAt, doctor.consultationFee, doctor.appointmentDurationMinutes),
+      ({ appointment, invoice } = await this.prisma.$transaction(
+        async (tx) => {
+          const appointment = await this.createAppointmentRow(
+            tx,
+            patientId,
+            dto,
+            scheduledAt,
+            doctor.consultationFee,
+            doctor.appointmentDurationMinutes,
+          );
+
+          if (doctor.consultationFee <= 0) {
+            return { appointment, invoice: null };
+          }
+
+          const doctorName = `${appointment.doctor.user.firstName} ${appointment.doctor.user.lastName}`.trim();
+          const invoice = await this.billingService.createConsultationInvoiceInTx(
+            tx,
+            patientId,
+            doctorName,
+            doctor.consultationFee,
+            appointment.scheduledAt,
+            appointment.id,
+          );
+          return { appointment, invoice };
+        },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
+      ));
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
         throw new ConflictException(
@@ -146,23 +175,10 @@ export class AppointmentsService {
       throw error;
     }
 
-    // Invoice before notifying: if it can't be created, roll the booking back
-    // so we never keep an unbilled appointment (whose slot would then also
-    // block the patient's retry as a "time conflict").
-    if (doctor.consultationFee > 0) {
-      const doctorName = `${appointment.doctor.user.firstName} ${appointment.doctor.user.lastName}`.trim();
-      try {
-        await this.billingService.createConsultationInvoice(
-          patientId,
-          doctorName,
-          doctor.consultationFee,
-          appointment.scheduledAt,
-          appointment.id,
-        );
-      } catch (error) {
-        await this.prisma.appointment.delete({ where: { id: appointment.id } }).catch(() => undefined);
-        throw error;
-      }
+    // Notifications only after commit, so a rolled-back booking never
+    // announces an appointment or invoice that doesn't exist.
+    if (invoice) {
+      await this.billingService.notifyConsultationInvoiceCreated(invoice);
     }
 
     const patientName = `${appointment.patient.firstName} ${appointment.patient.lastName}`.trim();
