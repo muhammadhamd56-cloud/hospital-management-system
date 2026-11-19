@@ -3,6 +3,7 @@ import { UserPlus, CalendarPlus, Stethoscope, ReceiptText, FlaskConical } from '
 import type { LucideIcon } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
+import { TempPasswordDialog, type CreatedAccount } from '@/components/ui/TempPasswordDialog'
 import { AddPatientModal } from '@/features/patients/AddPatientModal'
 import { AddDoctorModal } from '@/features/doctors/AddDoctorModal'
 import { BookAppointmentModal } from '@/features/appointments/BookAppointmentModal'
@@ -21,6 +22,8 @@ const ACTIONS: { key: ActionKey; label: string; icon: LucideIcon }[] = [
 
 export function QuickActions() {
   const [openAction, setOpenAction] = useState<ActionKey | null>(null)
+  // A new account's temporary password exists only in the create response -- it must be shown, not dropped.
+  const [createdAccount, setCreatedAccount] = useState<CreatedAccount | null>(null)
 
   return (
     <Card className="rounded-2xl">
@@ -45,7 +48,10 @@ export function QuickActions() {
       <AddPatientModal
         isOpen={openAction === 'patient'}
         onClose={() => setOpenAction(null)}
-        onCreated={() => setOpenAction(null)}
+        onCreated={(result) => {
+          setOpenAction(null)
+          setCreatedAccount({ fullName: result.patient.fullName, tempPassword: result.tempPassword })
+        }}
       />
       <BookAppointmentModal
         isOpen={openAction === 'appointment'}
@@ -55,7 +61,10 @@ export function QuickActions() {
       <AddDoctorModal
         isOpen={openAction === 'doctor'}
         onClose={() => setOpenAction(null)}
-        onCreated={() => setOpenAction(null)}
+        onCreated={(result) => {
+          setOpenAction(null)
+          setCreatedAccount({ fullName: result.staff.fullName, tempPassword: result.tempPassword })
+        }}
       />
       <CreateInvoiceModal
         isOpen={openAction === 'invoice'}
@@ -67,6 +76,7 @@ export function QuickActions() {
         onClose={() => setOpenAction(null)}
         onRequest={() => setOpenAction(null)}
       />
+      <TempPasswordDialog account={createdAccount} onClose={() => setCreatedAccount(null)} />
     </Card>
   )
 }

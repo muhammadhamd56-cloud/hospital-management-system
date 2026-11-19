@@ -13,9 +13,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import type { User } from '@prisma/client';
 import { UserResponseDto } from '../users/dto/user-response.dto';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { AuthenticatedUser } from './types/authenticated-user.interface';
 import { AuthService } from './auth.service';
 import { MfaService } from './mfa.service';
 import { LoginDto } from './dto/login.dto';
@@ -26,11 +25,14 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { MfaVerifyDto } from './dto/mfa-verify.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { isLockedDemoAccount } from '../demo/demo-account.guard';
 import type { GoogleProfilePayload } from './types/google-profile.interface';
+import type { AppConfig } from '../config/configuration';
+import { ACCESS_COOKIE, clearAuthCookies, REFRESH_COOKIE, setAuthCookies } from './auth-cookies';
 
+/** The tokens themselves travel only as httpOnly cookies (see auth-cookies.ts),
+ *  never in the body, so page JavaScript -- including injected script -- can't read them. */
 interface AuthResponse {
-  token: string;
   user: UserResponseDto;
 }
 
@@ -59,10 +61,12 @@ export class AuthController {
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('verify-otp')
-  async verifyOtp(@Body() dto: VerifyOtpDto): Promise<AuthResponse> {
+  async verifyOtp(
+    @Body() dto: VerifyOtpDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
     const user = await this.authService.verifyOtp(dto);
-    const token = this.authService.issueAccessToken(user);
-    return { token, user: new UserResponseDto(user) };
+    return this.startSession(user, res);
   }
 
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
@@ -72,29 +76,51 @@ export class AuthController {
     return { message: 'Verification code sent' };
   }
 
-  /** Returns a real token directly, or -- for an MFA-enabled account -- a
+  /** Starts a session directly, or -- for an MFA-enabled account -- returns a
    *  short-lived challenge to complete via POST /auth/mfa/verify instead. */
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
-  async login(@Body() dto: LoginDto): Promise<AuthResponse | MfaRequiredResponse> {
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse | MfaRequiredResponse> {
     const user = await this.authService.loginLocal(dto);
 
     if (user.mfaEnabled) {
-      return { mfaRequired: true, mfaToken: this.mfaService.issueChallenge(user.id) };
+      return { mfaRequired: true, mfaToken: await this.mfaService.issueChallenge(user.id) };
     }
 
-    const token = this.authService.issueAccessToken(user);
-    return { token, user: new UserResponseDto(user) };
+    return this.startSession(user, res);
   }
 
   /** Completes an MFA-gated login: a valid challenge token (from /login)
    *  plus a TOTP or backup code exchanges for a real access token. */
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('mfa/verify')
-  async verifyMfa(@Body() dto: MfaVerifyDto): Promise<AuthResponse> {
+  async verifyMfa(
+    @Body() dto: MfaVerifyDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
     const user = await this.mfaService.verifyChallenge(dto.mfaToken, dto.code);
-    const token = this.authService.issueAccessToken(user);
-    return { token, user: new UserResponseDto(user) };
+    return this.startSession(user, res);
+  }
+
+  /** Swaps the refresh cookie for a new access + refresh pair. The frontend
+   *  calls this when a request 401s because the short-lived access token expired. */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('refresh')
+  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<AuthResponse> {
+    try {
+      const { user, tokens } = await this.authService.refreshSession(
+        req.cookies?.[REFRESH_COOKIE] as string | undefined,
+      );
+      setAuthCookies(res, tokens, this.cookieConfig());
+      return { user: new UserResponseDto(user) };
+    } catch (error) {
+      // A dead refresh cookie is useless -- drop both so the browser stops sending them.
+      clearAuthCookies(res, this.cookieConfig());
+      throw error;
+    }
   }
 
   /** Always the same response, whether or not the email belongs to an
@@ -114,11 +140,24 @@ export class AuthController {
   }
 
   /** Revokes every token issued so far for this user, current one included. */
+  /** Deliberately not behind JwtAuthGuard: an idle user's access cookie has
+   *  usually expired, and a guarded logout would 401 before clearing the
+   *  still-valid refresh cookie -- leaving them signed in on the next visit.
+   *  Always succeeds and always clears both cookies. */
   @Post('logout')
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async logout(@CurrentUser() currentUser: AuthenticatedUser): Promise<void> {
-    await this.authService.logout(currentUser.id);
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
+    const bearer = req.get('authorization')?.match(/^Bearer (.+)$/i)?.[1];
+    const owner = await this.authService.findSessionOwner({
+      refreshToken: req.cookies?.[REFRESH_COOKIE] as string | undefined,
+      accessToken: (req.cookies?.[ACCESS_COOKIE] as string | undefined) ?? bearer,
+    });
+
+    // A shared demo login has many visitors at once -- revoking would sign them all out.
+    if (owner && !isLockedDemoAccount(this.configService, owner.email)) {
+      await this.authService.logout(owner.id);
+    }
+    clearAuthCookies(res, this.cookieConfig());
   }
 
   /** Redirects the browser to Google's consent screen. */
@@ -128,22 +167,47 @@ export class AuthController {
     // Intentionally empty — GoogleAuthGuard performs the redirect before this runs.
   }
 
-  /** Google redirects here after consent. Issues a JWT and hands it to the frontend. */
+  /** Google redirects here after consent. Sets the session cookies and sends the browser back to the frontend. */
   @Get('google/callback')
   @UseGuards(GoogleAuthGuard)
   async googleCallback(@Req() req: Request, @Res() res: Response): Promise<void> {
     const clientUrl = this.configService.get<string>('clientUrl');
 
     try {
-      const profile = req.user as GoogleProfilePayload;
+      const profile = req.user as GoogleProfilePayload | null;
+      if (!profile) {
+        // Consent cancelled or Google returned an error (see GoogleAuthGuard.handleRequest).
+        throw new Error('Google authentication did not return a profile');
+      }
       const user = await this.authService.validateGoogleUser(profile);
-      const token = this.authService.issueAccessToken(user);
+
+      // Google proves control of the email, not the second factor. MFA
+      // accounts get the same short-lived challenge as password login and
+      // finish via POST /auth/mfa/verify; no session cookies yet.
+      if (user.mfaEnabled) {
+        const mfaToken = await this.mfaService.issueChallenge(user.id);
+        res.redirect(`${clientUrl}/oauth/callback?mfa=${encodeURIComponent(mfaToken)}`);
+        return;
+      }
+
+      setAuthCookies(res, this.authService.issueTokens(user), this.cookieConfig());
 
       this.logger.log(`OAuth success for ${user.email}`);
-      res.redirect(`${clientUrl}/oauth/callback?token=${encodeURIComponent(token)}`);
+      // No token in the URL any more -- it would land in browser history and
+      // server logs. The cookies set above are the session.
+      res.redirect(`${clientUrl}/oauth/callback`);
     } catch (error) {
       this.logger.error('OAuth callback failed', error instanceof Error ? error.stack : undefined);
       res.redirect(`${clientUrl}/oauth/callback?error=oauth_failed`);
     }
+  }
+
+  private startSession(user: User, res: Response): AuthResponse {
+    setAuthCookies(res, this.authService.issueTokens(user), this.cookieConfig());
+    return { user: new UserResponseDto(user) };
+  }
+
+  private cookieConfig(): AppConfig['cookies'] {
+    return this.configService.get<AppConfig['cookies']>('cookies') as AppConfig['cookies'];
   }
 }

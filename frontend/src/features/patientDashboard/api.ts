@@ -1,7 +1,7 @@
 import { api } from '@/lib/apiClient'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 import type { PatientAppointment, SessionMode } from '@/types/patientSession'
-import type { ChatMessage } from '@/types/chatMessage'
+import type { ChatThreadPage } from '@/types/chatMessage'
 
 export interface ListDoctorsParams {
   q?: string
@@ -40,8 +40,9 @@ export function cancelAppointment(id: string): Promise<{ appointment: PatientApp
   return api.patch(`/appointments/${id}/cancel`)
 }
 
-export function getChatThread(doctorId: string): Promise<{ thread: ChatMessage[] }> {
-  return api.get(`/chat/${doctorId}`)
+export function getChatThread(doctorId: string, before?: string): Promise<ChatThreadPage> {
+  const query = before ? `?before=${encodeURIComponent(before)}` : ''
+  return api.get(`/chat/${doctorId}${query}`)
 }
 
 export interface SendChatMessageInput {
@@ -52,7 +53,7 @@ export interface SendChatMessageInput {
 export function sendChatMessage(
   doctorId: string,
   input: SendChatMessageInput,
-): Promise<{ thread: ChatMessage[] }> {
+): Promise<ChatThreadPage> {
   return api.post(`/chat/${doctorId}`, input)
 }
 

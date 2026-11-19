@@ -3,7 +3,7 @@ import { ApplicationStatus, AuditAction, NotificationType } from '@prisma/client
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ShiftsService } from './shifts.service';
+import { parseLocalMinutes, ShiftsService } from './shifts.service';
 import { ApplyShiftDto } from './dto/apply-shift.dto';
 import { RespondShiftApplicationDto } from './dto/respond-shift-application.dto';
 import {
@@ -108,7 +108,9 @@ export class ShiftApplicationsService {
     // would run -- rejected here, before an application is even created,
     // so a nurse never wastes time applying to something that could never
     // be approved.
-    const localStartMinutes = opening.startTime.getUTCHours() * 60 + opening.startTime.getUTCMinutes();
+    const localStartMinutes = opening.localStartTime
+      ? parseLocalMinutes(opening.localStartTime)
+      : opening.startTime.getUTCHours() * 60 + opening.startTime.getUTCMinutes();
     await this.shiftsService.assertNoSchedulingConflict({
       staffId: staff.id,
       startTime: opening.startTime,
@@ -228,53 +230,86 @@ export class ShiftApplicationsService {
       return toShiftApplicationResponse(updated);
     }
 
-    // Re-check capacity at the moment of approval, not just at apply()
-    // time -- another application could have been approved in the
-    // meantime (classic check-then-act race, closed here by re-reading
-    // fresh counts inside this request).
-    const freshOpening = await this.prisma.shiftOpening.findUniqueOrThrow({
-      where: { id: application.openingId },
-      include: { applications: { select: { status: true } } },
+    // Claim the position first, under a row lock on the opening: the
+    // capacity re-check, marking this application APPROVED and auto-closing
+    // a now-full opening all happen while no other approval for the same
+    // opening can run. Without the lock, two admins (or a double-click)
+    // approving the last slot at once could both pass the count check.
+    const { freshOpening, closedOpening } = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "ShiftOpening" WHERE id = ${application.openingId} FOR UPDATE`;
+      const freshOpening = await tx.shiftOpening.findUniqueOrThrow({
+        where: { id: application.openingId },
+        include: { applications: { select: { status: true } } },
+      });
+      const approvedCount = freshOpening.applications.filter((a) => a.status === 'APPROVED').length;
+
+      if (!freshOpening.isOpen) {
+        throw new BadRequestException('This opening has been closed');
+      }
+
+      if (approvedCount >= freshOpening.positions) {
+        throw new BadRequestException('This shift is already full');
+      }
+
+      const claimed = await tx.shiftApplication.updateMany({
+        where: { id, status: ApplicationStatus.PENDING },
+        data: {
+          status: ApplicationStatus.APPROVED,
+          adminNotes: dto.adminNotes,
+          respondedById: actorId,
+          respondedAt: new Date(),
+        },
+      });
+
+      if (claimed.count === 0) {
+        throw new BadRequestException('This application has already been responded to');
+      }
+
+      // Auto-close once the last position is filled -- a clear signal to the
+      // admin without them having to check the count themselves.
+      const closedOpening = approvedCount + 1 >= freshOpening.positions;
+      if (closedOpening) {
+        await tx.shiftOpening.update({ where: { id: freshOpening.id }, data: { isOpen: false } });
+      }
+
+      return { freshOpening, closedOpening };
     });
-    const approvedCount = freshOpening.applications.filter((a) => a.status === 'APPROVED').length;
 
-    if (!freshOpening.isOpen) {
-      throw new BadRequestException('This opening has been closed');
+    let shift: Awaited<ReturnType<ShiftsService['assignFromOpening']>>;
+    try {
+      shift = await this.shiftsService.assignFromOpening({
+        staffId: application.staffId,
+        departmentId: freshOpening.departmentId,
+        date: freshOpening.date,
+        startTime: freshOpening.startTime,
+        localStartTime: freshOpening.localStartTime,
+        endTime: freshOpening.endTime,
+        shiftType: freshOpening.shiftType,
+        createdById: actorId,
+        notes: application.message ?? undefined,
+        notify: false,
+      });
+    } catch (error) {
+      // The shift couldn't be created (e.g. it now clashes with another shift
+      // for this staff member) -- give the position back.
+      await this.prisma.$transaction([
+        this.prisma.shiftApplication.update({
+          where: { id },
+          data: { status: ApplicationStatus.PENDING, adminNotes: application.adminNotes, respondedById: null, respondedAt: null },
+        }),
+        ...(closedOpening
+          ? [this.prisma.shiftOpening.update({ where: { id: freshOpening.id }, data: { isOpen: true } })]
+          : []),
+      ]);
+      throw error;
     }
-
-    if (approvedCount >= freshOpening.positions) {
-      throw new BadRequestException('This shift is already full');
-    }
-
-    const shift = await this.shiftsService.assignFromOpening({
-      staffId: application.staffId,
-      departmentId: freshOpening.departmentId,
-      date: freshOpening.date,
-      startTime: freshOpening.startTime,
-      endTime: freshOpening.endTime,
-      shiftType: freshOpening.shiftType,
-      createdById: actorId,
-      notes: application.message ?? undefined,
-      notify: false,
-    });
 
     const updated = await this.prisma.shiftApplication.update({
       where: { id },
-      data: {
-        status: ApplicationStatus.APPROVED,
-        adminNotes: dto.adminNotes,
-        respondedById: actorId,
-        respondedAt: new Date(),
-        resultingShiftId: shift.id,
-      },
+      data: { resultingShiftId: shift.id },
       include: INCLUDE,
     });
 
-    // Auto-close once the last position is filled -- a clear signal to the
-    // admin without them having to check the count themselves.
-    if (approvedCount + 1 >= freshOpening.positions) {
-      await this.prisma.shiftOpening.update({ where: { id: freshOpening.id }, data: { isOpen: false } });
-    }
 
     await this.auditLog.log({
       actorId,

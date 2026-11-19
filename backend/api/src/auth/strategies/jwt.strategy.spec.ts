@@ -1,6 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Role, type User } from '@prisma/client';
+import { ApprovalStatus, Role, type User } from '@prisma/client';
 import { JwtStrategy } from './jwt.strategy';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { JwtPayload } from '../types/jwt-payload.interface';
@@ -38,6 +38,12 @@ function buildUser(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    mfaFailedAttempts: 0,
+    mfaLockedUntil: null,
+    mfaChallengeId: null,
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvalReviewedAt: null,
+    approvalNote: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -80,6 +86,6 @@ describe('JwtStrategy', () => {
 
     const result = await strategy.validate(payload);
 
-    expect(result).toEqual({ id: 'user-1', email: 'ada@example.com', role: Role.PATIENT });
+    expect(result).toEqual({ id: 'user-1', email: 'ada@example.com', role: Role.PATIENT , approvalStatus: ApprovalStatus.APPROVED});
   });
 });

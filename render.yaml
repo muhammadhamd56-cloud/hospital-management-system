@@ -10,16 +10,35 @@ services:
     runtime: node
     plan: free
     rootDir: backend/api
-    buildCommand: npm install && npm run build
+    # --include=dev: NODE_ENV=production (below) would otherwise skip the
+    # devDependencies the build needs (@nestjs/cli, typescript).
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npx prisma migrate deploy --schema=../../database/api/schema.prisma && node dist/main
     healthCheckPath: /api/health
     envVars:
+      # Turns on Secure cookies and keeps one-time codes out of the logs.
+      - key: NODE_ENV
+        value: production
+      # Render's load balancer + Vercel's /api rewrite. Lets the rate limiter
+      # see each visitor's IP instead of the proxy's (see main.ts).
+      - key: TRUST_PROXY_HOPS
+        value: "2"
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_EXPIRES_IN
         value: 7d
+      # The frontend proxies /api through its own Vercel domain (see
+      # frontend/vercel.json), so the session cookies are first-party. That
+      # also means GOOGLE_CALLBACK_URL must use the Vercel domain:
+      # https://<vercel-domain>/api/auth/google/callback
+      - key: COOKIE_SAMESITE
+        value: lax
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET

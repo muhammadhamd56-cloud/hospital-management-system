@@ -63,6 +63,14 @@ export class UserResponseDto {
   @Expose()
   mustChangePassword!: boolean;
 
+  /** Self-registered doctor/staff accounts are 'pending' until an admin reviews them. */
+  @Expose()
+  approvalStatus!: 'pending' | 'approved' | 'rejected';
+
+  /** The admin's reason, when a request was rejected. */
+  @Expose()
+  approvalNote!: string | null;
+
   /** Whether TOTP-based two-factor auth is currently turned on. */
   @Expose()
   mfaEnabled!: boolean;
@@ -86,5 +94,7 @@ export class UserResponseDto {
     this.emailVerified = user.emailVerified;
     this.mustChangePassword = user.mustChangePassword;
     this.mfaEnabled = user.mfaEnabled;
+    this.approvalStatus = user.approvalStatus.toLowerCase() as UserResponseDto['approvalStatus'];
+    this.approvalNote = user.approvalNote;
   }
 }

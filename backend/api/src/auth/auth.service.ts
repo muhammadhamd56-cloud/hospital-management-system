@@ -6,14 +6,17 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { randomInt } from 'crypto';
-import { JwtService } from '@nestjs/jwt';
-import { Role, User } from '@prisma/client';
+import { randomBytes, randomInt } from 'crypto';
+import { ConfigService } from '@nestjs/config';
+import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
+import { ApprovalStatus, Role, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { AccountApprovalsService, requiresApproval } from '../account-approvals/account-approvals.service';
 import { toClientRole, toPrismaRole } from '../common/role.mapper';
 import type { GoogleProfilePayload } from './types/google-profile.interface';
-import type { JwtPayload } from './types/jwt-payload.interface';
+import type { JwtPayload, RefreshTokenPayload } from './types/jwt-payload.interface';
+import type { IssuedTokens } from './auth-cookies';
 import type { SignupDto } from './dto/signup.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -38,6 +41,10 @@ const PASSWORD_RESET_MAX_ATTEMPTS = 5;
 const LOGIN_MAX_FAILED_ATTEMPTS = 10;
 const LOGIN_LOCKOUT_MINUTES = 15;
 
+/** A real bcrypt hash (current cost) of a random value, compared against
+ *  when the email is unknown so that path costs the same as a wrong password. */
+const TIMING_DUMMY_HASH = hashPassword(randomBytes(16).toString('hex'));
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -46,6 +53,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly configService: ConfigService,
+    private readonly accountApprovalsService: AccountApprovalsService,
   ) {}
 
   /**
@@ -113,6 +122,8 @@ export class AuthService {
           role: toPrismaRole(dto.role),
           roleSelected: true,
           emailVerified: false,
+          // Doctor/staff roles open up patient data -- an admin must vet them first.
+          approvalStatus: requiresApproval(toPrismaRole(dto.role)) ? ApprovalStatus.PENDING : ApprovalStatus.APPROVED,
         },
       });
 
@@ -221,26 +232,51 @@ export class AuthService {
       throw new BadRequestException('This code has expired. Please request a new one.');
     }
 
-    const isValid = await verifyPassword(dto.code, user.otpCodeHash);
+    // Spend an attempt BEFORE checking the code, atomically: a burst of
+    // parallel guesses would otherwise all read the same attempt count and
+    // get far more than OTP_MAX_ATTEMPTS tries at a 6-digit code.
+    const claimed = await this.prisma.user.updateMany({
+      where: { id: user.id, otpCodeHash: user.otpCodeHash, otpAttempts: { lt: OTP_MAX_ATTEMPTS } },
+      data: { otpAttempts: { increment: 1 } },
+    });
 
-    if (!isValid) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { otpAttempts: { increment: 1 } },
-      });
+    if (claimed.count === 0) {
+      throw new ForbiddenException('Too many incorrect attempts. Please request a new code.');
+    }
+
+    if (!(await verifyPassword(dto.code, user.otpCodeHash))) {
       throw new UnauthorizedException('Incorrect code');
     }
 
-    return this.prisma.user.update({
+    const verified = await this.prisma.user.update({
       where: { id: user.id },
       data: { emailVerified: true, otpCodeHash: null, otpExpiresAt: null, otpAttempts: 0, otpLastSentAt: null },
     });
+
+    // Only now -- with a proven email -- does the request reach the admins' queue.
+    // The email is already verified at this point: a failed admin notification
+    // must not turn this into a 500 (the user would think verification failed).
+    if (verified.approvalStatus === ApprovalStatus.PENDING) {
+      try {
+        await this.accountApprovalsService.notifyAdminsOfRequest(verified);
+      } catch (error) {
+        this.logger.error(
+          `Approval request notification failed for user ${verified.id}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+    }
+
+    return verified;
   }
 
   async loginLocal(dto: LoginDto): Promise<User> {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
     if (!user || !user.password) {
+      // Spend the same bcrypt time as a real wrong-password check, so response
+      // timing doesn't reveal whether the email is registered.
+      await verifyPassword(dto.password, await TIMING_DUMMY_HASH);
       throw new UnauthorizedException(
         user
           ? 'This account uses Google sign-in. Use "Continue with Google" instead.'
@@ -296,7 +332,10 @@ export class AuthService {
   /** Increments the account's failed-login counter and, once it crosses
    *  LOGIN_MAX_FAILED_ATTEMPTS, locks it for LOGIN_LOCKOUT_MINUTES. */
   private async registerFailedLogin(user: User): Promise<void> {
-    const attempts = user.failedLoginAttempts + 1;
+    // A lockout that has already expired starts a fresh count -- otherwise one
+    // typo after waiting it out re-locks the account immediately.
+    const lockExpired = user.lockedUntil !== null && user.lockedUntil.getTime() <= Date.now();
+    const attempts = (lockExpired ? 0 : user.failedLoginAttempts) + 1;
 
     await this.prisma.user.update({
       where: { id: user.id },
@@ -358,38 +397,46 @@ export class AuthService {
     }
   }
 
-  /** Unlike requestPasswordReset, this DOES throw on a bad email/code/state
-   *  — by this point the caller already has a code, which only a real
-   *  account holder could have received, so there's nothing left to hide. */
+  /**
+   * Every failure -- unknown email, no reset pending, wrong code, expired,
+   * out of attempts -- is the same 400 with the same message. Anyone can
+   * trigger forgot-password for any address, so distinguishable failures
+   * here (the old "Incorrect code" 401 vs "Invalid" 400) would confirm
+   * which addresses have accounts.
+   */
   async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    const invalid = () =>
+      new BadRequestException('Invalid or expired reset code. If you have tried several times, request a new code.');
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
     if (!user || !user.passwordResetCodeHash || !user.passwordResetExpiresAt) {
-      throw new BadRequestException('Invalid or expired reset code');
-    }
-
-    if (user.passwordResetAttempts >= PASSWORD_RESET_MAX_ATTEMPTS) {
-      throw new ForbiddenException('Too many incorrect attempts. Please request a new code.');
+      throw invalid();
     }
 
     if (user.passwordResetExpiresAt.getTime() < Date.now()) {
-      throw new BadRequestException('This code has expired. Please request a new one.');
+      throw invalid();
     }
 
-    const isValid = await verifyPassword(dto.code, user.passwordResetCodeHash);
+    // Spend an attempt atomically before comparing -- see verifyOtp.
+    const claimed = await this.prisma.user.updateMany({
+      where: {
+        id: user.id,
+        passwordResetCodeHash: user.passwordResetCodeHash,
+        passwordResetAttempts: { lt: PASSWORD_RESET_MAX_ATTEMPTS },
+      },
+      data: { passwordResetAttempts: { increment: 1 } },
+    });
 
-    if (!isValid) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { passwordResetAttempts: { increment: 1 } },
-      });
-      throw new UnauthorizedException('Incorrect code');
+    if (claimed.count === 0 || !(await verifyPassword(dto.code, user.passwordResetCodeHash))) {
+      throw invalid();
     }
 
     const password = await hashPassword(dto.newPassword);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
+    // Conditional on the code still being the one just checked, so a code
+    // is single-use even when two requests with it arrive together.
+    const reset = await this.prisma.user.updateMany({
+      where: { id: user.id, passwordResetCodeHash: user.passwordResetCodeHash },
       data: {
         password,
         passwordResetCodeHash: null,
@@ -406,6 +453,10 @@ export class AuthService {
         lockedUntil: null,
       },
     });
+
+    if (reset.count === 0) {
+      throw invalid();
+    }
   }
 
   issueAccessToken(user: User): string {
@@ -416,6 +467,94 @@ export class AuthService {
       tokenVersion: user.tokenVersion,
     };
     return this.jwtService.sign(payload);
+  }
+
+  /** Issues a short-lived access token plus a longer-lived refresh token.
+   *  The refresh token is signed with its own secret and tagged with
+   *  `purpose`, so it can never be replayed as an access token. */
+  issueTokens(user: User): IssuedTokens {
+    const accessToken = this.issueAccessToken(user);
+    const refreshPayload: RefreshTokenPayload = {
+      sub: user.id,
+      tokenVersion: user.tokenVersion,
+      purpose: 'refresh',
+    };
+    const refreshToken = this.jwtService.sign(refreshPayload, {
+      secret: this.configService.get<string>('jwt.refreshSecret'),
+      expiresIn: this.configService.get<string>('jwt.refreshExpiresIn') as JwtSignOptions['expiresIn'],
+    });
+
+    return {
+      accessToken,
+      accessExpiresAt: this.expiryOf(accessToken),
+      refreshToken,
+      refreshExpiresAt: this.expiryOf(refreshToken),
+    };
+  }
+
+  /** Exchanges a valid refresh token for a fresh token pair. Fails once the
+   *  user logs out (or resets their password), since both bump tokenVersion. */
+  async refreshSession(refreshToken: string | undefined): Promise<{ user: User; tokens: IssuedTokens }> {
+    if (!refreshToken) {
+      throw new UnauthorizedException('No active session');
+    }
+
+    let payload: RefreshTokenPayload;
+    try {
+      payload = this.jwtService.verify<RefreshTokenPayload>(refreshToken, {
+        secret: this.configService.get<string>('jwt.refreshSecret'),
+      });
+    } catch {
+      throw new UnauthorizedException('Session expired, please sign in again');
+    }
+
+    if (payload.purpose !== 'refresh') {
+      throw new UnauthorizedException('Invalid session');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || user.tokenVersion !== payload.tokenVersion) {
+      throw new UnauthorizedException('Session has been revoked, please sign in again');
+    }
+
+    return { user, tokens: this.issueTokens(user) };
+  }
+
+  /**
+   * Works out whose session a logout request is ending, without requiring a
+   * live access token: the access cookie lives 15 minutes, so a user who's
+   * been idle longer still holds only the refresh cookie -- and that's the
+   * one that must die, or the next page load silently signs them back in.
+   * Returns null when neither token verifies (nothing to revoke).
+   */
+  async findSessionOwner(tokens: { refreshToken?: string; accessToken?: string }): Promise<User | null> {
+    const candidates: { token: string | undefined; secret: string | undefined; purpose: 'refresh' | undefined }[] = [
+      { token: tokens.refreshToken, secret: this.configService.get<string>('jwt.refreshSecret'), purpose: 'refresh' },
+      { token: tokens.accessToken, secret: this.configService.get<string>('jwt.secret'), purpose: undefined },
+    ];
+
+    for (const { token, secret, purpose } of candidates) {
+      if (!token) continue;
+      try {
+        const payload = this.jwtService.verify<{ sub: string; tokenVersion: number; purpose?: string }>(token, {
+          secret,
+        });
+        if (payload.purpose !== purpose) continue;
+
+        const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+        // An already-revoked token can't revoke anything new.
+        if (user && user.tokenVersion === payload.tokenVersion) return user;
+      } catch {
+        // Expired or forged -- try the next one.
+      }
+    }
+
+    return null;
+  }
+
+  private expiryOf(token: string): Date {
+    const { exp } = this.jwtService.decode<{ exp: number }>(token);
+    return new Date(exp * 1000);
   }
 
   /** Bumps tokenVersion so every token issued before this call (this device

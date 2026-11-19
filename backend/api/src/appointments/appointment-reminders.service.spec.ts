@@ -24,14 +24,14 @@ function buildDueAppointment(overrides: Record<string, unknown> = {}) {
 describe('AppointmentRemindersService', () => {
   let service: AppointmentRemindersService;
   let prisma: {
-    appointment: { findMany: jest.Mock; update: jest.Mock };
+    appointment: { findMany: jest.Mock; updateMany: jest.Mock };
   };
   let emailService: { sendAppointmentReminderEmail: jest.Mock };
   let notificationsService: { create: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
-      appointment: { findMany: jest.fn(), update: jest.fn() },
+      appointment: { findMany: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     };
     emailService = { sendAppointmentReminderEmail: jest.fn().mockResolvedValue(undefined) };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
@@ -63,7 +63,7 @@ describe('AppointmentRemindersService', () => {
     );
   });
 
-  it('emails and notifies the patient, then stamps reminderSentAt, for each due appointment', async () => {
+  it('claims each due appointment (stamping reminderSentAt), then emails and notifies the patient', async () => {
     const appointment = buildDueAppointment();
     prisma.appointment.findMany.mockResolvedValue([appointment]);
 
@@ -80,18 +80,32 @@ describe('AppointmentRemindersService', () => {
       expect.stringContaining('Grace Hopper'),
       '/my-appointments?appointmentId=appt-1',
     );
-    expect(prisma.appointment.update).toHaveBeenCalledWith({
-      where: { id: 'appt-1' },
+    expect(prisma.appointment.updateMany).toHaveBeenCalledWith({
+      where: { id: 'appt-1', reminderSentAt: null },
       data: { reminderSentAt: expect.any(Date) },
     });
+    expect(prisma.appointment.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      emailService.sendAppointmentReminderEmail.mock.invocationCallOrder[0],
+    );
     expect(sent).toBe(1);
+  });
+
+  it('skips an appointment another run already claimed, so the patient is not reminded twice', async () => {
+    prisma.appointment.findMany.mockResolvedValue([buildDueAppointment()]);
+    prisma.appointment.updateMany.mockResolvedValue({ count: 0 });
+
+    const sent = await service.sendDueReminders();
+
+    expect(emailService.sendAppointmentReminderEmail).not.toHaveBeenCalled();
+    expect(notificationsService.create).not.toHaveBeenCalled();
+    expect(sent).toBe(0);
   });
 
   it('keeps processing remaining appointments when one fails partway through', async () => {
     const first = buildDueAppointment({ id: 'appt-1' });
     const second = buildDueAppointment({ id: 'appt-2', patientId: 'patient-2' });
     prisma.appointment.findMany.mockResolvedValue([first, second]);
-    prisma.appointment.update.mockRejectedValueOnce(new Error('db hiccup')).mockResolvedValueOnce(undefined);
+    notificationsService.create.mockRejectedValueOnce(new Error('db hiccup')).mockResolvedValueOnce(undefined);
 
     const sent = await service.sendDueReminders();
 

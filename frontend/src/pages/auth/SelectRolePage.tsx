@@ -40,7 +40,8 @@ export function SelectRolePage() {
     setIsSubmitting(role)
     try {
       await selectRole(role)
-      toast.success("You're all set")
+      // Doctor accounts wait for an admin; ProtectedRoute shows the status page.
+      toast.success(role === 'doctor' ? 'Request sent — an administrator will review your account' : "You're all set")
       navigate(ROUTES.dashboard, { replace: true })
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Failed to set your role'
@@ -55,7 +56,7 @@ export function SelectRolePage() {
         <div className="text-center">
           <h1 className="text-lg font-semibold text-ink">One more step</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            How will you be using MediCore? This can&apos;t be changed yourself later.
+            How will you be using MediCore? This can&apos;t be changed yourself later. Doctor accounts are reviewed by an administrator before they can be used.
           </p>
         </div>
         <div className="flex flex-col gap-3">

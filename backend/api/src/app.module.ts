@@ -26,8 +26,10 @@ import { StaffPortalModule } from './staff-portal/staff-portal.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { AdminAiModule } from './admin-ai/admin-ai.module';
 import { PlatformSettingsModule } from './platform-settings/platform-settings.module';
 import { EmergencyModule } from './emergency/emergency.module';
+import { AccountApprovalsModule } from './account-approvals/account-approvals.module';
 
 @Module({
   imports: [
@@ -59,8 +61,10 @@ import { EmergencyModule } from './emergency/emergency.module';
     StaffPortalModule,
     AnnouncementsModule,
     AssistantModule,
+    AdminAiModule,
     PlatformSettingsModule,
     EmergencyModule,
+    AccountApprovalsModule,
   ],
   providers: [
     // The e2e suite alone signs up dozens of accounts in a few seconds --

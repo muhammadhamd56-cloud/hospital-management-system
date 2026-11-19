@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { NotificationType, type Doctor } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { ChatMessageResponse, toChatMessageResponse } from './chat.mapper';
+import { loadThreadPage, type ChatThreadPage } from './chat-thread';
 import type { SendMessageDto } from './dto/send-message.dto';
 
 export interface ChatInboxDoctor {
@@ -60,18 +60,12 @@ export class ChatService {
     return doctor;
   }
 
-  async getThread(patientId: string, doctorId: string): Promise<ChatMessageResponse[]> {
+  async getThread(patientId: string, doctorId: string, before?: string): Promise<ChatThreadPage> {
     await this.assertDoctorExists(doctorId);
-
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { patientId, doctorId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return messages.map(toChatMessageResponse);
+    return loadThreadPage(this.prisma, { patientId, doctorId }, before);
   }
 
-  async sendMessage(patientId: string, doctorId: string, dto: SendMessageDto): Promise<ChatMessageResponse[]> {
+  async sendMessage(patientId: string, doctorId: string, dto: SendMessageDto): Promise<ChatThreadPage> {
     const body = dto.body?.trim() ?? '';
     if (!body && !dto.imageUrl) {
       throw new BadRequestException('Message cannot be empty');
@@ -96,11 +90,6 @@ export class ChatService {
       `/messages?patientId=${patientId}`,
     );
 
-    const thread = await this.prisma.chatMessage.findMany({
-      where: { patientId, doctorId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return thread.map(toChatMessageResponse);
+    return loadThreadPage(this.prisma, { patientId, doctorId });
   }
 }

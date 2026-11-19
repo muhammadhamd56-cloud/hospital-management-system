@@ -41,6 +41,6 @@ import { TaskRemindersService } from './task-reminders.service';
     TasksService,
     TaskRemindersService,
   ],
-  exports: [ShiftsService, ShiftApplicationsService, ShiftOpeningsService, TasksService],
+  exports: [ShiftsService, ShiftApplicationsService, ShiftOpeningsService, TasksService, StaffService, AvailabilityService, AttendanceService],
 })
 export class StaffSchedulingModule {}

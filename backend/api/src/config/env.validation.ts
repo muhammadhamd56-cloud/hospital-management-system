@@ -1,5 +1,5 @@
 import { plainToInstance } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Min, validateSync } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Min, validateSync } from 'class-validator';
 
 class EnvironmentVariables {
   @IsString()
@@ -13,6 +13,31 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   JWT_EXPIRES_IN!: string;
+
+  @IsOptional()
+  @IsString()
+  JWT_REFRESH_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  JWT_REFRESH_EXPIRES_IN?: string;
+
+  /** Leave unset (lax) when the frontend reaches the API on the same site,
+   *  e.g. through a proxy/rewrite. Set to "none" only for a cross-site API. */
+  @IsOptional()
+  @IsIn(['lax', 'strict', 'none'])
+  COOKIE_SAMESITE?: string;
+
+  /** How many reverse proxies sit in front of the app; sets Express 'trust proxy'. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  TRUST_PROXY_HOPS?: number;
+
+  /** "true" for the public portfolio demo -- locks down the shared demo accounts. */
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  DEMO_MODE?: string;
 
   @IsString()
   @IsNotEmpty()

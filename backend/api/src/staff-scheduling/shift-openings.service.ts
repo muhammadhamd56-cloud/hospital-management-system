@@ -96,6 +96,7 @@ export class ShiftOpeningsService {
         departmentId,
         date,
         startTime,
+        localStartTime: dto.localStartTime ?? null,
         endTime,
         shiftType: toPrismaShiftType(dto.shiftType),
         positions: dto.positions,

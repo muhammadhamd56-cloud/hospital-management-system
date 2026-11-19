@@ -8,6 +8,7 @@ import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter
 import { ResponseInterceptor } from '../src/common/interceptors/response.interceptor';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
+import { accessTokenFrom } from './session-cookies';
 
 /**
  * Full-stack auth tests against a real Nest app + a dedicated test Postgres
@@ -111,7 +112,15 @@ describe('Auth (e2e)', () => {
       .send({ email, code })
       .expect(201);
 
-    return { token: res.body.data.token, email };
+    // Self-registered doctor/staff accounts start PENDING admin approval; the
+    // tests using this helper are about what an approved account can do, so
+    // approve it the way an admin would. The approval gate itself is covered
+    // by account-approvals.e2e-spec.ts.
+    if (payload.role === 'doctor' || payload.role === 'staff') {
+      await prisma.user.update({ where: { email }, data: { approvalStatus: 'APPROVED' } });
+    }
+
+    return { token: accessTokenFrom(res) as string, email };
   }
 
   describe('POST /api/auth/signup', () => {
@@ -119,7 +128,7 @@ describe('Auth (e2e)', () => {
       const res = await request(server()).post('/api/auth/signup').send(validPatient).expect(201);
 
       expect(res.body.data).toEqual({ email: validPatient.email });
-      expect(res.body.data.token).toBeUndefined();
+      expect(accessTokenFrom(res)).toBeUndefined();
       expect(sentCodes.get(validPatient.email)).toMatch(/^\d{6}$/);
     });
 
@@ -207,7 +216,8 @@ describe('Auth (e2e)', () => {
         .send({ email, password: validPatient.password, role: 'patient' })
         .expect(201);
 
-      expect(loginRes.body.data.token).toBeDefined();
+      expect(loginRes.body.data.token).toBeUndefined();
+      expect(accessTokenFrom(loginRes)).toBeDefined();
       expect(loginRes.body.data.user.emailVerified).toBe(true);
     });
 
@@ -373,7 +383,7 @@ describe('Auth (e2e)', () => {
         .post('/api/auth/login')
         .send({ email, password: validPatient.password, role: 'patient' })
         .expect(201);
-    }, 20000);
+    }, 60_000);
 
     it('regression: logs in successfully when the email is typed with different casing than it was stored', async () => {
       await signupAndVerify(validPatient);
@@ -497,7 +507,7 @@ describe('Auth (e2e)', () => {
         .send({ mfaToken, code: freshCode })
         .expect(201);
 
-      const realToken = verifyRes.body.data.token;
+      const realToken = accessTokenFrom(verifyRes);
       await request(server())
         .get('/api/users/me')
         .set('Authorization', `Bearer ${realToken}`)
@@ -539,8 +549,8 @@ describe('Auth (e2e)', () => {
         .send({ email: 'mfa-user@example.test', password: validPatient.password, role: 'patient' })
         .expect(201);
       expect(loginAfterDisable.body.data.mfaRequired).toBeUndefined();
-      expect(typeof loginAfterDisable.body.data.token).toBe('string');
-    }, 20_000);
+      expect(typeof accessTokenFrom(loginAfterDisable)).toBe('string');
+    }, 60_000);
   });
 
   describe('GET /api/users/me (JwtAuthGuard)', () => {

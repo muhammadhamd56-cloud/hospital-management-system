@@ -7,5 +7,6 @@ import { LaboratoryService } from './laboratory.service';
   imports: [NotificationsModule],
   controllers: [LaboratoryController],
   providers: [LaboratoryService],
+  exports: [LaboratoryService],
 })
 export class LaboratoryModule {}

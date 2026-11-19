@@ -7,7 +7,8 @@ export interface DashboardStatCardProps {
   label: string
   value: string
   icon: LucideIcon
-  trend: number
+  /** Percent change vs last month. Omit unless it comes from real data -- never a placeholder. */
+  trend?: number
   updatedLabel: string
   onClick?: () => void
 }
@@ -20,7 +21,7 @@ export function DashboardStatCard({
   updatedLabel,
   onClick,
 }: DashboardStatCardProps) {
-  const isPositive = trend >= 0
+  const isPositive = (trend ?? 0) >= 0
   const TrendIcon = isPositive ? ArrowUpRight : ArrowDownRight
 
   return (
@@ -52,17 +53,19 @@ export function DashboardStatCard({
           <Icon className="size-5" aria-hidden="true" />
         </span>
       </div>
-      <div className="mt-3 flex items-center justify-between">
-        <p
-          className={cn(
-            'flex items-center gap-1 text-xs font-medium',
-            isPositive ? 'text-success-600' : 'text-danger-600',
-          )}
-        >
-          <TrendIcon className="size-3.5" aria-hidden="true" />
-          {Math.abs(trend)}% vs last month
-        </p>
-        <p className="text-xs text-ink-muted">{updatedLabel}</p>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        {trend !== undefined && (
+          <p
+            className={cn(
+              'flex items-center gap-1 text-xs font-medium',
+              isPositive ? 'text-success-600' : 'text-danger-600',
+            )}
+          >
+            <TrendIcon className="size-3.5" aria-hidden="true" />
+            {Math.abs(trend)}% vs last month
+          </p>
+        )}
+        <p className="ml-auto text-xs text-ink-muted">{updatedLabel}</p>
       </div>
     </Card>
   )

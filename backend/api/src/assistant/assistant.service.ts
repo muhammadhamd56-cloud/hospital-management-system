@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam, Tool, ToolUnion } from '@anthropic-ai/sdk/resources/messages';
@@ -58,7 +58,8 @@ export class AssistantService {
 
   async chat(user: AuthenticatedUser, dto: AssistantChatDto): Promise<AssistantChatResponse> {
     if (!this.client) {
-      throw new InternalServerErrorException(
+      // 503, not 500: an optional feature left unconfigured isn't a server fault (and shouldn't alert Sentry on every call).
+      throw new ServiceUnavailableException(
         'The AI Assistant is not configured. Set ANTHROPIC_API_KEY to enable it.',
       );
     }
@@ -158,7 +159,8 @@ export class AssistantService {
       '- Prefer taking an action (a tool call that navigates) over a long explanation when the user is clearly asking to go somewhere or see something.',
       '- Destructive or account-changing actions (cancel, delete, payment, editing account info) are NOT available to you at all -- if asked, explain the user needs to do that themselves on the relevant page, and navigate them there if useful.',
       '',
-      `Current user: ${user.email}, role: ${user.role.toLowerCase()}.`,
+      // Role only -- the assistant needs no identifying details to navigate, so none go to the model provider.
+      `Current user role: ${user.role.toLowerCase()}.`,
       '',
       'Pages you may navigate this user to (use these exact keys with navigate_to_page):',
       pages,
@@ -196,9 +198,10 @@ export class AssistantService {
       const appointment = await this.findOwnAppointment(user, appointmentId);
       if (appointment) {
         const other = 'patientName' in appointment ? appointment.patientName : appointment.doctorName;
+        // The free-text visit reason is clinical information -- deliberately not sent to the model provider.
         lines.push(
           `Viewing an appointment with ${other} on ${appointment.scheduledAt}, mode ${appointment.mode}, ` +
-            `status ${appointment.status}, reason: ${appointment.reason}.`,
+            `status ${appointment.status}.`,
         );
       }
     }
@@ -356,6 +359,8 @@ export class AssistantService {
   }
 
   private async listOwnAppointments(user: AuthenticatedUser) {
+    // STAFF can't reach /appointments, and findAllForAdmin only narrows for DOCTOR -- so gate here.
+    if (!isPatient(user.role) && !isDoctorOrAdmin(user.role)) return [];
     return isPatient(user.role)
       ? await this.appointmentsService.listMine(user.id)
       : await this.appointmentsService.findAllForAdmin(user);
@@ -411,6 +416,8 @@ export class AssistantService {
   }
 
   private async listOwnInvoices(user: AuthenticatedUser) {
+    // STAFF can't reach /billing, and billingService.findAll only narrows for DOCTOR -- so gate here.
+    if (!isPatient(user.role) && !isDoctorOrAdmin(user.role)) return [];
     return isPatient(user.role)
       ? await this.billingService.findMine(user.id)
       : await this.billingService.findAll(user);

@@ -75,7 +75,13 @@ export function UpdateLabTestModal({ test, onClose, onUpdated }: UpdateLabTestMo
           label="Status"
           error={errors.status?.message}
           {...register('status')}
-          options={STATUS_OPTIONS}
+          // A completed result is final (the API rejects reopening it); only
+          // its summary can still be corrected.
+          options={
+            test?.status === 'completed'
+              ? STATUS_OPTIONS.filter((option) => option.value === 'completed')
+              : STATUS_OPTIONS
+          }
         />
         <Textarea
           label="Result summary"

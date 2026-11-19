@@ -8,6 +8,7 @@ import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage'
 import { OAuthCallbackPage } from '@/pages/auth/OAuthCallbackPage'
 import { SelectRolePage } from '@/pages/auth/SelectRolePage'
 import { SetPasswordPage } from '@/pages/auth/SetPasswordPage'
+import { PendingApprovalPage } from '@/pages/auth/PendingApprovalPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { PublicDoctorProfilePage } from '@/pages/doctors/PublicDoctorProfilePage'
 import { ProtectedRoute, PublicOnlyRoute } from '@/routes/ProtectedRoute'
@@ -41,6 +42,8 @@ const billingSwitch = () => import('@/pages/billing/BillingRouteSwitch').then((m
 const reportsPage = () => import('@/pages/reports/ReportsPage').then((m) => ({ Component: m.ReportsPage }))
 const laboratoryPage = () => import('@/pages/laboratory/LaboratoryPage').then((m) => ({ Component: m.LaboratoryPage }))
 const staffPage = () => import('@/pages/staff/StaffPage').then((m) => ({ Component: m.StaffPage }))
+const accountApprovalsPage = () =>
+  import('@/pages/accountApprovals/AccountApprovalsPage').then((m) => ({ Component: m.AccountApprovalsPage }))
 const staffSchedulingPage = () => import('@/pages/staffScheduling/StaffSchedulingPage').then((m) => ({ Component: m.StaffSchedulingPage }))
 const notificationsPage = () => import('@/pages/notifications/NotificationsPage').then((m) => ({ Component: m.NotificationsPage }))
 const emergencySwitch = () => import('@/pages/emergency/EmergencyRouteSwitch').then((m) => ({ Component: m.EmergencyRouteSwitch }))
@@ -80,6 +83,7 @@ export const router = createBrowserRouter([
             children: [
               { path: ROUTES.selectRole, element: <SelectRolePage />, handle: { title: 'Select Role' } },
               { path: ROUTES.setPassword, element: <SetPasswordPage />, handle: { title: 'Set Password' } },
+              { path: ROUTES.pendingApproval, element: <PendingApprovalPage />, handle: { title: 'Awaiting Approval' } },
             ],
           },
           {
@@ -130,6 +134,7 @@ export const router = createBrowserRouter([
                 children: [
                   { path: ROUTES.reports, lazy: reportsPage, handle: { title: 'Reports' } },
                   { path: ROUTES.staff, lazy: staffPage, handle: { title: 'Staff' } },
+                  { path: ROUTES.accountApprovals, lazy: accountApprovalsPage, handle: { title: 'Account Approvals' } },
                   { path: ROUTES.staffScheduling, lazy: staffSchedulingPage, handle: { title: 'Staff Scheduling' } },
                 ],
               },

@@ -1,3 +1,4 @@
+import { formatCalendarDate } from '@/utils/datetime'
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Check, Inbox, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -9,10 +10,6 @@ import { ApplicationStatusBadge } from '@/features/staffPortal/ApplicationStatus
 import { ShiftTypeBadge } from '@/features/staffScheduling/ShiftTypeBadge'
 import { listShiftApplications } from '@/features/staffScheduling/api'
 import type { ApplicationStatus, ShiftApplication } from '@/types/staffPortal'
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
 
 export function ApplicationsPanel() {
   const [applications, setApplications] = useState<ShiftApplication[]>([])
@@ -101,7 +98,7 @@ export function ApplicationsPanel() {
                   <TableCell>
                     <ShiftTypeBadge shiftType={application.opening.shiftType} />
                   </TableCell>
-                  <TableCell>{formatDate(application.opening.date)}</TableCell>
+                  <TableCell>{formatCalendarDate(application.opening.date)}</TableCell>
                   <TableCell>{application.opening.department ?? '—'}</TableCell>
                   <TableCell>
                     <ApplicationStatusBadge status={application.status} />

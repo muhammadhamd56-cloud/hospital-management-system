@@ -6,6 +6,8 @@ export const ROUTES = {
   oauthCallback: '/oauth/callback',
   selectRole: '/select-role',
   setPassword: '/set-password',
+  /** Where a doctor/staff account waits until an admin approves it. */
+  pendingApproval: '/pending-approval',
   dashboard: '/dashboard',
   staff: '/staff',
   staffScheduling: '/staff-scheduling',
@@ -29,6 +31,7 @@ export const ROUTES = {
   availableShifts: '/available-shifts',
   myTasks: '/my-tasks',
   announcements: '/announcements',
+  accountApprovals: '/account-approvals',
   emergency: '/emergency',
   emergencyCase: '/emergency/cases/:id',
   /** Unauthenticated -- a doctor's shareable profile link. */

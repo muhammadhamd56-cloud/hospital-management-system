@@ -66,6 +66,8 @@ describe('ShiftsService', () => {
     staffLeave: { findUnique: jest.Mock };
     staffAvailability: { findUnique: jest.Mock };
     department: { upsert: jest.Mock };
+    shiftApplication: { findFirst: jest.Mock; update: jest.Mock };
+    shiftOpening: { update: jest.Mock };
     $transaction: jest.Mock;
   };
   let notifications: { create: jest.Mock };
@@ -85,6 +87,9 @@ describe('ShiftsService', () => {
       staffLeave: { findUnique: jest.fn().mockResolvedValue(null) },
       staffAvailability: { findUnique: jest.fn().mockResolvedValue(null) },
       department: { upsert: jest.fn() },
+      // Default: the shift did not come from a shift-opening application.
+      shiftApplication: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+      shiftOpening: { update: jest.fn() },
       $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     notifications = { create: jest.fn() };
@@ -493,6 +498,54 @@ describe('ShiftsService', () => {
       await service.remove('shift-1', 'admin-1');
 
       expect(prisma.staffShift.delete).toHaveBeenCalledWith({ where: { id: 'shift-1' } });
+    });
+
+    it('gives the slot back to a full opening when the deleted shift came from an approved application', async () => {
+      prisma.staffShift.findUnique.mockResolvedValue(buildShift());
+      const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      prisma.shiftApplication.findFirst.mockResolvedValue({
+        id: 'application-1',
+        opening: {
+          id: 'opening-1',
+          isOpen: false,
+          positions: 1,
+          applicationDeadline: future,
+          startTime: future,
+          applications: [{ status: 'APPROVED' }],
+        },
+      });
+
+      await service.remove('shift-1', 'admin-1');
+
+      expect(prisma.shiftApplication.update).toHaveBeenCalledWith({
+        where: { id: 'application-1' },
+        data: { status: 'WITHDRAWN' },
+      });
+      expect(prisma.shiftOpening.update).toHaveBeenCalledWith({ where: { id: 'opening-1' }, data: { isOpen: true } });
+      expect(prisma.shiftApplication.update.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.staffShift.delete.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('leaves an opening the admin closed early (with places left) closed', async () => {
+      prisma.staffShift.findUnique.mockResolvedValue(buildShift());
+      const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      prisma.shiftApplication.findFirst.mockResolvedValue({
+        id: 'application-1',
+        opening: {
+          id: 'opening-1',
+          isOpen: false,
+          positions: 3,
+          applicationDeadline: future,
+          startTime: future,
+          applications: [{ status: 'APPROVED' }],
+        },
+      });
+
+      await service.remove('shift-1', 'admin-1');
+
+      expect(prisma.shiftApplication.update).toHaveBeenCalled();
+      expect(prisma.shiftOpening.update).not.toHaveBeenCalled();
     });
   });
 });

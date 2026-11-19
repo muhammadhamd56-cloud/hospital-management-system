@@ -33,6 +33,8 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
   const [viewingDoctor, setViewingDoctor] = useState<DirectoryDoctor | null>(null)
 
   useEffect(() => {
+    // Drop responses for an older query/department (see cleanup).
+    let cancelled = false
     const timeout = setTimeout(() => {
       setIsLoading(true)
       listDoctors({
@@ -40,15 +42,23 @@ export function DoctorSearch({ onBooked }: DoctorSearchProps) {
         department: department || undefined,
         limit: 50,
       })
-        .then((res) => setDoctors(res.doctors))
+        .then((res) => {
+          if (!cancelled) setDoctors(res.doctors)
+        })
         .catch((error) => {
+          if (cancelled) return
           const message = error instanceof ApiError ? error.message : 'Failed to load doctors'
           toast.error(message)
         })
-        .finally(() => setIsLoading(false))
+        .finally(() => {
+          if (!cancelled) setIsLoading(false)
+        })
     }, 300)
 
-    return () => clearTimeout(timeout)
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, department])
 

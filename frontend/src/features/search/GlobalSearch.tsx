@@ -141,6 +141,9 @@ export function GlobalSearch() {
 
     setIsSearching(true)
 
+    // Set on cleanup (next keystroke / cleared query) so a slower, older
+    // response can't overwrite newer results.
+    let cancelled = false
     const timer = setTimeout(() => {
       const needle = trimmed.toLowerCase()
 
@@ -161,13 +164,17 @@ export function GlobalSearch() {
         .catch(() => [])
 
       Promise.all([patientsPromise, doctorsPromise]).then(([patientResults, doctorResults]) => {
+        if (cancelled) return
         setPatients(patientResults)
         setDoctors(doctorResults)
         setIsSearching(false)
       })
     }, DEBOUNCE_MS)
 
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [query])
 
   function closeMobileSearch() {

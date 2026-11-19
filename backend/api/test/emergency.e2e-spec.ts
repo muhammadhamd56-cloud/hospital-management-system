@@ -8,6 +8,7 @@ import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter
 import { ResponseInterceptor } from '../src/common/interceptors/response.interceptor';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/email/email.service';
+import { accessTokenFrom } from './session-cookies';
 
 /**
  * Full-stack tests for the emergency response system against a real Nest
@@ -104,9 +105,16 @@ describe('Emergency (e2e)', () => {
     if (!code) throw new Error(`No OTP captured for ${email}`);
 
     const res = await request(server()).post('/api/auth/verify-otp').send({ email, code }).expect(201);
+    // Self-registered doctor/staff accounts start PENDING admin approval; the
+    // tests using this helper are about what an approved account can do, so
+    // approve it the way an admin would. The approval gate itself is covered
+    // by account-approvals.e2e-spec.ts.
+    if (payload.role === 'doctor' || payload.role === 'staff') {
+      await prisma.user.update({ where: { email }, data: { approvalStatus: 'APPROVED' } });
+    }
     const user = await prisma.user.findUniqueOrThrow({ where: { email } });
 
-    return { token: res.body.data.token, email, id: user.id };
+    return { token: accessTokenFrom(res) as string, email, id: user.id };
   }
 
   const validPatient = {

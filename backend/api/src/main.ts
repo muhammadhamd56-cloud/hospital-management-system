@@ -6,6 +6,8 @@ import * as Sentry from '@sentry/node';
 import helmet from 'helmet';
 import * as express from 'express';
 import compression from 'compression';
+import cookieParser from 'cookie-parser';
+import { csrfProtection } from './common/middleware/csrf.middleware';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -27,6 +29,16 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const configService = app.get(ConfigService);
 
+  // Behind Render's load balancer (and Vercel's /api rewrite) every request
+  // arrives from a proxy's address. Without this, req.ip -- what the rate
+  // limiter keys on -- is that proxy for every user, so one client's failed
+  // logins would throttle everyone. Set to the number of proxies in front
+  // of the app; leaving it at 0 locally means X-Forwarded-For is ignored.
+  const trustProxyHops = configService.get<number>('trustProxyHops') ?? 0;
+  if (trustProxyHops > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
+  }
+
   app.use('/api/billing/webhooks/stripe', express.raw({ type: 'application/json' }));
   // Raised from Express's 100kb default so chat messages can carry a compressed image data URL.
   app.use(express.json({ limit: '3mb' }));
@@ -34,6 +46,8 @@ async function bootstrap(): Promise<void> {
 
   app.use(helmet());
   app.use(compression());
+  app.use(cookieParser());
+  app.use(csrfProtection);
   app.enableCors({
     origin: configService.get<string>('clientUrl'),
     credentials: true,
@@ -52,19 +66,29 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Hospital Management System API')
-    .setDescription('REST API for the Hospital Management System backend')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, swaggerDocument);
+  // A full map of every endpoint and payload is a gift to an attacker and
+  // of no use to the app's own users, so it's only served outside production.
+  const serveApiDocs = process.env.NODE_ENV !== 'production';
+  if (serveApiDocs) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Hospital Management System API')
+      .setDescription('REST API for the Hospital Management System backend')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, swaggerDocument);
+  }
+
+  // Lets Prisma disconnect and in-flight requests finish when Render sends SIGTERM on a redeploy.
+  app.enableShutdownHooks();
 
   const port = configService.get<number>('port') ?? 3001;
   await app.listen(port);
   logger.log(`Server listening on http://localhost:${port}/api`);
-  logger.log(`API docs available at http://localhost:${port}/api/docs`);
+  if (serveApiDocs) {
+    logger.log(`API docs available at http://localhost:${port}/api/docs`);
+  }
 }
 
 bootstrap();

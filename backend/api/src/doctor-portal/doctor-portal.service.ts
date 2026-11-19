@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { SendMessageDto } from '../chat/dto/send-message.dto';
 import { NotificationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +13,7 @@ import {
   DoctorAppointmentResponse,
   toDoctorAppointmentResponse,
 } from '../appointments/appointment.mapper';
-import { ChatMessageResponse, toChatMessageResponse } from '../chat/chat.mapper';
+import { loadThreadPage, type ChatThreadPage } from '../chat/chat-thread';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MedicalRecordsService } from '../medical-records/medical-records.service';
 import { CreateMedicalRecordDto } from '../medical-records/dto/create-medical-record.dto';
@@ -145,11 +145,25 @@ export class DoctorPortalService {
       throw new BadRequestException('Only scheduled sessions can be updated');
     }
 
-    const updated = await this.prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status },
-      include: APPOINTMENT_PATIENT_INCLUDE,
-    });
+    if (status === 'COMPLETED' && appointment.scheduledAt.getTime() > Date.now()) {
+      throw new BadRequestException("A session can't be marked completed before it has started");
+    }
+
+    let updated;
+    try {
+      // Conditional on SCHEDULED so this can't overwrite a patient's
+      // simultaneous cancel (or vice versa).
+      updated = await this.prisma.appointment.update({
+        where: { id: appointmentId, status: 'SCHEDULED' },
+        data: { status },
+        include: APPOINTMENT_PATIENT_INCLUDE,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new ConflictException('This session was just updated. Refresh to see its current status.');
+      }
+      throw error;
+    }
 
     if (status === 'CANCELLED') {
       const doctorName = `${doctor.user.firstName} ${doctor.user.lastName}`.trim();
@@ -218,19 +232,13 @@ export class DoctorPortalService {
     }
   }
 
-  async getThread(userId: string, patientId: string): Promise<ChatMessageResponse[]> {
+  async getThread(userId: string, patientId: string, before?: string): Promise<ChatThreadPage> {
     const doctor = await this.requireLinkedDoctor(userId);
     await this.assertRelationship(doctor.id, patientId);
-
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { doctorId: doctor.id, patientId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return messages.map(toChatMessageResponse);
+    return loadThreadPage(this.prisma, { doctorId: doctor.id, patientId }, before);
   }
 
-  async sendMessage(userId: string, patientId: string, dto: SendMessageDto): Promise<ChatMessageResponse[]> {
+  async sendMessage(userId: string, patientId: string, dto: SendMessageDto): Promise<ChatThreadPage> {
     const body = dto.body?.trim() ?? '';
     if (!body && !dto.imageUrl) {
       throw new BadRequestException('Message cannot be empty');
@@ -252,12 +260,7 @@ export class DoctorPortalService {
       `/messages?doctorId=${doctor.id}`,
     );
 
-    const thread = await this.prisma.chatMessage.findMany({
-      where: { doctorId: doctor.id, patientId },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    return thread.map(toChatMessageResponse);
+    return loadThreadPage(this.prisma, { doctorId: doctor.id, patientId });
   }
 
   async listPatientMedicalRecords(userId: string, patientId: string): Promise<MedicalRecordResponse[]> {

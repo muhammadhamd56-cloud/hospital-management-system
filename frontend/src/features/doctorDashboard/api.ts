@@ -1,7 +1,7 @@
 import { api } from '@/lib/apiClient'
 import type { DoctorAppointment } from '@/types/doctorSession'
 import type { DoctorInboxPatient } from '@/types/doctorChatInbox'
-import type { ChatMessage } from '@/types/chatMessage'
+import type { ChatThreadPage } from '@/types/chatMessage'
 import type { DirectoryDoctor } from '@/types/directoryDoctor'
 import type { SocialLinks } from '@/types/socialLinks'
 
@@ -21,8 +21,9 @@ export function listInboxPatients(): Promise<{ patients: DoctorInboxPatient[] }>
   return api.get('/doctor-portal/chat')
 }
 
-export function getDoctorChatThread(patientId: string): Promise<{ thread: ChatMessage[] }> {
-  return api.get(`/doctor-portal/chat/${patientId}`)
+export function getDoctorChatThread(patientId: string, before?: string): Promise<ChatThreadPage> {
+  const query = before ? `?before=${encodeURIComponent(before)}` : ''
+  return api.get(`/doctor-portal/chat/${patientId}${query}`)
 }
 
 export interface SendChatMessageInput {
@@ -33,7 +34,7 @@ export interface SendChatMessageInput {
 export function sendDoctorChatMessage(
   patientId: string,
   input: SendChatMessageInput,
-): Promise<{ thread: ChatMessage[] }> {
+): Promise<ChatThreadPage> {
   return api.post(`/doctor-portal/chat/${patientId}`, input)
 }
 

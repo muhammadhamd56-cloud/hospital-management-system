@@ -31,6 +31,8 @@ function baseUser(overrides: Partial<AuthUser> = {}): AuthUser {
     emailVerified: true,
     mustChangePassword: false,
     mfaEnabled: false,
+    approvalStatus: 'approved',
+    approvalNote: null,
     staffType: null,
     ...overrides,
   }
@@ -49,6 +51,7 @@ function renderProtected(initialPath: string) {
           <Route path={ROUTES.selectRole} element={<div>Select Role Page</div>} />
           <Route path={ROUTES.setPassword} element={<div>Set Password Page</div>} />
           <Route path={ROUTES.dashboard} element={<div>Dashboard Page</div>} />
+          <Route path={ROUTES.pendingApproval} element={<div>Pending Approval Page</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -105,6 +108,31 @@ describe('ProtectedRoute', () => {
     renderProtected(ROUTES.setPassword)
 
     expect(screen.getByText('Set Password Page')).toBeInTheDocument()
+  })
+
+  it.each(['pending', 'rejected'] as const)(
+    'sends a %s doctor account to the approval status page instead of the app',
+    (approvalStatus) => {
+      mockUseAuth.mockReturnValue({ user: baseUser({ role: 'doctor', approvalStatus }), isLoading: false })
+      renderProtected(ROUTES.dashboard)
+
+      expect(screen.getByText('Pending Approval Page')).toBeInTheDocument()
+      expect(screen.queryByText('Dashboard Page')).toBeNull()
+    },
+  )
+
+  it('moves an approved account off the approval status page to the dashboard', () => {
+    mockUseAuth.mockReturnValue({ user: baseUser({ role: 'doctor', approvalStatus: 'approved' }), isLoading: false })
+    renderProtected(ROUTES.pendingApproval)
+
+    expect(screen.getByText('Dashboard Page')).toBeInTheDocument()
+  })
+
+  it('still asks a Google user to pick a role before any approval check', () => {
+    mockUseAuth.mockReturnValue({ user: baseUser({ roleSelected: false, approvalStatus: 'pending' }), isLoading: false })
+    renderProtected(ROUTES.dashboard)
+
+    expect(screen.getByText('Select Role Page')).toBeInTheDocument()
   })
 
   it('renders the protected route when mustChangePassword is false', () => {

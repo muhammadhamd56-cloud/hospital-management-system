@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageCircle, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
@@ -12,7 +12,7 @@ import { useAutoScrollToBottom } from '@/hooks/useAutoScrollToBottom'
 import { getChatThread, listChatInbox, sendChatMessage } from '@/features/patientDashboard/api'
 import { ApiError } from '@/lib/apiClient'
 import { cn } from '@/utils/cn'
-import type { ChatMessage } from '@/types/chatMessage'
+import { mergeChatMessages, type ChatMessage } from '@/types/chatMessage'
 import type { PatientAppointment } from '@/types/patientSession'
 
 interface DoctorChatPanelProps {
@@ -62,38 +62,78 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
   }, [appointments, inboxDoctors])
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null)
+  // Read inside async callbacks to tell whether the user switched conversations meanwhile.
+  const selectedDoctorIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    selectedDoctorIdRef.current = selectedDoctorId
+  }, [selectedDoctorId])
   const [thread, setThread] = useState<ChatMessage[]>([])
+  // The API returns the newest page; older messages load on demand.
+  const [hasMore, setHasMore] = useState(false)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const imageAttachment = useChatImageAttachment()
-  const scrollRef = useAutoScrollToBottom(thread)
+  // Keyed on the newest message, so loading older ones doesn't jump to the bottom.
+  const scrollRef = useAutoScrollToBottom(thread[thread.length - 1]?.id)
 
   useEffect(() => {
-    if (selectedDoctorId || doctorOptions.length === 0) return
+    // Wait for the inbox too: a ?doctorId= deep link may only be in the inbox
+    // (a thread without an appointment), and once a default is picked it sticks.
+    if (selectedDoctorId || doctorOptions.length === 0 || isInboxLoading) return
 
     if (initialDoctorId && doctorOptions.some((doctor) => doctor.doctorId === initialDoctorId)) {
       setSelectedDoctorId(initialDoctorId)
     } else {
       setSelectedDoctorId(doctorOptions[0].doctorId)
     }
-  }, [doctorOptions, selectedDoctorId, initialDoctorId])
+  }, [doctorOptions, selectedDoctorId, initialDoctorId, isInboxLoading])
 
   useEffect(() => {
     if (!selectedDoctorId) return
 
+    // Drop a slower response for a previously selected doctor.
+    let stale = false
     setIsLoading(true)
     getChatThread(selectedDoctorId)
-      .then((res) => setThread(res.thread))
+      .then((res) => {
+        if (stale) return
+        setThread(res.thread)
+        setHasMore(res.hasMore)
+      })
       .catch((error) => {
+        if (stale) return
         const message = error instanceof ApiError ? error.message : 'Failed to load conversation'
         toast.error(message)
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [selectedDoctorId])
 
   const selectedDoctor = doctorOptions.find((doctor) => doctor.doctorId === selectedDoctorId)
+
+  async function handleLoadOlder() {
+    const doctorId = selectedDoctorId
+    const oldest = thread.find((message) => !message.id.startsWith('optimistic-'))
+    if (!doctorId || !oldest) return
+    setIsLoadingOlder(true)
+    try {
+      const page = await getChatThread(doctorId, oldest.id)
+      if (selectedDoctorIdRef.current !== doctorId) return
+      setThread((prev) => mergeChatMessages(prev, page.thread))
+      setHasMore(page.hasMore)
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Failed to load earlier messages')
+    } finally {
+      setIsLoadingOlder(false)
+    }
+  }
 
   async function handleSend() {
     const body = draft.trim()
@@ -117,12 +157,21 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
     setIsTyping(true)
 
     try {
-      const { thread: updated } = await sendChatMessage(doctorId, {
+      const { thread: latest } = await sendChatMessage(doctorId, {
         body: body || undefined,
         imageUrl: imageUrl ?? undefined,
       })
       setTimeout(() => {
-        setThread(updated)
+        // Only replace the thread if this conversation is still the one open.
+        if (selectedDoctorIdRef.current === doctorId) {
+          // Keep any older pages already loaded; drop the optimistic copy.
+          setThread((prev) =>
+            mergeChatMessages(
+              prev.filter((message) => !message.id.startsWith('optimistic-')),
+              latest,
+            ),
+          )
+        }
         setIsTyping(false)
         setIsSending(false)
       }, 600)
@@ -176,6 +225,16 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
                   <p className="py-8 text-center text-sm text-ink-muted">Loading conversation…</p>
                 ) : (
                   <>
+                    {hasMore && (
+                      <button
+                        type="button"
+                        onClick={handleLoadOlder}
+                        disabled={isLoadingOlder}
+                        className="mx-auto block text-xs font-medium text-brand-600 hover:underline disabled:opacity-60"
+                      >
+                        {isLoadingOlder ? 'Loading…' : 'Load earlier messages'}
+                      </button>
+                    )}
                     {thread.map((message) => (
                       <ChatMessageBubble key={message.id} message={message} isOwn={message.sender === 'patient'} />
                     ))}

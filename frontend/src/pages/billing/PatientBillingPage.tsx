@@ -72,7 +72,9 @@ export function PatientBillingPage() {
     hasHandledReturn.current = true
 
     if (paid === '1') {
-      toast.success('Payment received — thank you!')
+      // Stripe has accepted the payment; some methods (e.g. bank debits)
+      // only settle later, so don't claim it's received until the invoice says so.
+      toast.success('Payment submitted — thank you! Your invoice will update once it clears.')
       refresh()
     } else {
       toast('Payment cancelled')
@@ -81,7 +83,11 @@ export function PatientBillingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  const amountDue = useMemo(() => invoices.reduce((sum, i) => sum + i.remaining, 0), [invoices])
+  // A cancelled invoice keeps remaining = amount on the API side but isn't owed.
+  const amountDue = useMemo(
+    () => invoices.filter((i) => i.status !== 'cancelled').reduce((sum, i) => sum + i.remaining, 0),
+    [invoices],
+  )
 
   // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
   // Same "unpaid" definition already used to decide whether "Pay now" shows.

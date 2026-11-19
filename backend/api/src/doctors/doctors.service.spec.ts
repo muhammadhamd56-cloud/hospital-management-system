@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import type { Department, Doctor, User } from '@prisma/client';
+import { Role, type Department, type Doctor, type User } from '@prisma/client';
 import { DoctorsService, DoctorWithUser, DOCTOR_PROFILE_INCLUDE } from './doctors.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ListDoctorsDto } from './dto/list-doctors.dto';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 
 function buildDoctor(overrides: Partial<DoctorWithUser> = {}): DoctorWithUser {
   const doctor: Doctor = {
@@ -56,35 +57,65 @@ describe('DoctorsService', () => {
   });
 
   describe('listDoctors', () => {
-    it('queries with no department filter, includes the profile shape, and orders by rating desc', async () => {
+    const admin: AuthenticatedUser = { id: 'admin-1', email: 'admin@example.com', role: Role.ADMIN };
+    const patient: AuthenticatedUser = { id: 'patient-1', email: 'pat@example.com', role: Role.PATIENT };
+    const insensitive = (word: string) => ({ contains: word, mode: 'insensitive' });
+
+    it('queries with no filter, includes the profile shape, orders by rating desc and limits to 20 by default', async () => {
       prisma.doctor.findMany.mockResolvedValue([]);
 
-      await service.listDoctors({});
+      await service.listDoctors({}, admin);
 
       expect(prisma.doctor.findMany).toHaveBeenCalledWith({
         where: undefined,
         include: DOCTOR_PROFILE_INCLUDE,
         orderBy: { rating: 'desc' },
+        take: 20,
       });
     });
 
-    it('filters by department name when department is provided', async () => {
+    it('filters by department name and applies a custom limit in the database', async () => {
       prisma.doctor.findMany.mockResolvedValue([]);
 
-      await service.listDoctors({ department: 'Cardiology' } as ListDoctorsDto);
+      await service.listDoctors({ department: 'Cardiology', limit: 3 } as ListDoctorsDto, admin);
 
-      expect(prisma.doctor.findMany).toHaveBeenCalledWith({
-        where: { department: { name: 'Cardiology' } },
-        include: DOCTOR_PROFILE_INCLUDE,
-        orderBy: { rating: 'desc' },
-      });
+      expect(prisma.doctor.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { department: { name: 'Cardiology' } }, take: 3 }),
+      );
     });
 
-    it('maps each Prisma doctor row into a DirectoryDoctorResponse', async () => {
-      const doctor = buildDoctor();
-      prisma.doctor.findMany.mockResolvedValue([doctor]);
+    it('requires every search word to match a name, specialization or (for staff) email field', async () => {
+      prisma.doctor.findMany.mockResolvedValue([]);
 
-      const result = await service.listDoctors({});
+      await service.listDoctors({ q: '  ada   cardio ' } as ListDoctorsDto, admin);
+
+      const fieldsFor = (word: string) => ({
+        OR: [
+          { user: { firstName: insensitive(word) } },
+          { user: { lastName: insensitive(word) } },
+          { specialization: insensitive(word) },
+          { user: { email: insensitive(word) } },
+        ],
+      });
+      expect(prisma.doctor.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { AND: [fieldsFor('ada'), fieldsFor('cardio')] } }),
+      );
+    });
+
+    it('combines a department filter with a search term', async () => {
+      prisma.doctor.findMany.mockResolvedValue([]);
+
+      await service.listDoctors({ department: 'Cardiology', q: 'ada' } as ListDoctorsDto, admin);
+
+      const where = prisma.doctor.findMany.mock.calls[0][0].where;
+      expect(where.AND).toHaveLength(2);
+      expect(where.AND[0]).toEqual({ department: { name: 'Cardiology' } });
+    });
+
+    it('maps each row into a DirectoryDoctorResponse with contact details for staff callers', async () => {
+      prisma.doctor.findMany.mockResolvedValue([buildDoctor()]);
+
+      const result = await service.listDoctors({}, admin);
 
       expect(result).toEqual([
         {
@@ -107,129 +138,22 @@ describe('DoctorsService', () => {
       ]);
     });
 
-    it('defaults to a limit of 20 results when no limit is given', async () => {
-      const doctors = Array.from({ length: 25 }, (_, i) =>
-        buildDoctor({ id: `doctor-${i}`, userId: `user-${i}` }),
-      );
-      prisma.doctor.findMany.mockResolvedValue(doctors);
+    it("hides doctors' email and phone from patient callers", async () => {
+      prisma.doctor.findMany.mockResolvedValue([
+        buildDoctor({ user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com', phone: '+15555550100' } }),
+      ]);
 
-      const result = await service.listDoctors({});
+      const [doctor] = await service.listDoctors({}, patient);
 
-      expect(result).toHaveLength(20);
+      expect(doctor).toMatchObject({ fullName: 'Ada Lovelace', email: null, phone: null });
     });
 
-    it('respects a custom limit', async () => {
-      const doctors = Array.from({ length: 10 }, (_, i) =>
-        buildDoctor({ id: `doctor-${i}`, userId: `user-${i}` }),
-      );
-      prisma.doctor.findMany.mockResolvedValue(doctors);
-
-      const result = await service.listDoctors({ limit: 3 } as ListDoctorsDto);
-
-      expect(result).toHaveLength(3);
-    });
-
-    it('filters in-memory by full name matching the search term (case-insensitive)', async () => {
-      const match = buildDoctor({
-        id: 'doctor-match',
-        user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com', phone: null },
-      });
-      const nonMatch = buildDoctor({
-        id: 'doctor-nonmatch',
-        userId: 'user-2',
-        user: { firstName: 'Grace', lastName: 'Hopper', email: 'grace@example.com', phone: null },
-      });
-      prisma.doctor.findMany.mockResolvedValue([match, nonMatch]);
-
-      const result = await service.listDoctors({ q: 'ada LOVELACE' } as ListDoctorsDto);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('doctor-match');
-    });
-
-    it('filters in-memory by specialization matching the search term', async () => {
-      const match = buildDoctor({ id: 'doctor-match', specialization: 'Neurology' });
-      const nonMatch = buildDoctor({
-        id: 'doctor-nonmatch',
-        userId: 'user-2',
-        specialization: 'Cardiology',
-      });
-      prisma.doctor.findMany.mockResolvedValue([match, nonMatch]);
-
-      const result = await service.listDoctors({ q: 'neuro' } as ListDoctorsDto);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('doctor-match');
-    });
-
-    it('filters in-memory by email matching the search term', async () => {
-      const match = buildDoctor({
-        id: 'doctor-match',
-        user: { firstName: 'Ada', lastName: 'Lovelace', email: 'ada.special@example.com', phone: null },
-      });
-      const nonMatch = buildDoctor({
-        id: 'doctor-nonmatch',
-        userId: 'user-2',
-        user: { firstName: 'Grace', lastName: 'Hopper', email: 'grace@example.com', phone: null },
-      });
-      prisma.doctor.findMany.mockResolvedValue([match, nonMatch]);
-
-      const result = await service.listDoctors({ q: 'ada.special' } as ListDoctorsDto);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('doctor-match');
-    });
-
-    it('trims whitespace from the search term before filtering', async () => {
-      const match = buildDoctor({ specialization: 'Cardiology' });
-      prisma.doctor.findMany.mockResolvedValue([match]);
-
-      const result = await service.listDoctors({ q: '  cardiology  ' } as ListDoctorsDto);
-
-      expect(result).toHaveLength(1);
-    });
-
-    it('returns an empty array when the search term matches nothing', async () => {
-      prisma.doctor.findMany.mockResolvedValue([buildDoctor()]);
-
-      const result = await service.listDoctors({ q: 'no such doctor' } as ListDoctorsDto);
-
-      expect(result).toEqual([]);
-    });
-
-    it('skips in-memory filtering entirely when q is not provided', async () => {
-      const doctors = [buildDoctor(), buildDoctor({ id: 'doctor-2', userId: 'user-2' })];
-      prisma.doctor.findMany.mockResolvedValue(doctors);
-
-      const result = await service.listDoctors({});
-
-      expect(result).toHaveLength(2);
-    });
-
-    it('combines a department filter, a search term, and a limit together', async () => {
-      const match = buildDoctor({ id: 'doctor-match', specialization: 'Cardiology' });
-      prisma.doctor.findMany.mockResolvedValue([match]);
-
-      const result = await service.listDoctors({
-        department: 'Cardiology',
-        q: 'cardio',
-        limit: 5,
-      } as ListDoctorsDto);
-
-      expect(prisma.doctor.findMany).toHaveBeenCalledWith({
-        where: { department: { name: 'Cardiology' } },
-        include: DOCTOR_PROFILE_INCLUDE,
-        orderBy: { rating: 'desc' },
-      });
-      expect(result).toHaveLength(1);
-    });
-
-    it('returns an empty array when there are no doctors at all', async () => {
+    it('does not let a patient search by email (no probing which addresses belong to staff)', async () => {
       prisma.doctor.findMany.mockResolvedValue([]);
 
-      const result = await service.listDoctors({});
+      await service.listDoctors({ q: 'ada@example.com' } as ListDoctorsDto, patient);
 
-      expect(result).toEqual([]);
+      expect(JSON.stringify(prisma.doctor.findMany.mock.calls[0][0].where)).not.toContain('email');
     });
   });
 });

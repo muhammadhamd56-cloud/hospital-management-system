@@ -1,6 +1,7 @@
 import { Card, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
+import { DemoLogins, isDemoMode } from '@/features/auth/DemoLogins'
 import { ManualLoginForm } from '@/features/auth/ManualLoginForm'
 import { ManualSignupForm } from '@/features/auth/ManualSignupForm'
 import { useAuth } from '@/features/auth/useAuth'
@@ -60,6 +61,7 @@ export function LoginPage() {
           </TabsList>
           <TabsContent value="signin">
             <div className="flex w-full flex-col gap-4">
+              {isDemoMode && <DemoLogins />}
               <ManualLoginForm />
               <Divider />
               <GoogleButton />

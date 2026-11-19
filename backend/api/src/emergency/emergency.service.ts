@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, EmergencyStatus, NotificationType, Role, StaffType } from '@prisma/client';
+import { AuditAction, EmergencyStatus, NotificationType, Prisma, Role, StaffType } from '@prisma/client';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -100,22 +100,20 @@ export class EmergencyService {
    * precondition for creating the case. See CreateEmergencyDto.
    */
   async create(caller: AuthenticatedUser, dto: CreateEmergencyDto): Promise<EmergencyCaseSummary> {
-    const existingActive = await this.prisma.emergencyCase.findFirst({
-      where: { patientId: caller.id, status: { in: ACTIVE_STATUSES } },
-    });
-
-    if (existingActive) {
-      throw new ConflictException('You already have an active emergency request.');
+    // Serializable so two near-simultaneous requests (a double-tapped button)
+    // can't both pass the "no active case" check before either commits --
+    // Postgres aborts the loser with a serialization failure (caught below).
+    let created: Awaited<ReturnType<EmergencyService['createCaseRow']>>;
+    try {
+      created = await this.prisma.$transaction((tx) => this.createCaseRow(tx, caller.id, dto), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+        throw new ConflictException('You already have an active emergency request.');
+      }
+      throw error;
     }
-
-    const created = await this.prisma.emergencyCase.create({
-      data: {
-        patientId: caller.id,
-        emergencyType: toPrismaEmergencyType(dto.emergencyType ?? 'other'),
-        description: dto.description ?? null,
-      },
-      include: CASE_INCLUDE,
-    });
 
     await this.auditLogService.log({
       actorId: caller.id,
@@ -147,6 +145,25 @@ export class EmergencyService {
     );
 
     return toEmergencyCaseSummary(created as EmergencyCaseWithRelations);
+  }
+
+  private async createCaseRow(tx: Prisma.TransactionClient, patientId: string, dto: CreateEmergencyDto) {
+    const existingActive = await tx.emergencyCase.findFirst({
+      where: { patientId, status: { in: ACTIVE_STATUSES } },
+    });
+
+    if (existingActive) {
+      throw new ConflictException('You already have an active emergency request.');
+    }
+
+    return tx.emergencyCase.create({
+      data: {
+        patientId,
+        emergencyType: toPrismaEmergencyType(dto.emergencyType ?? 'other'),
+        description: dto.description ?? null,
+      },
+      include: CASE_INCLUDE,
+    });
   }
 
   /** The patient's optional "what kind of emergency is this?" follow-up. Never blocks create(). */
@@ -275,7 +292,7 @@ export class EmergencyService {
     }
 
     const now = new Date();
-    const data: Record<string, unknown> = { status: targetStatus };
+    const data: Prisma.EmergencyCaseUncheckedUpdateInput = { status: targetStatus };
 
     if (targetStatus === EmergencyStatus.ACKNOWLEDGED) {
       data.acknowledgedById = caller.id;
@@ -289,7 +306,7 @@ export class EmergencyService {
       data.resolvedAt = now;
     }
 
-    const updated = await this.prisma.emergencyCase.update({ where: { id }, data, include: CASE_INCLUDE });
+    const updated = await this.updateFromStatus(id, existing.status, data);
 
     await this.auditLogService.log({
       actorId: caller.id,
@@ -348,17 +365,13 @@ export class EmergencyService {
       assignedStaffUserId = staff.userId;
     }
 
-    const updated = await this.prisma.emergencyCase.update({
-      where: { id },
-      data: {
-        status: EmergencyStatus.TEAM_ASSIGNED,
-        assignedDoctorId: dto.doctorId ?? null,
-        assignedStaffId: dto.staffId ?? null,
-        assignedTeamName: dto.teamName ?? null,
-        assignedById: caller.id,
-        assignedAt: new Date(),
-      },
-      include: CASE_INCLUDE,
+    const updated = await this.updateFromStatus(id, EmergencyStatus.ACKNOWLEDGED, {
+      status: EmergencyStatus.TEAM_ASSIGNED,
+      assignedDoctorId: dto.doctorId ?? null,
+      assignedStaffId: dto.staffId ?? null,
+      assignedTeamName: dto.teamName ?? null,
+      assignedById: caller.id,
+      assignedAt: new Date(),
     });
 
     await this.auditLogService.log({
@@ -404,10 +417,12 @@ export class EmergencyService {
       throw new NotFoundException('Emergency case not found');
     }
 
-    const updated = await this.prisma.emergencyCase.update({
-      where: { id },
-      data: { priority: toPrismaEmergencyPriority(dto.priority) },
-      include: CASE_INCLUDE,
+    if (!ACTIVE_STATUSES.includes(existing.status)) {
+      throw new BadRequestException('This case is no longer active.');
+    }
+
+    const updated = await this.updateFromStatus(id, existing.status, {
+      priority: toPrismaEmergencyPriority(dto.priority),
     });
 
     await this.auditLogService.log({
@@ -467,10 +482,10 @@ export class EmergencyService {
       }
     }
 
-    const updated = await this.prisma.emergencyCase.update({
-      where: { id },
-      data: { status: EmergencyStatus.CANCELLED, cancelledAt: new Date(), cancelReason: dto.reason ?? null },
-      include: CASE_INCLUDE,
+    const updated = await this.updateFromStatus(id, existing.status, {
+      status: EmergencyStatus.CANCELLED,
+      cancelledAt: new Date(),
+      cancelReason: dto.reason ?? null,
     });
 
     await this.auditLogService.log({
@@ -620,6 +635,21 @@ export class EmergencyService {
   private requireAssignerAccess(caller: AuthenticatedUser): void {
     if (caller.role !== Role.ADMIN && caller.role !== Role.DOCTOR) {
       throw new ForbiddenException('Only an admin or doctor can assign or reprioritize an emergency case');
+    }
+  }
+
+  /** Writes only if the case is still in the status the caller's checks ran
+   *  against, so two responders acting on one case at once can't both win --
+   *  the slower one gets a 409 instead of silently overwriting (and
+   *  re-notifying the patient). */
+  private async updateFromStatus(id: string, expected: EmergencyStatus, data: Prisma.EmergencyCaseUncheckedUpdateInput) {
+    try {
+      return await this.prisma.emergencyCase.update({ where: { id, status: expected }, data, include: CASE_INCLUDE });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new ConflictException('This case was just updated by someone else. Refresh to see its current state.');
+      }
+      throw error;
     }
   }
 

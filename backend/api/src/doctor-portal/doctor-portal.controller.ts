@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -61,9 +61,13 @@ export class DoctorPortalController {
   }
 
   @Get('chat/:patientId')
-  async getThread(@CurrentUser() user: AuthenticatedUser, @Param('patientId') patientId: string) {
-    const thread = await this.doctorPortalService.getThread(user.id, patientId);
-    return { thread };
+  async getThread(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('patientId') patientId: string,
+    // Message id: returns the page just older than it (for "load earlier").
+    @Query('before') before?: string,
+  ) {
+    return this.doctorPortalService.getThread(user.id, patientId, before);
   }
 
   @Post('chat/:patientId')
@@ -72,8 +76,7 @@ export class DoctorPortalController {
     @Param('patientId') patientId: string,
     @Body() dto: SendMessageDto,
   ) {
-    const thread = await this.doctorPortalService.sendMessage(user.id, patientId, dto);
-    return { thread };
+    return this.doctorPortalService.sendMessage(user.id, patientId, dto);
   }
 
   @Get('patients/:patientId/medical-records')

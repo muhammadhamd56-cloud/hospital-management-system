@@ -57,7 +57,9 @@ const DATE_FILTER_OPTIONS: { label: string; value: DateFilter }[] = [
 function matchesDateFilter(issueDate: string, filter: DateFilter): boolean {
   if (filter === 'all') return true
 
-  const date = new Date(issueDate);
+  // A bare YYYY-MM-DD parses as UTC midnight, which lands on the previous
+  // day west of UTC -- read it as a local calendar date, like formatDate does.
+  const date = new Date(`${issueDate}T00:00:00`)
   const now = new Date()
 
   if (filter === 'today') {

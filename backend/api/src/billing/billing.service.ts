@@ -23,6 +23,7 @@ import { RecordPaymentDto } from './dto/record-payment.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { StripeService } from './stripe.service';
 import { formatInvoiceNumber } from './invoice-number.util';
+import { lockInvoice, MONEY_TX_OPTIONS } from './invoice-lock';
 
 export interface InvoiceItemResponse {
   id: string;
@@ -115,6 +116,10 @@ export function toInvoiceResponse(invoice: InvoiceWithRelations): InvoiceRespons
   let status: InvoiceDisplayStatus;
   if (invoice.status === InvoiceStatus.CANCELLED) {
     status = 'cancelled';
+  } else if (remaining > 0.01 && isPastDue) {
+    // Checked before the refund labels: money still owed past the due date is
+    // overdue (for revenue overview + reminders) even if a refund happened.
+    status = 'overdue';
   } else if (totalRefunded > 0 && amountPaid <= 0.01) {
     status = 'refunded';
   } else if (totalRefunded > 0) {
@@ -261,6 +266,7 @@ export class BillingService {
       id: invoice.id,
       description: invoice.description,
       amount: response.remaining,
+      previousSessionId: invoice.stripeCheckoutSessionId,
     });
   }
 
@@ -341,50 +347,57 @@ export class BillingService {
     dto: RecordPaymentDto,
     recordedById: string | null,
   ): Promise<InvoiceResponse> {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
-
-    if (!invoice) {
-      throw new NotFoundException('Invoice not found');
-    }
-
-    if (caller.role === Role.DOCTOR) {
-      await this.assertOwnPatient(caller.id, invoice.patientId);
-    }
-
-    const current = toInvoiceResponse(invoice);
-
-    if (current.status === 'cancelled') {
-      throw new BadRequestException('Cannot record a payment against a cancelled invoice');
-    }
-
-    if (current.remaining <= 0) {
-      throw new BadRequestException('Invoice is already paid');
-    }
-
     const amount = roundMoney(dto.amount);
 
-    // A tiny epsilon tolerates rounding noise between the frontend's live total and this recompute.
-    if (amount > current.remaining + 0.01) {
-      throw new BadRequestException(
-        `Payment of ${amount.toFixed(2)} exceeds the remaining balance of ${current.remaining.toFixed(2)}`,
-      );
-    }
+    // Locked so two concurrent payments can't both pass the remaining-balance
+    // check against the same stale balance (see lockInvoice).
+    const { invoice, updated } = await this.prisma.$transaction(async (tx) => {
+      await lockInvoice(tx, id);
+      const invoice = await tx.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
 
-    await this.prisma.payment.create({
-      data: { invoiceId: id, amount, method: dto.method, recordedById },
-    });
+      if (!invoice) {
+        throw new NotFoundException('Invoice not found');
+      }
 
-    const newAmountPaid = roundMoney(current.amountPaid + amount);
-    const isFullyPaid = newAmountPaid >= current.amount - 0.01;
+      if (caller.role === Role.DOCTOR) {
+        await this.assertOwnPatient(caller.id, invoice.patientId);
+      }
 
-    const updated = await this.prisma.invoice.update({
-      where: { id },
-      data: {
-        status: isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
-        paidAt: isFullyPaid ? new Date() : null,
-      },
-      include: INVOICE_INCLUDE,
-    });
+      const current = toInvoiceResponse(invoice);
+
+      if (current.status === 'cancelled') {
+        throw new BadRequestException('Cannot record a payment against a cancelled invoice');
+      }
+
+      if (current.remaining <= 0) {
+        throw new BadRequestException('Invoice is already paid');
+      }
+
+      // A tiny epsilon tolerates rounding noise between the frontend's live total and this recompute.
+      if (amount > current.remaining + 0.01) {
+        throw new BadRequestException(
+          `Payment of ${amount.toFixed(2)} exceeds the remaining balance of ${current.remaining.toFixed(2)}`,
+        );
+      }
+
+      await tx.payment.create({
+        data: { invoiceId: id, amount, method: dto.method, recordedById },
+      });
+
+      const newAmountPaid = roundMoney(current.amountPaid + amount);
+      const isFullyPaid = newAmountPaid >= current.amount - 0.01;
+
+      const updated = await tx.invoice.update({
+        where: { id },
+        data: {
+          status: isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+          paidAt: isFullyPaid ? new Date() : null,
+        },
+        include: INVOICE_INCLUDE,
+      });
+
+      return { invoice, updated };
+    }, MONEY_TX_OPTIONS);
 
     await this.auditLogService.log({
       actorId: caller.id,
@@ -425,66 +438,89 @@ export class BillingService {
     paymentId: string,
     dto: RefundPaymentDto,
   ): Promise<InvoiceResponse> {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId }, include: INVOICE_INCLUDE });
+    // Locked so two concurrent refunds of one payment can't both pass the
+    // refundable-balance check, and so the charge.refunded webhook (which
+    // takes the same lock) can't insert this refund's row first.
+    const { invoice, payment, amount, stripeRefundId, response } = await this.prisma.$transaction(async (tx) => {
+      await lockInvoice(tx, invoiceId);
+      const invoice = await tx.invoice.findUnique({ where: { id: invoiceId }, include: INVOICE_INCLUDE });
 
-    if (!invoice) {
-      throw new NotFoundException('Invoice not found');
-    }
+      if (!invoice) {
+        throw new NotFoundException('Invoice not found');
+      }
 
-    if (caller.role === Role.DOCTOR) {
-      await this.assertOwnPatient(caller.id, invoice.patientId);
-    }
+      if (caller.role === Role.DOCTOR) {
+        await this.assertOwnPatient(caller.id, invoice.patientId);
+      }
 
-    const payment = invoice.payments.find((candidate) => candidate.id === paymentId);
+      const payment = invoice.payments.find((candidate) => candidate.id === paymentId);
 
-    if (!payment) {
-      throw new NotFoundException('Payment not found on this invoice');
-    }
+      if (!payment) {
+        throw new NotFoundException('Payment not found on this invoice');
+      }
 
-    const alreadyRefunded = roundMoney(payment.refunds.reduce((sum, refund) => sum + refund.amount, 0));
-    const maxRefundable = roundMoney(Math.max(0, payment.amount - alreadyRefunded));
+      const alreadyRefunded = roundMoney(payment.refunds.reduce((sum, refund) => sum + refund.amount, 0));
+      const maxRefundable = roundMoney(Math.max(0, payment.amount - alreadyRefunded));
 
-    if (maxRefundable <= 0) {
-      throw new BadRequestException('This payment has already been fully refunded');
-    }
+      if (maxRefundable <= 0) {
+        throw new BadRequestException('This payment has already been fully refunded');
+      }
 
-    const amount = roundMoney(dto.amount ?? maxRefundable);
+      const amount = roundMoney(dto.amount ?? maxRefundable);
 
-    if (amount > maxRefundable + 0.01) {
-      throw new BadRequestException(
-        `Refund of ${amount.toFixed(2)} exceeds the refundable balance of ${maxRefundable.toFixed(2)}`,
-      );
-    }
+      if (amount > maxRefundable + 0.01) {
+        throw new BadRequestException(
+          `Refund of ${amount.toFixed(2)} exceeds the refundable balance of ${maxRefundable.toFixed(2)}`,
+        );
+      }
 
-    let stripeRefundId: string | null = null;
+      let stripeRefundId: string | null = null;
 
-    if (payment.stripePaymentIntentId) {
-      const refund = await this.stripeService.refundPayment(payment.stripePaymentIntentId, Math.round(amount * 100));
-      stripeRefundId = refund.id;
-    }
+      if (payment.stripePaymentIntentId) {
+        // Keyed on the payment's refund state, so retrying after a failure
+        // below returns Stripe's existing refund instead of moving money twice.
+        const idempotencyKey = `refund:${payment.id}:${Math.round(alreadyRefunded * 100)}:${Math.round(amount * 100)}`;
+        const refund = await this.stripeService.refundPayment(
+          payment.stripePaymentIntentId,
+          Math.round(amount * 100),
+          idempotencyKey,
+        );
+        if (refund.status === 'failed' || refund.status === 'canceled') {
+          // Nothing went back to the patient -- don't record it as refunded.
+          throw new BadRequestException(`Stripe could not process this refund (${refund.failure_reason ?? refund.status})`);
+        }
+        stripeRefundId = refund.id;
+      }
 
-    await this.prisma.refund.create({
-      data: { paymentId: payment.id, amount, reason: dto.reason, stripeRefundId, refundedById: caller.id },
-    });
+      await tx.refund.create({
+        data: { paymentId: payment.id, amount, reason: dto.reason, stripeRefundId, refundedById: caller.id },
+      });
 
-    const updatedInvoice = await this.prisma.invoice.findUniqueOrThrow({
-      where: { id: invoiceId },
-      include: INVOICE_INCLUDE,
-    });
-    const response = toInvoiceResponse(updatedInvoice);
+      const updatedInvoice = await tx.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        include: INVOICE_INCLUDE,
+      });
+      const response = toInvoiceResponse(updatedInvoice);
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: {
-        status:
-          response.remaining <= 0.01
-            ? InvoiceStatus.PAID
-            : response.amountPaid > 0.01
-              ? InvoiceStatus.PARTIALLY_PAID
-              : InvoiceStatus.PENDING,
-        paidAt: response.remaining <= 0.01 ? invoice.paidAt : null,
-      },
-    });
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          // A cancelled invoice stays cancelled (e.g. refunding a payment that
+          // landed after cancellation) -- otherwise it becomes owed again.
+          status:
+            updatedInvoice.status === InvoiceStatus.CANCELLED
+              ? InvoiceStatus.CANCELLED
+              : response.remaining <= 0.01
+              ? InvoiceStatus.PAID
+              : response.amountPaid > 0.01
+                ? InvoiceStatus.PARTIALLY_PAID
+                : InvoiceStatus.PENDING,
+          paidAt: response.remaining <= 0.01 ? invoice.paidAt : null,
+        },
+      });
+
+      return { invoice, payment, amount, stripeRefundId, response };
+    }, MONEY_TX_OPTIONS);
 
     await this.auditLogService.log({
       actorId: caller.id,
@@ -505,27 +541,41 @@ export class BillingService {
     return response;
   }
 
-  /** Admin-only. Refuses to cancel an invoice that already has payments recorded -- refund first. */
+  /**
+   * Admin-only. Refuses while any money is still held against the invoice --
+   * refund first. Once every payment has been fully refunded it can be
+   * cancelled, so a refunded-and-voided charge stops showing as money owed.
+   */
   async cancel(caller: AuthenticatedUser, id: string): Promise<InvoiceResponse> {
-    const invoice = await this.prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
+    const { updated, checkoutSessionId } = await this.prisma.$transaction(async (tx) => {
+      await lockInvoice(tx, id);
+      const invoice = await tx.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
 
-    if (!invoice) {
-      throw new NotFoundException('Invoice not found');
+      if (!invoice) {
+        throw new NotFoundException('Invoice not found');
+      }
+
+      if (invoice.status === InvoiceStatus.CANCELLED) {
+        throw new BadRequestException('Invoice is already cancelled');
+      }
+
+      if (toInvoiceResponse(invoice).amountPaid > 0.01) {
+        throw new BadRequestException('Cannot cancel an invoice that still has payments recorded -- refund them first');
+      }
+
+      const updated = await tx.invoice.update({
+        where: { id },
+        data: { status: InvoiceStatus.CANCELLED, stripeCheckoutSessionId: null },
+        include: INVOICE_INCLUDE,
+      });
+
+      return { updated, checkoutSessionId: invoice.stripeCheckoutSessionId };
+    }, MONEY_TX_OPTIONS);
+
+    // So a checkout tab the patient still has open can't be paid any more.
+    if (checkoutSessionId) {
+      await this.stripeService.expireCheckoutSession(checkoutSessionId);
     }
-
-    if (invoice.status === InvoiceStatus.CANCELLED) {
-      throw new BadRequestException('Invoice is already cancelled');
-    }
-
-    if (invoice.payments.length > 0) {
-      throw new BadRequestException('Cannot cancel an invoice that already has payments recorded');
-    }
-
-    const updated = await this.prisma.invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.CANCELLED },
-      include: INVOICE_INCLUDE,
-    });
 
     await this.auditLogService.log({
       actorId: caller.id,
@@ -686,16 +736,35 @@ export class BillingService {
    * paid invoice needs a refund decision, not an automatic cancel).
    */
   async cancelInvoiceForAppointment(appointmentId: string): Promise<void> {
-    const invoice = await this.prisma.invoice.findUnique({ where: { appointmentId }, include: INVOICE_INCLUDE });
+    const linked = await this.prisma.invoice.findUnique({ where: { appointmentId }, select: { id: true } });
 
-    if (!invoice || invoice.status === InvoiceStatus.CANCELLED || invoice.payments.length > 0) {
+    if (!linked) {
       return;
     }
 
-    await this.prisma.invoice.update({
-      where: { id: invoice.id },
-      data: { status: InvoiceStatus.CANCELLED },
-    });
+    const invoice = await this.prisma.$transaction(async (tx) => {
+      await lockInvoice(tx, linked.id);
+      const invoice = await tx.invoice.findUnique({ where: { id: linked.id }, include: INVOICE_INCLUDE });
+
+      if (!invoice || invoice.status === InvoiceStatus.CANCELLED || invoice.payments.length > 0) {
+        return null;
+      }
+
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: { status: InvoiceStatus.CANCELLED, stripeCheckoutSessionId: null },
+      });
+
+      return invoice;
+    }, MONEY_TX_OPTIONS);
+
+    if (!invoice) {
+      return;
+    }
+
+    if (invoice.stripeCheckoutSessionId) {
+      await this.stripeService.expireCheckoutSession(invoice.stripeCheckoutSessionId);
+    }
 
     await this.auditLogService.log({
       actorId: null,

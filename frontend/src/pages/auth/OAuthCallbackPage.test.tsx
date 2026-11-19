@@ -36,12 +36,12 @@ function renderAt(path: string) {
 }
 
 describe('OAuthCallbackPage', () => {
-  it('completes sign-in and navigates to the dashboard when a token is present', async () => {
+  it('completes sign-in and navigates to the dashboard when Google reports no error', async () => {
     mockCompleteOAuthCallback.mockResolvedValue(undefined)
 
-    renderAt('/oauth/callback?token=valid.jwt.token')
+    renderAt('/oauth/callback')
 
-    await waitFor(() => expect(mockCompleteOAuthCallback).toHaveBeenCalledWith('valid.jwt.token'))
+    await waitFor(() => expect(mockCompleteOAuthCallback).toHaveBeenCalled())
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(ROUTES.dashboard, { replace: true }),
     )
@@ -55,19 +55,21 @@ describe('OAuthCallbackPage', () => {
     expect(toast.error).toHaveBeenCalledWith('Google sign-in failed. Please try again.')
   })
 
-  it('redirects to login without calling the API when the token is missing', async () => {
+  it('shows an error and redirects to login when no session was actually established', async () => {
+    mockCompleteOAuthCallback.mockRejectedValue(new Error('Unauthorized'))
+
     renderAt('/oauth/callback')
-
-    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(ROUTES.login, { replace: true }))
-    expect(mockCompleteOAuthCallback).not.toHaveBeenCalled()
-  })
-
-  it('shows an error and redirects to login when completing the callback fails', async () => {
-    mockCompleteOAuthCallback.mockRejectedValue(new Error('network error'))
-
-    renderAt('/oauth/callback?token=valid.jwt.token')
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not complete sign-in'))
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(ROUTES.login, { replace: true }))
+  })
+
+  it('sends an MFA-enabled Google sign-in to the code step instead of completing the session', async () => {
+    renderAt('/oauth/callback?mfa=challenge-token')
+
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith(`${ROUTES.login}?mfa=challenge-token`, { replace: true }),
+    )
+    expect(mockCompleteOAuthCallback).not.toHaveBeenCalled()
   })
 })

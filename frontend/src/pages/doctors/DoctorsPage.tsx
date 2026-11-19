@@ -1,12 +1,13 @@
+import { useAuth } from '@/features/auth/useAuth'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { Search, UserPlus, Eye, Copy, Check } from 'lucide-react'
+import { Search, UserPlus, Eye } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
+import { TempPasswordDialog } from '@/components/ui/TempPasswordDialog'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Badge } from '@/components/ui/Badge'
-import { Modal } from '@/components/ui/Modal'
 import {
   Table,
   TableHeader,
@@ -43,6 +44,7 @@ const DEPARTMENT_FILTER_OPTIONS = [
 ]
 
 export function DoctorsPage() {
+  const { user } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [doctors, setDoctors] = useState<DirectoryDoctor[]>([])
@@ -53,7 +55,6 @@ export function DoctorsPage() {
   const [isAddOpen, setAddOpen] = useState(false)
   const [selectedDoctor, setSelectedDoctor] = useState<DirectoryDoctor | null>(null)
   const [revealed, setRevealed] = useState<CreateStaffResponse | null>(null)
-  const [copied, setCopied] = useState(false)
 
   function refresh() {
     setIsLoading(true)
@@ -87,15 +88,8 @@ export function DoctorsPage() {
   function handleCreated(result: CreateStaffResponse) {
     refresh()
     setRevealed(result)
-    setCopied(false)
   }
 
-  async function handleCopy() {
-    if (!revealed) return
-    await navigator.clipboard.writeText(revealed.tempPassword)
-    setCopied(true)
-    toast.success('Copied to clipboard')
-  }
 
   const filteredDoctors = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -126,10 +120,13 @@ export function DoctorsPage() {
             {filteredDoctors.length} doctor{filteredDoctors.length === 1 ? '' : 's'}
           </p>
         </div>
-        <Button onClick={() => setAddOpen(true)}>
-          <UserPlus className="size-4" aria-hidden="true" />
-          Add Doctor
-        </Button>
+        {/* POST /staff is admin-only */}
+        {user?.role === 'admin' && (
+          <Button onClick={() => setAddOpen(true)}>
+            <UserPlus className="size-4" aria-hidden="true" />
+            Add Doctor
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -236,40 +233,10 @@ export function DoctorsPage() {
 
       <DoctorProfileModal doctor={selectedDoctor} onClose={() => setSelectedDoctor(null)} />
 
-      <Modal
-        isOpen={revealed !== null}
+      <TempPasswordDialog
+        account={revealed ? { fullName: revealed.staff.fullName, tempPassword: revealed.tempPassword } : null}
         onClose={() => setRevealed(null)}
-        title="Account created"
-        description={
-          revealed
-            ? `Relay this temporary password to ${revealed.staff.fullName} — it won't be shown again.`
-            : undefined
-        }
-      >
-        {revealed && (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-alt px-4 py-3">
-              <code className="text-sm font-medium text-ink">{revealed.tempPassword}</code>
-              <Button type="button" size="sm" variant="secondary" onClick={handleCopy}>
-                {copied ? (
-                  <>
-                    <Check className="size-4" aria-hidden="true" /> Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="size-4" aria-hidden="true" /> Copy
-                  </>
-                )}
-              </Button>
-            </div>
-            <div className="flex justify-end">
-              <Button type="button" onClick={() => setRevealed(null)}>
-                Done
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      />
     </div>
   )
 }

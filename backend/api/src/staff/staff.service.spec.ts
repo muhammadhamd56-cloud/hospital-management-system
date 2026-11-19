@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException } from '@nestjs/common';
-import { Role, type User } from '@prisma/client';
+import { ApprovalStatus, Role, type User } from '@prisma/client';
 import { StaffService } from './staff.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateStaffDto } from './dto/create-staff.dto';
@@ -38,6 +38,12 @@ function buildUser(overrides: Partial<User> = {}): User {
     mfaEnabled: false,
     mfaSecret: null,
     mfaBackupCodeHashes: [],
+    mfaFailedAttempts: 0,
+    mfaLockedUntil: null,
+    mfaChallengeId: null,
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvalReviewedAt: null,
+    approvalNote: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,

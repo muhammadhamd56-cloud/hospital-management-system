@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { Search, UserPlus, Eye, Copy, Check } from 'lucide-react'
+import { Search, UserPlus, Eye } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/Button'
+import { TempPasswordDialog } from '@/components/ui/TempPasswordDialog'
 import { Input } from '@/components/ui/Input'
-import { Modal } from '@/components/ui/Modal'
 import {
   Table,
   TableHeader,
@@ -36,7 +36,6 @@ export function PatientsPage() {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [revealed, setRevealed] = useState<CreatePatientResponse | null>(null)
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     listPatients()
@@ -64,15 +63,8 @@ export function PatientsPage() {
     setPatients((current) => [result.patient, ...current])
     setIsAddOpen(false)
     setRevealed(result)
-    setCopied(false)
   }
 
-  async function handleCopy() {
-    if (!revealed) return
-    await navigator.clipboard.writeText(revealed.tempPassword)
-    setCopied(true)
-    toast.success('Copied to clipboard')
-  }
 
   const filteredPatients = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -179,40 +171,10 @@ export function PatientsPage() {
 
       <AddPatientModal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} onCreated={handleCreated} />
 
-      <Modal
-        isOpen={revealed !== null}
+      <TempPasswordDialog
+        account={revealed ? { fullName: revealed.patient.fullName, tempPassword: revealed.tempPassword } : null}
         onClose={() => setRevealed(null)}
-        title="Account created"
-        description={
-          revealed
-            ? `Relay this temporary password to ${revealed.patient.fullName} — it won't be shown again.`
-            : undefined
-        }
-      >
-        {revealed && (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-alt px-4 py-3">
-              <code className="text-sm font-medium text-ink">{revealed.tempPassword}</code>
-              <Button type="button" size="sm" variant="secondary" onClick={handleCopy}>
-                {copied ? (
-                  <>
-                    <Check className="size-4" aria-hidden="true" /> Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="size-4" aria-hidden="true" /> Copy
-                  </>
-                )}
-              </Button>
-            </div>
-            <div className="flex justify-end">
-              <Button type="button" onClick={() => setRevealed(null)}>
-                Done
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      />
     </div>
   )
 }

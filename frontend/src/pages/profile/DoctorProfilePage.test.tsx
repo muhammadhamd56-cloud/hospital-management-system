@@ -27,6 +27,8 @@ const baseUser: AuthUser = {
   emailVerified: true,
   mustChangePassword: false,
   mfaEnabled: false,
+  approvalStatus: 'approved',
+  approvalNote: null,
   staffType: null,
 }
 

@@ -223,6 +223,20 @@ describe('PatientsService', () => {
       });
     });
 
+    it("limits a doctor caller to their own appointments with the patient, not the patient's whole history", async () => {
+      prisma.doctor.findUnique.mockResolvedValue({ id: 'doctor-1' });
+      prisma.appointment.findFirst.mockResolvedValue({ id: 'appt-1' });
+      prisma.user.findFirst.mockResolvedValue(buildPatientDetailRow());
+
+      await service.findOne(doctorCaller, 'patient-1');
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { appointments: expect.objectContaining({ where: { doctorId: 'doctor-1' } }) },
+        }),
+      );
+    });
+
     it('returns patient detail with an empty appointments array and lastVisit null when there are none', async () => {
       const row = buildPatientDetailRow({ appointments: [] });
       prisma.user.findFirst.mockResolvedValue(row);

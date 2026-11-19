@@ -9,6 +9,8 @@ import { ROUTES } from '@/constants/routes'
 const mockLogin = vi.fn()
 const mockVerifyMfa = vi.fn()
 const mockNavigate = vi.fn()
+const mockSetSearchParams = vi.fn()
+let mockSearchParams = new URLSearchParams()
 
 vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({ login: mockLogin, verifyMfa: mockVerifyMfa }),
@@ -16,7 +18,11 @@ vi.mock('@/features/auth/useAuth', () => ({
 
 vi.mock('react-router', async () => {
   const actual = await vi.importActual<typeof import('react-router')>('react-router')
-  return { ...actual, useNavigate: () => mockNavigate }
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+    useSearchParams: () => [mockSearchParams, mockSetSearchParams],
+  }
 })
 
 vi.mock('react-hot-toast', () => ({
@@ -27,6 +33,8 @@ beforeEach(() => {
   mockLogin.mockReset()
   mockVerifyMfa.mockReset()
   mockNavigate.mockReset()
+  mockSetSearchParams.mockReset()
+  mockSearchParams = new URLSearchParams()
   vi.mocked(toast.success).mockClear()
   vi.mocked(toast.error).mockClear()
 })
@@ -147,5 +155,21 @@ describe('ManualLoginForm', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Incorrect code'))
     expect(mockNavigate).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Authentication code')).toBeInTheDocument()
+  })
+
+  it('opens straight on the code step when Google sign-in handed over an MFA challenge (?mfa=)', async () => {
+    mockSearchParams = new URLSearchParams('mfa=google-challenge')
+    mockVerifyMfa.mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(<ManualLoginForm />)
+
+    // The challenge is stripped from the URL once captured.
+    expect(mockSetSearchParams).toHaveBeenCalled()
+
+    await user.type(screen.getByLabelText('Authentication code'), '123456')
+    await user.click(screen.getByRole('button', { name: /verify/i }))
+
+    await waitFor(() => expect(mockVerifyMfa).toHaveBeenCalledWith('google-challenge', '123456'))
+    expect(mockNavigate).toHaveBeenCalledWith(ROUTES.dashboard)
   })
 })
