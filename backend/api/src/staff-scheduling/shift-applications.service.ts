@@ -1,9 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ApplicationStatus, AuditAction, NotificationType } from '@prisma/client';
+import { ApplicationStatus, AuditAction, NotificationType, Prisma } from '@prisma/client';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseLocalMinutes, ShiftsService } from './shifts.service';
+import type { ShiftWithStaff } from './shifts.mapper';
 import { ApplyShiftDto } from './dto/apply-shift.dto';
 import { RespondShiftApplicationDto } from './dto/respond-shift-application.dto';
 import {
@@ -230,86 +231,52 @@ export class ShiftApplicationsService {
       return toShiftApplicationResponse(updated);
     }
 
-    // Claim the position first, under a row lock on the opening: the
-    // capacity re-check, marking this application APPROVED and auto-closing
-    // a now-full opening all happen while no other approval for the same
-    // opening can run. Without the lock, two admins (or a double-click)
-    // approving the last slot at once could both pass the count check.
-    const { freshOpening, closedOpening } = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "ShiftOpening" WHERE id = ${application.openingId} FOR UPDATE`;
-      const freshOpening = await tx.shiftOpening.findUniqueOrThrow({
-        where: { id: application.openingId },
-        include: { applications: { select: { status: true } } },
-      });
-      const approvedCount = freshOpening.applications.filter((a) => a.status === 'APPROVED').length;
-
-      if (!freshOpening.isOpen) {
-        throw new BadRequestException('This opening has been closed');
-      }
-
-      if (approvedCount >= freshOpening.positions) {
-        throw new BadRequestException('This shift is already full');
-      }
-
-      const claimed = await tx.shiftApplication.updateMany({
-        where: { id, status: ApplicationStatus.PENDING },
-        data: {
-          status: ApplicationStatus.APPROVED,
-          adminNotes: dto.adminNotes,
-          respondedById: actorId,
-          respondedAt: new Date(),
-        },
-      });
-
-      if (claimed.count === 0) {
-        throw new BadRequestException('This application has already been responded to');
-      }
-
-      // Auto-close once the last position is filled -- a clear signal to the
-      // admin without them having to check the count themselves.
-      const closedOpening = approvedCount + 1 >= freshOpening.positions;
-      if (closedOpening) {
-        await tx.shiftOpening.update({ where: { id: freshOpening.id }, data: { isOpen: false } });
-      }
-
-      return { freshOpening, closedOpening };
-    });
-
-    let shift: Awaited<ReturnType<ShiftsService['assignFromOpening']>>;
+    // Claim the position and create the shift in ONE transaction, under a
+    // row lock on the opening: the capacity re-check, marking this
+    // application APPROVED, auto-closing a now-full opening, creating the
+    // conflict-checked shift and linking it all commit together -- or, if
+    // any step fails (e.g. the shift now clashes with another one for this
+    // staff member), none of them do, so there's nothing to give back.
+    // Without the lock, two admins (or a double-click) approving the last
+    // slot at once could both pass the count check. Serializable for the
+    // shift's overlap check, same as a direct assignment (ShiftsService.create()).
+    let shift: ShiftWithStaff;
+    let updated: ShiftApplicationWithRelations;
     try {
-      shift = await this.shiftsService.assignFromOpening({
-        staffId: application.staffId,
-        departmentId: freshOpening.departmentId,
-        date: freshOpening.date,
-        startTime: freshOpening.startTime,
-        localStartTime: freshOpening.localStartTime,
-        endTime: freshOpening.endTime,
-        shiftType: freshOpening.shiftType,
-        createdById: actorId,
-        notes: application.message ?? undefined,
-        notify: false,
-      });
+      ({ shift, updated } = await this.prisma.$transaction(
+        async (tx) => {
+          const freshOpening = await this.claimOpening(tx, id, application.openingId, dto, actorId);
+
+          const shift = await this.shiftsService.assignFromOpeningInTx(tx, {
+            staffId: application.staffId,
+            departmentId: freshOpening.departmentId,
+            date: freshOpening.date,
+            startTime: freshOpening.startTime,
+            localStartTime: freshOpening.localStartTime,
+            endTime: freshOpening.endTime,
+            shiftType: freshOpening.shiftType,
+            createdById: actorId,
+            notes: application.message ?? undefined,
+          });
+
+          const updated = await tx.shiftApplication.update({
+            where: { id },
+            data: { resultingShiftId: shift.id },
+            include: INCLUDE,
+          });
+
+          return { shift, updated: updated as unknown as ShiftApplicationWithRelations };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ));
     } catch (error) {
-      // The shift couldn't be created (e.g. it now clashes with another shift
-      // for this staff member) -- give the position back.
-      await this.prisma.$transaction([
-        this.prisma.shiftApplication.update({
-          where: { id },
-          data: { status: ApplicationStatus.PENDING, adminNotes: application.adminNotes, respondedById: null, respondedAt: null },
-        }),
-        ...(closedOpening
-          ? [this.prisma.shiftOpening.update({ where: { id: freshOpening.id }, data: { isOpen: true } })]
-          : []),
-      ]);
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+        throw new ConflictException('This shift was just updated by someone else. Refresh and try again.');
+      }
       throw error;
     }
 
-    const updated = await this.prisma.shiftApplication.update({
-      where: { id },
-      data: { resultingShiftId: shift.id },
-      include: INCLUDE,
-    });
-
+    await this.shiftsService.recordAssignedFromOpening(shift, actorId);
 
     await this.auditLog.log({
       actorId,
@@ -329,7 +296,56 @@ export class ShiftApplicationsService {
       );
     }
 
-    return toShiftApplicationResponse(updated as unknown as ShiftApplicationWithRelations);
+    return toShiftApplicationResponse(updated);
+  }
+
+  /**
+   * Runs inside respond()'s approval transaction -- see the comment there.
+   * Returns the opening as re-read under the lock, which the shift is built from.
+   */
+  private async claimOpening(
+    tx: Prisma.TransactionClient,
+    id: string,
+    openingId: string,
+    dto: RespondShiftApplicationDto,
+    actorId: string,
+  ) {
+    await tx.$queryRaw`SELECT id FROM "ShiftOpening" WHERE id = ${openingId} FOR UPDATE`;
+    const freshOpening = await tx.shiftOpening.findUniqueOrThrow({
+      where: { id: openingId },
+      include: { applications: { select: { status: true } } },
+    });
+    const approvedCount = freshOpening.applications.filter((a) => a.status === 'APPROVED').length;
+
+    if (!freshOpening.isOpen) {
+      throw new BadRequestException('This opening has been closed');
+    }
+
+    if (approvedCount >= freshOpening.positions) {
+      throw new BadRequestException('This shift is already full');
+    }
+
+    const claimed = await tx.shiftApplication.updateMany({
+      where: { id, status: ApplicationStatus.PENDING },
+      data: {
+        status: ApplicationStatus.APPROVED,
+        adminNotes: dto.adminNotes,
+        respondedById: actorId,
+        respondedAt: new Date(),
+      },
+    });
+
+    if (claimed.count === 0) {
+      throw new BadRequestException('This application has already been responded to');
+    }
+
+    // Auto-close once the last position is filled -- a clear signal to the
+    // admin without them having to check the count themselves.
+    if (approvedCount + 1 >= freshOpening.positions) {
+      await tx.shiftOpening.update({ where: { id: freshOpening.id }, data: { isOpen: false } });
+    }
+
+    return freshOpening;
   }
 }
 

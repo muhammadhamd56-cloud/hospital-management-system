@@ -10,6 +10,7 @@ import { CreateMedicalRecordDto } from '../medical-records/dto/create-medical-re
 import { DoctorPortalService } from './doctor-portal.service';
 import { DoctorAvailabilityDto } from './dto/doctor-availability.dto';
 import { DoctorProfileDto } from './dto/doctor-profile.dto';
+import { ChatThreadQueryDto } from '../chat/dto/thread-query.dto';
 
 /** Self-service endpoints for the logged-in doctor: profile, availability, their appointments, their inbox. */
 @Controller('doctor-portal')
@@ -64,10 +65,10 @@ export class DoctorPortalController {
   async getThread(
     @CurrentUser() user: AuthenticatedUser,
     @Param('patientId') patientId: string,
-    // Message id: returns the page just older than it (for "load earlier").
-    @Query('before') before?: string,
+    // `before` is a message id: returns the page just older than it (for "load earlier").
+    @Query() query: ChatThreadQueryDto,
   ) {
-    return this.doctorPortalService.getThread(user.id, patientId, before);
+    return this.doctorPortalService.getThread(user.id, patientId, query.before);
   }
 
   @Post('chat/:patientId')

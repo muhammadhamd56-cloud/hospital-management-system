@@ -1,26 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
+import { getTheme, subscribeTheme, toggleTheme, type Theme } from '@/features/theme/themeStore'
 
-type Theme = 'light' | 'dark'
+const getServerTheme = (): Theme => 'light'
 
-const STORAGE_KEY = 'hms-theme'
-
-function getInitialTheme(): Theme {
-  return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-}
-
-/** Reads/writes the `.dark` class on <html>, kept in sync with localStorage.
- *  index.html applies the initial class before paint to avoid a flash. */
+/** The current theme plus a toggle. Every caller shares one store (the `.dark`
+ *  class on <html>), so a toggle anywhere re-renders all consumers. Toggling
+ *  plays the global wipe transition when `ThemeTransitionLayer` is mounted. */
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme)
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-    localStorage.setItem(STORAGE_KEY, theme)
-  }, [theme])
-
-  const toggleTheme = useCallback(() => {
-    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
-  }, [])
-
+  const theme = useSyncExternalStore(subscribeTheme, getTheme, getServerTheme)
   return { theme, toggleTheme }
 }

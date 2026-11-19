@@ -1,5 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Min, validateSync } from 'class-validator';
+import { parseMfaEncryptionKey } from '../auth/mfa-secret-crypto';
 
 class EnvironmentVariables {
   @IsString()
@@ -100,6 +101,12 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SENTRY_ENVIRONMENT?: string;
+
+  /** Encrypts User.mfaSecret at rest (AES-256-GCM): 32 bytes as base64 or
+   *  64 hex characters. Required when NODE_ENV=production -- see mfaKeyErrors. */
+  @IsOptional()
+  @IsString()
+  MFA_ENCRYPTION_KEY?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {
@@ -108,13 +115,33 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
   });
 
   const errors = validateSync(validated, { skipMissingProperties: false });
+  const details = [
+    ...errors.map((error) => Object.values(error.constraints ?? {}).join(', ')),
+    ...mfaKeyErrors(config),
+  ];
 
-  if (errors.length > 0) {
-    const details = errors
-      .map((error) => Object.values(error.constraints ?? {}).join(', '))
-      .join('\n');
-    throw new Error(`Invalid environment configuration:\n${details}`);
+  if (details.length > 0) {
+    throw new Error(`Invalid environment configuration:\n${details.join('\n')}`);
   }
 
   return validated;
+}
+
+/** Required in production, optional elsewhere, always well-formed when set.
+ *  Never echoes the key itself -- only whether it is missing or malformed. */
+export function mfaKeyErrors(config: Record<string, unknown>): string[] {
+  const raw = typeof config.MFA_ENCRYPTION_KEY === 'string' ? config.MFA_ENCRYPTION_KEY.trim() : '';
+
+  if (!raw) {
+    return config.NODE_ENV === 'production'
+      ? ['MFA_ENCRYPTION_KEY is required in production (32 bytes, as base64 or 64 hex characters)']
+      : [];
+  }
+
+  try {
+    parseMfaEncryptionKey(raw);
+    return [];
+  } catch (error) {
+    return [(error as Error).message];
+  }
 }

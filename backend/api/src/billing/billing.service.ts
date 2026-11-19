@@ -700,11 +700,38 @@ export class BillingService {
     dueDate: Date,
     appointmentId?: string,
   ): Promise<InvoiceResponse> {
+    const response = await this.createConsultationInvoiceInTx(
+      this.prisma,
+      patientId,
+      doctorName,
+      fee,
+      dueDate,
+      appointmentId,
+    );
+    await this.notifyConsultationInvoiceCreated(response);
+    return response;
+  }
+
+  /**
+   * The write half of createConsultationInvoice(), against a caller-supplied
+   * client so it can run inside the caller's transaction (book() creates the
+   * appointment and its invoice atomically). Sends no notification -- the
+   * caller does that via notifyConsultationInvoiceCreated() once committed,
+   * so a rolled-back booking never tells the patient about a phantom invoice.
+   */
+  async createConsultationInvoiceInTx(
+    tx: Prisma.TransactionClient,
+    patientId: string,
+    doctorName: string,
+    fee: number,
+    dueDate: Date,
+    appointmentId?: string,
+  ): Promise<InvoiceResponse> {
     const description = `Consultation with Dr. ${doctorName}`;
     const margin = await this.platformSettingsService.getConsultationMargin();
     const chargedAmount = roundMoney(fee + margin);
 
-    const invoice = await this.prisma.invoice.create({
+    const invoice = await tx.invoice.create({
       data: {
         patientId,
         description,
@@ -716,17 +743,17 @@ export class BillingService {
       include: INVOICE_INCLUDE,
     });
 
-    const response = toInvoiceResponse(invoice);
+    return toInvoiceResponse(invoice);
+  }
 
+  async notifyConsultationInvoiceCreated(invoice: InvoiceResponse): Promise<void> {
     await this.notificationsService.create(
-      patientId,
+      invoice.patientId,
       NotificationType.INVOICE_CREATED,
-      `New invoice ${response.invoiceNumber}`,
-      `${description} — ${response.amount.toFixed(2)}.`,
+      `New invoice ${invoice.invoiceNumber}`,
+      `${invoice.description} — ${invoice.amount.toFixed(2)}.`,
       `/billing?invoiceId=${invoice.id}`,
     );
-
-    return response;
   }
 
   /**

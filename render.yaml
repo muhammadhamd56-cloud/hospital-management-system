@@ -65,3 +65,25 @@ services:
         value: production
       - key: PORT
         value: 3000
+      # TOTP secrets are encrypted at rest with this key (32 bytes, base64 or
+      # 64 hex chars). Required in production. Rotating it invalidates every
+      # enrolled authenticator, so keep it stable.
+      - key: MFA_ENCRYPTION_KEY
+        sync: false
+      # Shared demo logins. Keep off for a real deployment.
+      - key: DEMO_MODE
+        value: "false"
+      # Admin AI Copilot (docs/ai/AI_DEPLOYMENT.md). Off until AI_API_KEY is
+      # set and the read-only rollout is verified.
+      - key: ADMIN_AI_ENABLED
+        value: "false"
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: claude-opus-5-5
+      - key: AI_ALLOW_PHI
+        value: "false"
+      - key: AI_ENABLE_WRITES
+        value: "false"
+      - key: AI_RAG_ENABLED
+        value: "false"

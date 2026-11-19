@@ -1,7 +1,10 @@
+import { Logger } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 import { ACCESS_COOKIE, CSRF_HEADER, REFRESH_COOKIE } from '../../auth/auth-cookies';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+const logger = new Logger('CSRF');
 
 /**
  * Cookies are attached by the browser automatically, so a state-changing
@@ -19,6 +22,10 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction):
     next();
     return;
   }
+
+  // Method and path only -- never the query string, cookies or headers.
+  const path = (req.originalUrl || req.url || '').split('?')[0];
+  logger.warn(`Rejected ${req.method} ${path}: missing CSRF header`);
 
   res.status(403).json({
     success: false,

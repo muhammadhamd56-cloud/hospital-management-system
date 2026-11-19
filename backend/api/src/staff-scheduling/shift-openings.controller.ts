@@ -7,7 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { CreateShiftOpeningDto } from './dto/create-shift-opening.dto';
 import { UpdateShiftOpeningDto } from './dto/update-shift-opening.dto';
-import type { ClientStaffType } from './dto/create-staff.dto';
+import { ListShiftOpeningsQueryDto } from './dto/list-queries.dto';
 import { ShiftOpeningResponse } from './shift-openings.mapper';
 import { ShiftOpeningsService } from './shift-openings.service';
 
@@ -20,11 +20,8 @@ export class ShiftOpeningsController {
   constructor(private readonly shiftOpeningsService: ShiftOpeningsService) {}
 
   @Get()
-  async findAll(
-    @Query('isOpen') isOpen?: string,
-    @Query('requiredStaffType') requiredStaffType?: ClientStaffType,
-    @Query('department') department?: string,
-  ): Promise<{ openings: ShiftOpeningResponse[] }> {
+  async findAll(@Query() query: ListShiftOpeningsQueryDto): Promise<{ openings: ShiftOpeningResponse[] }> {
+    const { isOpen, requiredStaffType, department } = query;
     const openings = await this.shiftOpeningsService.findAll({
       isOpen: isOpen === undefined ? undefined : isOpen === 'true',
       requiredStaffType,

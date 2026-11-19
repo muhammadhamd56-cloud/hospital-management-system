@@ -501,6 +501,7 @@ model Payment {
   refunds Refund[]
 
   @@index([invoiceId])
+  @@index([recordedById])
 }
 
 /**
@@ -532,6 +533,7 @@ model Refund {
   createdAt DateTime @default(now())
 
   @@index([paymentId])
+  @@index([refundedById])
 }
 
 enum NotificationType {
@@ -760,6 +762,7 @@ model StaffShift {
   @@index([date])
   @@index([groupId])
   @@index([status])
+  @@index([createdById])
 }
 
 enum ApplicationStatus {
@@ -812,6 +815,8 @@ model ShiftOpening {
   @@index([date])
   @@index([requiredStaffType])
   @@index([isOpen])
+  @@index([departmentId])
+  @@index([createdById])
 }
 
 /**
@@ -842,6 +847,7 @@ model ShiftApplication {
   @@unique([openingId, staffId])
   @@index([staffId])
   @@index([status])
+  @@index([respondedById])
 }
 
 enum TaskPriority {
@@ -892,6 +898,8 @@ model Task {
   @@index([assignedToId])
   @@index([dueAt])
   @@index([status])
+  @@index([departmentId])
+  @@index([assignedById])
 }
 
 enum AnnouncementPriority {
@@ -910,6 +918,7 @@ model Announcement {
   createdAt   DateTime             @default(now())
 
   @@index([createdAt])
+  @@index([authorId])
 }
 
 /**
@@ -962,7 +971,6 @@ model StaffAvailability {
   updatedAt     DateTime  @updatedAt
 
   @@unique([staffId, dayOfWeek])
-  @@index([staffId])
 }
 
 /**
@@ -978,7 +986,6 @@ model StaffLeave {
   createdAt DateTime @default(now())
 
   @@unique([staffId, date])
-  @@index([staffId])
   @@index([date])
 }
 
@@ -1155,6 +1162,9 @@ model EmergencyCase {
   @@index([createdAt])
   @@index([assignedStaffId])
   @@index([assignedDoctorId])
+  @@index([acknowledgedById])
+  @@index([assignedById])
+  @@index([resolvedById])
 }
 
 /**
@@ -1171,6 +1181,7 @@ model EmergencyNote {
   createdAt DateTime      @default(now())
 
   @@index([caseId])
+  @@index([authorId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1245,11 +1256,13 @@ model AiMessage {
    * The run that produced an ASSISTANT message (or was started by a USER one).
    */
   runId          String?
+  run            AiRun?         @relation(fields: [runId], references: [id], onDelete: SetNull)
   createdAt      DateTime       @default(now())
 
   feedback AiFeedback[]
 
   @@index([conversationId, createdAt])
+  @@index([runId])
 }
 
 model AiRun {
@@ -1278,10 +1291,12 @@ model AiRun {
 
   toolInvocations AiToolInvocation[]
   proposals       AiActionProposal[]
+  messages        AiMessage[]
 
   @@unique([userId, requestKey])
   @@index([userId, startedAt])
   @@index([startedAt])
+  @@index([conversationId, status])
 }
 
 model AiToolInvocation {
@@ -1338,6 +1353,8 @@ model AiActionProposal {
   @@index([conversationId])
   @@index([requestedById, status])
   @@index([status, expiresAt])
+  @@index([runId])
+  @@index([decidedById])
 }
 
 model AiFeedback {
@@ -1353,4 +1370,5 @@ model AiFeedback {
 
   @@unique([messageId, userId])
   @@index([createdAt])
+  @@index([userId])
 }

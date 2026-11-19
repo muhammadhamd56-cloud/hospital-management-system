@@ -1,11 +1,21 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, HttpStatus, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpStatus,
+  InternalServerErrorException,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { randomBytes } from 'crypto';
 import { generate, generateSecret } from 'otplib';
 import { ApprovalStatus, Role, type User } from '@prisma/client';
 import { MfaService } from './mfa.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from './password.util';
+import { AUTH_AUDIT_EVENTS, AuthAuditService } from './auth-audit.service';
+import { decryptMfaSecret, encryptMfaSecret, MFA_SECRET_PREFIX } from './mfa-secret-crypto';
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -58,6 +68,23 @@ describe('MfaService', () => {
     user: { update: jest.Mock; updateMany: jest.Mock; findUniqueOrThrow: jest.Mock; findUnique: jest.Mock };
   };
   let jwtService: { sign: jest.Mock; verify: jest.Mock };
+  let authAudit: { record: jest.Mock };
+
+  /** Builds the service with an optional MFA_ENCRYPTION_KEY (raw config string). */
+  async function buildService(encryptionKey?: string): Promise<MfaService> {
+    const configService = { get: jest.fn((path: string) => (path === 'mfa.encryptionKey' ? encryptionKey : undefined)) };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MfaService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: JwtService, useValue: jwtService },
+        { provide: ConfigService, useValue: configService },
+        { provide: AuthAuditService, useValue: authAudit },
+      ],
+    }).compile();
+
+    return module.get(MfaService);
+  }
 
   beforeEach(async () => {
     prisma = {
@@ -69,16 +96,11 @@ describe('MfaService', () => {
       },
     };
     jwtService = { sign: jest.fn(), verify: jest.fn() };
+    authAudit = { record: jest.fn().mockResolvedValue(undefined) };
 
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        MfaService,
-        { provide: PrismaService, useValue: prisma },
-        { provide: JwtService, useValue: jwtService },
-      ],
-    }).compile();
-
-    service = module.get(MfaService);
+    // No key: the development/test plain-text mode every test below assumes
+    // unless it builds its own service with a key.
+    service = await buildService();
   });
 
   describe('startSetup', () => {
@@ -312,6 +334,201 @@ describe('MfaService', () => {
         where: { id: 'user-1', mfaChallengeId: JTI },
         data: { mfaChallengeId: null, mfaFailedAttempts: 0, mfaLockedUntil: null, mfaBackupCodeHashes: ['other-hash'] },
       });
+    });
+  });
+
+  describe('audit events', () => {
+    it('records MFA enabled after a successful confirmSetup, with no secret or code in metadata', async () => {
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaSecret: secret }));
+
+      await service.confirmSetup('user-1', code);
+
+      expect(authAudit.record).toHaveBeenCalledWith(AUTH_AUDIT_EVENTS.MFA_ENABLED, { actorId: 'user-1', userId: 'user-1' });
+      expect(JSON.stringify(authAudit.record.mock.calls)).not.toContain(secret);
+      expect(JSON.stringify(authAudit.record.mock.calls)).not.toContain(code);
+    });
+
+    it('does not record MFA enabled for an incorrect setup code', async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaSecret: generateSecret() }));
+
+      await expect(service.confirmSetup('user-1', '000000')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(authAudit.record).not.toHaveBeenCalled();
+    });
+
+    it('records MFA disabled only after the password is verified', async () => {
+      const passwordHash = await hashPassword('correct-password');
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ password: passwordHash, mfaEnabled: true }));
+
+      await expect(service.disable('user-1', 'wrong-password')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(authAudit.record).not.toHaveBeenCalled();
+
+      await service.disable('user-1', 'correct-password');
+      expect(authAudit.record).toHaveBeenCalledWith(AUTH_AUDIT_EVENTS.MFA_DISABLED, { actorId: 'user-1', userId: 'user-1' });
+      expect(JSON.stringify(authAudit.record.mock.calls)).not.toContain('correct-password');
+    });
+
+    it('records a failed MFA challenge without an actor and without the code', async () => {
+      jwtService.verify.mockReturnValue({ sub: 'user-1', purpose: 'mfa-challenge', jti: 'j1' });
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ mfaEnabled: true, mfaSecret: generateSecret(), mfaChallengeId: 'j1', mfaFailedAttempts: 4 }),
+      );
+
+      await expect(service.verifyChallenge('token', '000000')).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(authAudit.record).toHaveBeenCalledWith(AUTH_AUDIT_EVENTS.MFA_CHALLENGE_FAILED, {
+        actorId: null,
+        userId: 'user-1',
+        metadata: { reason: 'invalid_code', locked: true },
+      });
+      expect(JSON.stringify(authAudit.record.mock.calls)).not.toContain('000000');
+    });
+
+    it('records a passed MFA challenge with the factor used', async () => {
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      jwtService.verify.mockReturnValue({ sub: 'user-1', purpose: 'mfa-challenge', jti: 'j1' });
+      prisma.user.findUnique.mockResolvedValue(buildUser({ mfaEnabled: true, mfaSecret: secret, mfaChallengeId: 'j1' }));
+
+      await service.verifyChallenge('token', code);
+
+      expect(authAudit.record).toHaveBeenCalledWith(AUTH_AUDIT_EVENTS.MFA_CHALLENGE_SUCCEEDED, {
+        actorId: 'user-1',
+        userId: 'user-1',
+        metadata: { method: 'mfa', factor: 'totp' },
+      });
+    });
+  });
+
+  describe('with MFA_ENCRYPTION_KEY configured', () => {
+    const key = randomBytes(32);
+    const challenge = { sub: 'user-1', purpose: 'mfa-challenge', jti: 'j1' };
+
+    beforeEach(async () => {
+      service = await buildService(key.toString('base64'));
+    });
+
+    it('accepts the key as 64 hex characters too', async () => {
+      await expect(buildService(key.toString('hex'))).resolves.toBeInstanceOf(MfaService);
+    });
+
+    it('refuses to start with a malformed key', async () => {
+      await expect(buildService('too-short')).rejects.toThrow(/32 bytes/);
+    });
+
+    it('stores the new secret encrypted, but returns the plain secret for the QR step', async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaEnabled: false }));
+
+      const result = await service.startSetup('user-1', 'ada@example.com');
+
+      const stored: string = prisma.user.update.mock.calls[0][0].data.mfaSecret;
+      expect(stored.startsWith(MFA_SECRET_PREFIX)).toBe(true);
+      expect(stored).not.toContain(result.secret);
+      expect(decryptMfaSecret(stored, key, 'user-1')).toBe(result.secret);
+    });
+
+    it('confirms setup against an encrypted secret without rewriting it', async () => {
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaSecret: encryptMfaSecret(secret, key, 'user-1') }));
+
+      await expect(service.confirmSetup('user-1', code)).resolves.toEqual({ backupCodes: expect.any(Array) });
+      expect(prisma.user.update.mock.calls[0][0].data).not.toHaveProperty('mfaSecret');
+    });
+
+    it('re-encrypts a legacy plain-text secret when it confirms setup', async () => {
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaSecret: secret }));
+
+      await service.confirmSetup('user-1', code);
+
+      const stored: string = prisma.user.update.mock.calls[0][0].data.mfaSecret;
+      expect(stored.startsWith(MFA_SECRET_PREFIX)).toBe(true);
+      expect(decryptMfaSecret(stored, key, 'user-1')).toBe(secret);
+    });
+
+    it('verifies a TOTP code against an encrypted secret and leaves the secret alone', async () => {
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      jwtService.verify.mockReturnValue(challenge);
+      const user = buildUser({ mfaEnabled: true, mfaSecret: encryptMfaSecret(secret, key, 'user-1'), mfaChallengeId: 'j1' });
+      prisma.user.findUnique.mockResolvedValue(user);
+
+      await expect(service.verifyChallenge('token', code)).resolves.toEqual(user);
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'user-1', mfaChallengeId: 'j1' },
+        data: { mfaChallengeId: null, mfaFailedAttempts: 0, mfaLockedUntil: null },
+      });
+    });
+
+    it('lazily re-encrypts a legacy secret in the same write that consumes the challenge', async () => {
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      jwtService.verify.mockReturnValue(challenge);
+      prisma.user.findUnique.mockResolvedValue(buildUser({ mfaEnabled: true, mfaSecret: secret, mfaChallengeId: 'j1' }));
+
+      await service.verifyChallenge('token', code);
+
+      const data = prisma.user.updateMany.mock.calls[0][0].data;
+      expect(data.mfaSecret.startsWith(MFA_SECRET_PREFIX)).toBe(true);
+      expect(decryptMfaSecret(data.mfaSecret, key, 'user-1')).toBe(secret);
+    });
+
+    it('does not re-encrypt a legacy secret after a wrong code', async () => {
+      jwtService.verify.mockReturnValue(challenge);
+      prisma.user.findUnique.mockResolvedValue(buildUser({ mfaEnabled: true, mfaSecret: generateSecret(), mfaChallengeId: 'j1' }));
+
+      await expect(service.verifyChallenge('token', '000000')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.user.updateMany).not.toHaveBeenCalled();
+      expect(prisma.user.update.mock.calls[0][0].data).not.toHaveProperty('mfaSecret');
+    });
+
+    it('fails closed with a 500, logging neither secret nor key, when the secret was encrypted with another key', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const secret = generateSecret();
+      const code = await generate({ secret });
+      jwtService.verify.mockReturnValue(challenge);
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ mfaEnabled: true, mfaSecret: encryptMfaSecret(secret, randomBytes(32), 'user-1'), mfaChallengeId: 'j1' }),
+      );
+
+      try {
+        await expect(service.verifyChallenge('token', code)).rejects.toBeInstanceOf(InternalServerErrorException);
+        expect(prisma.user.updateMany).not.toHaveBeenCalled();
+        const logged = JSON.stringify(errorSpy.mock.calls);
+        expect(logged).not.toContain(secret);
+        expect(logged).not.toContain(key.toString('base64'));
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('without MFA_ENCRYPTION_KEY', () => {
+    it('cannot read an encrypted secret and fails closed', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const secret = generateSecret();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ mfaSecret: encryptMfaSecret(secret, randomBytes(32), 'user-1') }));
+
+      try {
+        await expect(service.confirmSetup('user-1', await generate({ secret }))).rejects.toBeInstanceOf(
+          InternalServerErrorException,
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('refuses to start in production', async () => {
+      const original = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        await expect(buildService()).rejects.toThrow(/MFA_ENCRYPTION_KEY is required/);
+      } finally {
+        process.env.NODE_ENV = original;
+      }
     });
   });
 });

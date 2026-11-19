@@ -70,3 +70,23 @@
     display: none !important;
   }
 }
+
+/*
+ * Theme switch (View Transitions path, see features/theme/ThemeTransitionLayer).
+ * The old-theme snapshot stays put; the live new-theme page is revealed over
+ * it by a mask whose soft edge sweeps top -> bottom. The mask is 2.5x the
+ * viewport: black (shown) for its first 40%, a feathered edge to 50%, then
+ * transparent. Animating mask-position-y 100% -> 0% slides it down.
+ */
+html.theme-wipe::view-transition-old(root),
+html.theme-wipe::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html.theme-wipe::view-transition-new(root) {
+  mask-image: linear-gradient(to bottom, #000 40%, transparent 50%);
+  mask-size: 100% 250%;
+  mask-repeat: no-repeat;
+  mask-position: 0% 100%;
+}

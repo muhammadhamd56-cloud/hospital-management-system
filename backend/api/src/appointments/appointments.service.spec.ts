@@ -128,7 +128,11 @@ describe('AppointmentsService', () => {
     $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
-  let billingService: { createConsultationInvoice: jest.Mock; cancelInvoiceForAppointment: jest.Mock };
+  let billingService: {
+    createConsultationInvoiceInTx: jest.Mock;
+    notifyConsultationInvoiceCreated: jest.Mock;
+    cancelInvoiceForAppointment: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -147,7 +151,8 @@ describe('AppointmentsService', () => {
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     billingService = {
-      createConsultationInvoice: jest.fn().mockResolvedValue(undefined),
+      createConsultationInvoiceInTx: jest.fn().mockResolvedValue({ id: 'inv-1' }),
+      notifyConsultationInvoiceCreated: jest.fn().mockResolvedValue(undefined),
       cancelInvoiceForAppointment: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -448,7 +453,8 @@ describe('AppointmentsService', () => {
         consultationFee: 0,
       });
 
-      expect(billingService.createConsultationInvoice).not.toHaveBeenCalled();
+      expect(billingService.createConsultationInvoiceInTx).not.toHaveBeenCalled();
+      expect(billingService.notifyConsultationInvoiceCreated).not.toHaveBeenCalled();
     });
 
     it('creates a consultation invoice when the doctor charges a fee', async () => {
@@ -461,13 +467,87 @@ describe('AppointmentsService', () => {
 
       await service.book('patient-1', dto);
 
-      expect(billingService.createConsultationInvoice).toHaveBeenCalledWith(
+      // Written through the booking's own transaction client...
+      expect(billingService.createConsultationInvoiceInTx).toHaveBeenCalledWith(
+        prisma,
         'patient-1',
         'Grace Hopper',
         150,
         created.scheduledAt,
         created.id,
       );
+      // ...and announced only once that transaction has committed.
+      expect(billingService.notifyConsultationInvoiceCreated).toHaveBeenCalledWith({ id: 'inv-1' });
+    });
+
+    it('creates the appointment and its invoice in one Serializable transaction', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(bookableDoctor({ consultationFee: 150 }));
+      const created = buildAppointmentWithDoctorAndPatient({ consultationFee: 150 });
+      const tx = {
+        appointment: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn().mockResolvedValue(created) },
+      };
+      prisma.$transaction.mockImplementation((fn: (client: unknown) => unknown) => fn(tx));
+
+      await service.book('patient-1', dto);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+      expect(tx.appointment.create).toHaveBeenCalledTimes(1);
+      expect(billingService.createConsultationInvoiceInTx).toHaveBeenCalledWith(
+        tx,
+        'patient-1',
+        'Grace Hopper',
+        150,
+        created.scheduledAt,
+        created.id,
+      );
+      expect(prisma.appointment.create).not.toHaveBeenCalled();
+    });
+
+    it('rolls the appointment back when creating its invoice fails, with no compensating delete or notifications', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(bookableDoctor({ consultationFee: 150 }));
+      const created = buildAppointmentWithDoctorAndPatient({ consultationFee: 150 });
+      // A fake database: rows written inside the transaction are only kept if
+      // the callback resolves, like a real COMMIT/ROLLBACK.
+      const committed: unknown[] = [];
+      prisma.$transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) => {
+        const staged: unknown[] = [];
+        const tx = {
+          appointment: {
+            findMany: jest.fn().mockResolvedValue([]),
+            create: jest.fn(async () => {
+              staged.push(created);
+              return created;
+            }),
+          },
+        };
+        const result = await fn(tx);
+        committed.push(...staged);
+        return result;
+      });
+      billingService.createConsultationInvoiceInTx.mockRejectedValue(new Error('invoice insert failed'));
+      const appointmentDelete = jest.fn();
+      (prisma.appointment as unknown as { delete: jest.Mock }).delete = appointmentDelete;
+
+      await expect(service.book('patient-1', dto)).rejects.toThrow('invoice insert failed');
+
+      expect(committed).toEqual([]);
+      expect(appointmentDelete).not.toHaveBeenCalled();
+      expect(billingService.notifyConsultationInvoiceCreated).not.toHaveBeenCalled();
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('maps a serialization failure on the booking+invoice transaction to a ConflictException', async () => {
+      prisma.doctor.findUnique.mockResolvedValue(bookableDoctor({ consultationFee: 150 }));
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('could not serialize access', { code: 'P2034', clientVersion: 'test' }),
+      );
+
+      await expect(service.book('patient-1', dto)).rejects.toBeInstanceOf(ConflictException);
+      expect(billingService.notifyConsultationInvoiceCreated).not.toHaveBeenCalled();
+      expect(notificationsService.create).not.toHaveBeenCalled();
     });
 
     it('does not create a consultation invoice when the doctor has no fee set', async () => {
@@ -476,7 +556,8 @@ describe('AppointmentsService', () => {
 
       await service.book('patient-1', dto);
 
-      expect(billingService.createConsultationInvoice).not.toHaveBeenCalled();
+      expect(billingService.createConsultationInvoiceInTx).not.toHaveBeenCalled();
+      expect(billingService.notifyConsultationInvoiceCreated).not.toHaveBeenCalled();
     });
 
     it('maps an in-person mode to the Prisma IN_PERSON enum value', async () => {

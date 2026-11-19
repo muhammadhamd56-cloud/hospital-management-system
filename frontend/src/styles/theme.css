@@ -45,6 +45,8 @@
    instead of the prefers-color-scheme default, so users can override it. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Changing --color-surface-alt in either theme? Update LAYER_COLOR in
+   features/theme/ThemeTransitionLayer.tsx so the theme wipe matches. */
 .dark {
   --color-surface: #0f172a;
   --color-surface-alt: #1e293b;

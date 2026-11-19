@@ -1,9 +1,12 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Unauthenticated by design -- this is what Render (or any uptime monitor)
  *  hits to decide whether to keep routing traffic here, before the caller
- *  has any credentials. */
+ *  has any credentials. Exempt from the global throttle: a 429 to an uptime
+ *  probe would look like an outage. It only runs `SELECT 1`. */
+@SkipThrottle()
 @Controller('health')
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}

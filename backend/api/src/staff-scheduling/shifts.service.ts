@@ -45,6 +45,21 @@ type Db = PrismaService | Prisma.TransactionClient;
 
 const CONFLICT_MESSAGE = "You're already assigned to a shift during this time.";
 
+const RECURRING_TX_TIMEOUT_MS = 30_000;
+
+export interface AssignFromOpeningParams {
+  staffId: string;
+  departmentId?: string | null;
+  date: Date;
+  startTime: Date;
+  /** The opening's local wall-clock start ("HH:mm"); null for openings created before it was stored. */
+  localStartTime?: string | null;
+  endTime: Date;
+  shiftType: ShiftType;
+  createdById: string;
+  notes?: string;
+}
+
 interface AssignmentCheck {
   staffId: string;
   startTime: Date;
@@ -158,10 +173,12 @@ export class ShiftsService {
 
   /**
    * Creates one StaffShift per occurrence, validating conflicts (overlap,
-   * availability, leave) for EVERY occurrence before committing any of
-   * them. If any occurrence fails, every shift already created in this
-   * batch is rolled back and the original error is re-thrown -- recurring
-   * shifts are all-or-nothing, never partially created.
+   * availability, leave) for EVERY occurrence, all inside ONE Serializable
+   * transaction. If any occurrence fails, the transaction rolls back and no
+   * shift from this batch exists -- recurring shifts are all-or-nothing,
+   * never partially created, and no compensating delete is needed. Later
+   * occurrences' overlap checks also see the earlier ones written in the
+   * same transaction, so a batch can't double-book against itself.
    *
    * Occurrence start/end are already-resolved ISO instants computed by the
    * frontend (see CreateRecurringShiftDto) -- the backend never guesses
@@ -171,47 +188,49 @@ export class ShiftsService {
   async createRecurring(dto: CreateRecurringShiftDto, createdById: string): Promise<ShiftResponse[]> {
     const departmentId = await this.resolveDepartmentId(dto.department);
     const groupId = randomUUID();
-    const created: ShiftWithStaff[] = [];
 
+    // Serializable, same reasoning as create() -- every occurrence's
+    // check+create runs on the one connection that also holds its write, so
+    // two concurrent requests can't both pass the check for the same slot.
+    let created: ShiftWithStaff[];
     try {
-      for (const occurrence of dto.occurrences) {
-        const startTime = new Date(occurrence.startTime);
-        const endTime = new Date(occurrence.endTime);
-        const date = parseLocalDate(occurrence.date);
-        const localStartMinutes = parseLocalMinutes(occurrence.localStartTime);
+      created = await this.prisma.$transaction(
+        async (tx) => {
+          const shifts: ShiftWithStaff[] = [];
 
-        // Serializable per-occurrence, same reasoning as create() -- each
-        // occurrence's check+create must run against the one connection
-        // that also holds its write, or two concurrent requests could both
-        // pass the check for the same occurrence before either commits.
-        const shift = await this.prisma.$transaction(
-          async (tx) => {
+          for (const occurrence of dto.occurrences) {
+            const startTime = new Date(occurrence.startTime);
+            const endTime = new Date(occurrence.endTime);
+            const date = parseLocalDate(occurrence.date);
+            const localStartMinutes = parseLocalMinutes(occurrence.localStartTime);
+
             await this.assertValidAssignment({ staffId: dto.staffId, startTime, endTime, date, localStartMinutes }, tx);
 
-            return tx.staffShift.create({
-              data: {
-                staffId: dto.staffId,
-                departmentId,
-                date,
-                startTime,
-                endTime,
-                shiftType: toPrismaShiftType(dto.shiftType),
-                notes: dto.notes,
-                groupId,
-                createdById,
-              },
-              include: INCLUDE,
-            });
-          },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-        );
+            shifts.push(
+              await tx.staffShift.create({
+                data: {
+                  staffId: dto.staffId,
+                  departmentId,
+                  date,
+                  startTime,
+                  endTime,
+                  shiftType: toPrismaShiftType(dto.shiftType),
+                  notes: dto.notes,
+                  groupId,
+                  createdById,
+                },
+                include: INCLUDE,
+              }),
+            );
+          }
 
-        created.push(shift);
-      }
+          return shifts;
+        },
+        // A long recurrence is several queries per occurrence -- give it more
+        // room than Prisma's 5s interactive-transaction default.
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: RECURRING_TX_TIMEOUT_MS },
+      );
     } catch (error) {
-      if (created.length > 0) {
-        await this.prisma.staffShift.deleteMany({ where: { id: { in: created.map((shift) => shift.id) } } });
-      }
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
         throw new ConflictException(CONFLICT_MESSAGE);
       }
@@ -510,96 +529,63 @@ export class ShiftsService {
 
   /**
    * Creates the real, conflict-checked StaffShift an approved ShiftApplication
-   * produces. Goes through the exact same assertNoSchedulingConflict() an
-   * admin's direct shift assignment does -- an approved application can
-   * never produce a double-booking a direct assignment would have rejected.
-   * `notify: false` lets the caller (ShiftApplicationsService) send its own,
-   * more specific "application approved" notification instead of the
-   * generic "shift scheduled" one this method would otherwise send.
+   * produces, against the CALLER's transaction client -- ShiftApplicationsService
+   * runs it inside the same transaction that claims the opening, so the
+   * claim and the shift commit or roll back together. Goes through the
+   * exact same assertNoSchedulingConflict() an admin's direct shift
+   * assignment does -- an approved application can never produce a
+   * double-booking a direct assignment would have rejected. The caller must
+   * run that transaction Serializable (same reasoning as create()) and call
+   * recordAssignedFromOpening() once it has committed. Sends no notification:
+   * the caller sends its own, more specific "application approved" one.
    */
-  async assignFromOpening(params: {
-    staffId: string;
-    departmentId?: string | null;
-    date: Date;
-    startTime: Date;
-    /** The opening's local wall-clock start ("HH:mm"); null for openings created before it was stored. */
-    localStartTime?: string | null;
-    endTime: Date;
-    shiftType: ShiftType;
-    createdById: string;
-    notes?: string;
-    notify?: boolean;
-  }): Promise<ShiftWithStaff> {
+  async assignFromOpeningInTx(tx: Prisma.TransactionClient, params: AssignFromOpeningParams): Promise<ShiftWithStaff> {
     const localStartMinutes = params.localStartTime
       ? parseLocalMinutes(params.localStartTime)
       : params.startTime.getUTCHours() * 60 + params.startTime.getUTCMinutes();
 
-    // Serializable, same reasoning as create() -- an approved application
-    // and a directly-scheduled shift racing for the same slot must not
-    // both be able to slip past this check.
-    let shift: ShiftWithStaff;
-    try {
-      shift = await this.prisma.$transaction(
-        async (tx) => {
-          // Same active check a direct assignment gets (assertValidAssignment):
-          // the applicant may have been deactivated since applying.
-          const staff = await tx.staff.findUnique({ where: { id: params.staffId } });
-          if (!staff?.isActive) {
-            throw new BadRequestException('This staff member is not active and cannot be scheduled');
-          }
-
-          await this.assertNoSchedulingConflict(
-            {
-              staffId: params.staffId,
-              startTime: params.startTime,
-              endTime: params.endTime,
-              date: params.date,
-              localStartMinutes,
-            },
-            tx,
-          );
-
-          return tx.staffShift.create({
-            data: {
-              staffId: params.staffId,
-              departmentId: params.departmentId ?? undefined,
-              date: params.date,
-              startTime: params.startTime,
-              endTime: params.endTime,
-              shiftType: params.shiftType,
-              notes: params.notes,
-              createdById: params.createdById,
-            },
-            include: INCLUDE,
-          });
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
-        throw new ConflictException(CONFLICT_MESSAGE);
-      }
-      throw error;
+    // Same active check a direct assignment gets (assertValidAssignment):
+    // the applicant may have been deactivated since applying.
+    const staff = await tx.staff.findUnique({ where: { id: params.staffId } });
+    if (!staff?.isActive) {
+      throw new BadRequestException('This staff member is not active and cannot be scheduled');
     }
 
+    await this.assertNoSchedulingConflict(
+      {
+        staffId: params.staffId,
+        startTime: params.startTime,
+        endTime: params.endTime,
+        date: params.date,
+        localStartMinutes,
+      },
+      tx,
+    );
+
+    return tx.staffShift.create({
+      data: {
+        staffId: params.staffId,
+        departmentId: params.departmentId ?? undefined,
+        date: params.date,
+        startTime: params.startTime,
+        endTime: params.endTime,
+        shiftType: params.shiftType,
+        notes: params.notes,
+        createdById: params.createdById,
+      },
+      include: INCLUDE,
+    });
+  }
+
+  /** Post-commit half of assignFromOpeningInTx(): the audit entry for the new shift. */
+  async recordAssignedFromOpening(shift: ShiftWithStaff, createdById: string): Promise<void> {
     await this.auditLog.log({
-      actorId: params.createdById,
+      actorId: createdById,
       action: AuditAction.CREATE,
       entityType: 'StaffShift',
       entityId: shift.id,
       metadata: { staffId: shift.staffId, startTime: shift.startTime, endTime: shift.endTime, fromApplication: true },
     });
-
-    if (params.notify !== false) {
-      await this.notifyStaff(
-        shift,
-        NotificationType.SHIFT_SCHEDULED,
-        'Shift scheduled',
-        `You have been scheduled for a ${SHIFT_TYPE_LABELS[shift.shiftType]} shift on ${formatShiftDate(shift.date)}.`,
-      );
-    }
-
-    return shift;
   }
 
   /** Departments are name-keyed across the app -- upsert rather than

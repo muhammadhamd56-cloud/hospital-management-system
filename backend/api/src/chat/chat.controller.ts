@@ -7,6 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { ChatService, type ChatInboxDoctor } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { ChatThreadQueryDto } from './dto/thread-query.dto';
 import type { ChatThreadPage } from './chat-thread';
 
 /** Patient-side chat — a patient can message any doctor directly, no prior appointment required. */
@@ -26,10 +27,10 @@ export class ChatController {
   async getThread(
     @CurrentUser() user: AuthenticatedUser,
     @Param('doctorId') doctorId: string,
-    // Message id: returns the page just older than it (for "load earlier").
-    @Query('before') before?: string,
+    // `before` (message id): returns the page just older than it (for "load earlier").
+    @Query() query: ChatThreadQueryDto,
   ): Promise<ChatThreadPage> {
-    return this.chatService.getThread(user.id, doctorId, before);
+    return this.chatService.getThread(user.id, doctorId, query.before);
   }
 
   @Post(':doctorId')

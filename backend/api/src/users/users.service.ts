@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException,
 import { ApprovalStatus, BedStatus, type User } from '@prisma/client';
 import { AccountApprovalsService, requiresApproval } from '../account-approvals/account-approvals.service';
 import { hashPassword, verifyPassword } from '../auth/password.util';
+import { AUTH_AUDIT_EVENTS, AuthAuditService } from '../auth/auth-audit.service';
 import { ClientRole, toPrismaRole } from '../common/role.mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { SetPasswordDto } from './dto/set-password.dto';
@@ -12,6 +13,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly accountApprovalsService: AccountApprovalsService,
+    private readonly authAudit: AuthAuditService,
   ) {}
 
   async findById(id: string): Promise<User> {
@@ -112,7 +114,7 @@ export class UsersService {
 
     const password = await hashPassword(dto.newPassword);
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id: userId },
       data: {
         password,
@@ -129,6 +131,15 @@ export class UsersService {
         tokenVersion: { increment: 1 },
       },
     });
+
+    await this.authAudit.record(user.password ? AUTH_AUDIT_EVENTS.PASSWORD_CHANGED : AUTH_AUDIT_EVENTS.PASSWORD_SET, {
+      actorId: userId,
+      userId,
+      // True when an admin-issued temporary password forced this change.
+      metadata: { required: user.mustChangePassword },
+    });
+
+    return updated;
   }
 
   /**

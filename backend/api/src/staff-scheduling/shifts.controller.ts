@@ -18,7 +18,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
-import { ClientShiftStatus, CreateShiftDto } from './dto/create-shift.dto';
+import { CreateShiftDto } from './dto/create-shift.dto';
+import { ListShiftsQueryDto } from './dto/list-queries.dto';
 import { CreateRecurringShiftDto } from './dto/create-recurring-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { ShiftResponse } from './shifts.mapper';
@@ -37,13 +38,8 @@ export class ShiftsController {
 
   @ApiOperation({ summary: 'List shifts, optionally filtered by staff, department, status, or date range' })
   @Get()
-  async findAll(
-    @Query('staffId') staffId?: string,
-    @Query('department') department?: string,
-    @Query('status') status?: ClientShiftStatus,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-  ): Promise<{ shifts: ShiftResponse[] }> {
+  async findAll(@Query() query: ListShiftsQueryDto): Promise<{ shifts: ShiftResponse[] }> {
+    const { staffId, department, status, dateFrom, dateTo } = query;
     const shifts = await this.shiftsService.findAll({ staffId, department, status, dateFrom, dateTo });
     return { shifts };
   }

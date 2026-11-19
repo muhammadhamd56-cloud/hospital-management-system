@@ -6,15 +6,14 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.interface';
 import { ShiftsService } from '../staff-scheduling/shifts.service';
-import type { ClientShiftStatus } from '../staff-scheduling/dto/create-shift.dto';
 import { ShiftOpeningsService } from '../staff-scheduling/shift-openings.service';
 import { ShiftApplicationsService } from '../staff-scheduling/shift-applications.service';
 import { ApplyShiftDto } from '../staff-scheduling/dto/apply-shift.dto';
 import { TasksService } from '../staff-scheduling/tasks.service';
 import { UpdateTaskStatusDto } from '../staff-scheduling/dto/update-task-status.dto';
-import type { TaskDisplayStatus } from '../staff-scheduling/tasks.mapper';
 import { toClientStaffType } from '../staff-scheduling/staff.mapper';
 import { StaffPortalService } from './staff-portal.service';
+import { MyShiftsQueryDto, MyTasksQueryDto } from './dto/list-queries.dto';
 
 /**
  * Self-service endpoints for the logged-in staff member -- nurse,
@@ -43,12 +42,8 @@ export class StaffPortalController {
   }
 
   @Get('shifts')
-  async getMyShifts(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query('status') status?: ClientShiftStatus,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-  ) {
+  async getMyShifts(@CurrentUser() user: AuthenticatedUser, @Query() query: MyShiftsQueryDto) {
+    const { status, dateFrom, dateTo } = query;
     const staff = await this.staffPortalService.requireLinkedStaff(user.id);
     const shifts = await this.shiftsService.findAll({ staffId: staff.id, status, dateFrom, dateTo });
     return { shifts };
@@ -84,8 +79,8 @@ export class StaffPortalController {
   }
 
   @Get('tasks')
-  async getMyTasks(@CurrentUser() user: AuthenticatedUser, @Query('status') status?: TaskDisplayStatus) {
-    const tasks = await this.tasksService.findMine(user.id, { status });
+  async getMyTasks(@CurrentUser() user: AuthenticatedUser, @Query() query: MyTasksQueryDto) {
+    const tasks = await this.tasksService.findMine(user.id, { status: query.status });
     return { tasks };
   }
 

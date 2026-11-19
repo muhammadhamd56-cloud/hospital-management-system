@@ -618,6 +618,38 @@ describe('BillingService', () => {
     });
   });
 
+  describe('createConsultationInvoiceInTx', () => {
+    it("writes through the caller's transaction client and sends no notification", async () => {
+      const dueDate = new Date('2099-01-01T10:00:00.000Z');
+      const tx = { invoice: { create: jest.fn().mockResolvedValue(buildInvoice({ appointmentId: 'appt-1' })) } };
+
+      const result = await service.createConsultationInvoiceInTx(
+        tx as never,
+        'patient-1',
+        'Grace Hopper',
+        150,
+        dueDate,
+        'appt-1',
+      );
+
+      expect(tx.invoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ appointmentId: 'appt-1', amount: 150 }) }),
+      );
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+      expect(notificationsService.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ id: 'invoice-1', amount: 150 });
+    });
+
+    it('propagates a failed insert so the caller transaction rolls back', async () => {
+      const tx = { invoice: { create: jest.fn().mockRejectedValue(new Error('insert failed')) } };
+
+      await expect(
+        service.createConsultationInvoiceInTx(tx as never, 'patient-1', 'Grace Hopper', 150, new Date(), 'appt-1'),
+      ).rejects.toThrow('insert failed');
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('cancelInvoiceForAppointment', () => {
     it('does nothing when there is no invoice linked to the appointment', async () => {
       prisma.invoice.findUnique.mockResolvedValue(null);

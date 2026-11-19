@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { ApplicationStatus, ShiftType, StaffType, type ShiftApplication, type ShiftOpening } from '@prisma/client';
+import { ApplicationStatus, Prisma, ShiftType, StaffType, type ShiftApplication, type ShiftOpening } from '@prisma/client';
 import { ShiftApplicationsService } from './shift-applications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -60,7 +60,11 @@ describe('ShiftApplicationsService', () => {
   };
   let auditLog: { log: jest.Mock };
   let notifications: { create: jest.Mock };
-  let shiftsService: { assertNoSchedulingConflict: jest.Mock; assignFromOpening: jest.Mock };
+  let shiftsService: {
+    assertNoSchedulingConflict: jest.Mock;
+    assignFromOpeningInTx: jest.Mock;
+    recordAssignedFromOpening: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -83,7 +87,8 @@ describe('ShiftApplicationsService', () => {
     notifications = { create: jest.fn().mockResolvedValue(undefined) };
     shiftsService = {
       assertNoSchedulingConflict: jest.fn().mockResolvedValue(undefined),
-      assignFromOpening: jest.fn(),
+      assignFromOpeningInTx: jest.fn(),
+      recordAssignedFromOpening: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -257,7 +262,7 @@ describe('ShiftApplicationsService', () => {
       const result = await service.respond('application-1', { decision: 'reject', adminNotes: 'Not needed' }, ADMIN_ID);
 
       expect(result.status).toBe('rejected');
-      expect(shiftsService.assignFromOpening).not.toHaveBeenCalled();
+      expect(shiftsService.assignFromOpeningInTx).not.toHaveBeenCalled();
       expect(notifications.create).toHaveBeenCalledWith(
         USER_ID,
         'SHIFT_APPLICATION_REJECTED',
@@ -274,7 +279,7 @@ describe('ShiftApplicationsService', () => {
         opening: openingWithDept,
       });
       prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, applications: [] });
-      shiftsService.assignFromOpening.mockResolvedValue({ id: 'shift-1' });
+      shiftsService.assignFromOpeningInTx.mockResolvedValue({ id: 'shift-1' });
       prisma.shiftApplication.update.mockResolvedValue({
         ...buildApplication({ status: ApplicationStatus.APPROVED, resultingShiftId: 'shift-1' }),
         opening: openingWithDept,
@@ -283,9 +288,12 @@ describe('ShiftApplicationsService', () => {
 
       const result = await service.respond('application-1', { decision: 'approve' }, ADMIN_ID);
 
-      expect(shiftsService.assignFromOpening).toHaveBeenCalledWith(
-        expect.objectContaining({ staffId: STAFF_ID, createdById: ADMIN_ID, notify: false }),
+      // Created through the same transaction client that claimed the opening.
+      expect(shiftsService.assignFromOpeningInTx).toHaveBeenCalledWith(
+        prisma,
+        expect.objectContaining({ staffId: STAFF_ID, createdById: ADMIN_ID }),
       );
+      expect(shiftsService.recordAssignedFromOpening).toHaveBeenCalledWith({ id: 'shift-1' }, ADMIN_ID);
       expect(prisma.shiftApplication.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'application-1', status: ApplicationStatus.PENDING },
@@ -320,7 +328,7 @@ describe('ShiftApplicationsService', () => {
       await expect(service.respond('application-1', { decision: 'approve' }, ADMIN_ID)).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      expect(shiftsService.assignFromOpening).not.toHaveBeenCalled();
+      expect(shiftsService.assignFromOpeningInTx).not.toHaveBeenCalled();
     });
 
     it('locks the opening row before re-counting approvals, so concurrent approvals cannot overfill it', async () => {
@@ -330,7 +338,7 @@ describe('ShiftApplicationsService', () => {
         opening: openingWithDept,
       });
       prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, applications: [] });
-      shiftsService.assignFromOpening.mockResolvedValue({ id: 'shift-1' });
+      shiftsService.assignFromOpeningInTx.mockResolvedValue({ id: 'shift-1' });
       prisma.shiftApplication.update.mockResolvedValue({
         ...buildApplication({ status: ApplicationStatus.APPROVED }),
         opening: openingWithDept,
@@ -356,25 +364,110 @@ describe('ShiftApplicationsService', () => {
       await expect(service.respond('application-1', { decision: 'approve' }, ADMIN_ID)).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      expect(shiftsService.assignFromOpening).not.toHaveBeenCalled();
+      expect(shiftsService.assignFromOpeningInTx).not.toHaveBeenCalled();
     });
 
-    it('gives the position back (application PENDING, opening reopened) when the shift cannot be created', async () => {
+    it('claims the opening and creates the shift in one Serializable transaction on the same client', async () => {
       prisma.shiftApplication.findUnique.mockResolvedValue({
         ...buildApplication(),
         staff: staffWithUser,
         opening: openingWithDept,
       });
-      prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, positions: 1, applications: [] });
-      shiftsService.assignFromOpening.mockRejectedValue(new ConflictException('Overlaps another shift'));
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([]),
+        shiftOpening: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ ...openingWithDept, positions: 1, applications: [] }),
+          update: jest.fn(),
+        },
+        shiftApplication: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          update: jest.fn().mockResolvedValue({
+            ...buildApplication({ status: ApplicationStatus.APPROVED, resultingShiftId: 'shift-1' }),
+            opening: openingWithDept,
+            staff: staffWithUser,
+          }),
+        },
+      };
+      prisma.$transaction.mockImplementation((fn: (client: unknown) => unknown) => fn(tx));
+      shiftsService.assignFromOpeningInTx.mockResolvedValue({ id: 'shift-1' });
+
+      await service.respond('application-1', { decision: 'approve' }, ADMIN_ID);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'Serializable' });
+      expect(shiftsService.assignFromOpeningInTx).toHaveBeenCalledWith(tx, expect.objectContaining({ staffId: STAFF_ID }));
+      // Shift is created after the claim, and linked within the same transaction.
+      expect(tx.shiftApplication.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        shiftsService.assignFromOpeningInTx.mock.invocationCallOrder[0],
+      );
+      expect(tx.shiftApplication.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'application-1' }, data: { resultingShiftId: 'shift-1' } }),
+      );
+      expect(prisma.shiftApplication.update).not.toHaveBeenCalled();
+      expect(prisma.shiftApplication.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rolls the claim back (no compensating writes, no notification) when the shift cannot be created', async () => {
+      prisma.shiftApplication.findUnique.mockResolvedValue({
+        ...buildApplication(),
+        staff: staffWithUser,
+        opening: openingWithDept,
+      });
+      // A fake database: writes made through the tx client only become
+      // visible if the transaction callback resolves (COMMIT), else they're
+      // discarded (ROLLBACK).
+      const committed: string[] = [];
+      prisma.$transaction.mockImplementation(async (arg: unknown) => {
+        if (typeof arg !== 'function') {
+          throw new Error('unexpected batch transaction (compensation)');
+        }
+        const staged: string[] = [];
+        const tx = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          shiftOpening: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({ ...openingWithDept, positions: 1, applications: [] }),
+            update: jest.fn(async () => staged.push('opening closed')),
+          },
+          shiftApplication: {
+            updateMany: jest.fn(async () => {
+              staged.push('application approved');
+              return { count: 1 };
+            }),
+            update: jest.fn(async () => staged.push('shift linked')),
+          },
+        };
+        const result = await (arg as (client: unknown) => Promise<unknown>)(tx);
+        committed.push(...staged);
+        return result;
+      });
+      shiftsService.assignFromOpeningInTx.mockRejectedValue(new ConflictException('Overlaps another shift'));
 
       await expect(service.respond('application-1', { decision: 'approve' }, ADMIN_ID)).rejects.toBeInstanceOf(
         ConflictException,
       );
-      expect(prisma.shiftApplication.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: ApplicationStatus.PENDING, respondedById: null }) }),
+
+      expect(committed).toEqual([]);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.shiftApplication.update).not.toHaveBeenCalled();
+      expect(prisma.shiftOpening.update).not.toHaveBeenCalled();
+      expect(shiftsService.recordAssignedFromOpening).not.toHaveBeenCalled();
+      expect(auditLog.log).not.toHaveBeenCalled();
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it('maps a serialization failure on the approval transaction to a ConflictException', async () => {
+      prisma.shiftApplication.findUnique.mockResolvedValue({
+        ...buildApplication(),
+        staff: staffWithUser,
+        opening: openingWithDept,
+      });
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('could not serialize access', { code: 'P2034', clientVersion: 'test' }),
       );
-      expect(prisma.shiftOpening.update).toHaveBeenLastCalledWith({ where: { id: openingWithDept.id }, data: { isOpen: true } });
+
+      await expect(service.respond('application-1', { decision: 'approve' }, ADMIN_ID)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
       expect(notifications.create).not.toHaveBeenCalled();
     });
 
@@ -385,7 +478,7 @@ describe('ShiftApplicationsService', () => {
         opening: openingWithDept,
       });
       prisma.shiftOpening.findUniqueOrThrow.mockResolvedValue({ ...openingWithDept, positions: 1, applications: [] });
-      shiftsService.assignFromOpening.mockResolvedValue({ id: 'shift-1' });
+      shiftsService.assignFromOpeningInTx.mockResolvedValue({ id: 'shift-1' });
       prisma.shiftApplication.update.mockResolvedValue({
         ...buildApplication({ status: ApplicationStatus.APPROVED }),
         opening: openingWithDept,

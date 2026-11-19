@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAuth } from '@/features/auth/useAuth'
 import { SetPasswordCard } from '@/features/auth/SetPasswordCard'
+import { MfaCard } from '@/features/mfa/MfaCard'
 import { ApiError } from '@/lib/apiClient'
 import { ROUTES } from '@/constants/routes'
 
@@ -46,7 +47,11 @@ export function PatientSettingsPage() {
         <SetPasswordCard />
       </div>
 
-      <Card className="animate-fade-in border-danger-500/40" style={{ animationDelay: '60ms' }}>
+      <div className="animate-fade-in" style={{ animationDelay: '60ms' }}>
+        <MfaCard />
+      </div>
+
+      <Card className="animate-fade-in border-danger-500/40" style={{ animationDelay: '120ms' }}>
         <CardHeader>
           <CardTitle className="text-danger-600">Danger Zone</CardTitle>
           <CardDescription>Permanently delete your account and all associated data.</CardDescription>
