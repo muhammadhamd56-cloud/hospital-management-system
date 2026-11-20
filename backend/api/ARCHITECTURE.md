@@ -1,6 +1,6 @@
 # MediCore HMS — Backend Architecture (NestJS API)
 
-> Source-verified architecture reference for `backend/api`. Every statement in this document was checked against the code on branch `feature/admin-ai`. File paths are relative to `backend/api/` unless they start with `../../` (repository root).
+> Source-verified architecture reference for `backend/api`. Every statement in this document was checked against the code on branch `feature/admin-ai-ollama` (2026-11-20). File paths are relative to `backend/api/` unless they start with `../../` (repository root).
 
 ## Table of contents
 
@@ -55,13 +55,13 @@ The API is a single NestJS 10 process (`src/main.ts`) that exposes a REST interf
 
 Key facts:
 
-- **Root module:** `AppModule` in `src/app.module.ts` imports 25 application modules (`EmailModule` is reached transitively) plus `ConfigModule`, `ScheduleModule` and `ThrottlerModule`.
-- **Controllers:** 32 controller classes expose **144 HTTP endpoints** (see [REST API reference](#rest-api-reference)).
+- **Root module:** `AppModule` in `src/app.module.ts` imports 24 application modules (`EmailModule` is reached transitively) plus `ConfigModule`, `ScheduleModule` and `ThrottlerModule`.
+- **Controllers:** 31 controller classes expose **143 HTTP endpoints** (see [REST API reference](#rest-api-reference)).
 - **Persistence:** Prisma Client 6 (`src/prisma/prisma.service.ts`) against PostgreSQL. The schema lives outside the backend at `../../database/api/schema.prisma`; migrations are in `../../database/api/migrations/`.
 - **Session model:** short-lived JWT access token and longer-lived refresh token, both delivered as httpOnly cookies (`hms_at`, `hms_rt`). A Bearer header is also accepted for API clients and tests.
 - **Authorization:** opt-in per controller with `@UseGuards(JwtAuthGuard, RolesGuard)` and `@Roles(...)`, plus service-level data scoping (doctor-to-patient relationships, staff sub-type checks).
 - **Response envelope:** every successful handler result is wrapped as `{ success: true, message, data }`; every error as `{ success: false, message, errors }`.
-- **Integrations:** Google OAuth 2.0 (Passport), Resend (email), Stripe (Checkout, refunds, webhooks), Anthropic (patient/doctor AI Assistant and the Admin AI Copilot), Sentry (error reporting).
+- **Integrations:** Google OAuth 2.0 (Passport), Resend (email), Stripe (Checkout, refunds, webhooks), Sentry (error reporting), and an Ollama model server (`AI_BASE_URL`) for the opt-in Admin AI Copilot.
 - **Background work:** three in-process `@Cron` jobs (every 10 minutes). No queues, workers or event emitters.
 - **Hosting:** Render web service (`../../render.yaml`) behind the Vercel frontend, which rewrites `/api/*` to Render (`../../frontend/vercel.json`).
 
@@ -89,8 +89,8 @@ All versions are the ranges declared in `package.json`.
 | API docs | `@nestjs/swagger` (non-production only) | ^7.4.2 | `src/main.ts` |
 | Email | Resend SDK | ^6.18.1 | `src/email/email.service.ts` |
 | Payments | Stripe SDK | ^22.6.0 | `src/billing/stripe.service.ts` |
-| AI | `@anthropic-ai/sdk` | ^0.122.0 | `src/assistant/assistant.service.ts`, `src/admin-ai/providers/adapters/anthropic.provider.ts` |
-| Schema validation (AI tools) | zod | ^4.4.3 | `package.json` (used by `src/admin-ai`) |
+| AI model server | Ollama HTTP API (`POST /api/chat`, NDJSON streaming) over native `fetch`; no SDK | — | `src/admin-ai/providers/adapters/ollama.provider.ts` |
+| Schema validation (AI tools) | zod | ^4.6.7 | `package.json` (used by `src/admin-ai`) |
 | Phone validation | libphonenumber-js | ^1.13.11 | `src/common/validators/is-e164-phone-number.validator.ts` |
 | Error tracking | `@sentry/node` | ^11.0.0 | `src/main.ts`, `src/common/filters/http-exception.filter.ts` |
 | Testing | Jest 30, ts-jest, supertest, `@nestjs/testing` | see `package.json` | `jest.config.ts`, `test/jest-e2e.json` |
@@ -108,7 +108,7 @@ These principles are visible in the code itself (not aspirational):
 3. **Server is the source of truth.** Comments in `ShiftsController` and `AppointmentsService.book()` state that conflicts are enforced server-side regardless of frontend validation.
 4. **Concurrency-safe writes.** Conflict checks run inside `Serializable` transactions (appointments, emergencies, shifts), money operations take a `SELECT ... FOR UPDATE` row lock (`src/billing/invoice-lock.ts`), and status changes use conditional updates (`where: { id, status }`) that turn races into HTTP 409.
 5. **Enumeration resistance.** Login, OTP, password reset and resource lookups return the same error for "does not exist" and "not yours".
-6. **Optional integrations degrade cleanly.** Missing `RESEND_API_KEY`, `STRIPE_SECRET_KEY` or `ANTHROPIC_API_KEY` does not stop the app from booting; the feature raises a clear error only when used.
+6. **Optional integrations degrade cleanly.** Missing `RESEND_API_KEY` or `STRIPE_SECRET_KEY`, or an unreachable Ollama server for the Admin AI Copilot, does not stop the app from booting; the feature raises a clear error only when used.
 7. **Consistent envelopes.** One global interceptor and one global filter shape every JSON response.
 
 ---
@@ -134,8 +134,7 @@ backend/api/
 │   ├── patients/  doctors/  doctor-portal/  appointments/  chat/  medical-records/
 │   ├── beds/  billing/  laboratory/  reports/  notifications/  announcements/
 │   ├── staff/  staff-scheduling/  staff-portal/  emergency/  platform-settings/
-│   ├── assistant/                 # role-aware AI Assistant (Anthropic tool use)
-│   └── admin-ai/                  # Admin AI Copilot (see ../../docs/ai/)
+│   └── admin-ai/                  # Admin AI Copilot on a local Ollama model (see ../../docs/ai/)
 ├── test/                          # e2e suites (*.e2e-spec.ts), jest-e2e.json, setup-e2e.ts, session-cookies.ts
 ├── scripts/                       # seed-beds.ts, seed-demo.ts, normalize-phone-data.ts
 ├── jest.config.ts                 # unit test config (rootDir: src)
@@ -144,7 +143,7 @@ backend/api/
 └── package.json
 
 ../../database/api/schema.prisma   # Prisma schema (generator output -> backend/api/node_modules/.prisma/client)
-../../database/api/migrations/     # 47 migration folders
+../../database/api/migrations/     # 48 migration folders
 ../../render.yaml                  # Render blueprint
 ../../frontend/vercel.json         # /api/* rewrite to Render
 ../../.github/workflows/ci.yml     # CI: lint, unit, migrate, e2e, build
@@ -174,7 +173,7 @@ flowchart LR
   Google["Google OAuth 2.0"]
   Resend["Resend email API"]
   Stripe["Stripe<br/>Checkout, Refunds, Webhooks"]
-  Anthropic["Anthropic Messages API"]
+  Ollama["Ollama model server<br/>(AI_BASE_URL, opt-in)"]
   Sentry["Sentry"]
 
   Patient --> Frontend
@@ -187,7 +186,7 @@ flowchart LR
   API -->|"OTP, reset, reminders, decisions"| Resend
   API -->|"Checkout sessions, refunds"| Stripe
   Stripe -->|"POST /api/billing/webhooks/stripe"| API
-  API -->|"Assistant and Admin AI"| Anthropic
+  API -->|"Admin AI Copilot"| Ollama
   API -->|"5xx exceptions"| Sentry
 ```
 
@@ -203,6 +202,7 @@ flowchart TB
     Helmet["helmet"]
     Compress["compression"]
     Cookies["cookie-parser"]
+    AccessLog["access-log middleware<br/>(off when NODE_ENV=test)"]
     Csrf["csrfProtection"]
     Cors["CORS (CLIENT_URL, credentials)"]
   end
@@ -216,7 +216,7 @@ flowchart TB
   end
 
   subgraph Domain["Feature modules"]
-    Controllers["32 controllers"]
+    Controllers["31 controllers"]
     Services["Domain services"]
     Shared["NotificationsService, AuditLogService,<br/>EmailService, PlatformSettingsService"]
     Cron["Cron services x3"]
@@ -224,9 +224,9 @@ flowchart TB
 
   Prisma["PrismaService (@Global)"]
   PG[("PostgreSQL")]
-  Ext["Stripe, Resend, Anthropic,<br/>Google, Sentry"]
+  Ext["Stripe, Resend, Ollama,<br/>Google, Sentry"]
 
-  Client --> Raw --> Json --> Helmet --> Compress --> Cookies --> Csrf --> Cors --> Throttle
+  Client --> Raw --> Json --> Helmet --> Compress --> Cookies --> AccessLog --> Csrf --> Cors --> Throttle
   Throttle --> Guards --> Interceptor --> Pipe --> Controllers --> Services
   Services --> Shared
   Services --> Prisma --> PG
@@ -249,10 +249,12 @@ Only components that exist in code are listed. Searches for `@Cron`, `ScheduleMo
 | Express middleware | `express.raw({ type: 'application/json' })` | Only `/api/billing/webhooks/stripe` | `src/main.ts` `bootstrap()` | IMPLEMENTED |
 | Express middleware | `express.json({ limit: '3mb' })`, `express.urlencoded({ limit: '3mb' })` | All routes (Nest body parser disabled with `bodyParser: false`) | `src/main.ts` | IMPLEMENTED |
 | Express middleware | `helmet()`, `compression()`, `cookieParser()` | All routes | `src/main.ts` | IMPLEMENTED |
-| Express middleware | `csrfProtection` | All routes; enforces `X-HMS-CSRF: 1` on non-GET/HEAD/OPTIONS requests that carry `hms_at` or `hms_rt` cookies | `src/common/middleware/csrf.middleware.ts` | IMPLEMENTED |
+| Express middleware | `createAccessLogMiddleware()` | All routes except `/api/health`; registered before `csrfProtection` and only when `NODE_ENV` is not `test`. One line per request (method, path without query string, status, duration, request id, user id once known); sets `X-Request-Id` (an incoming id is reused only if it is a short log-safe token, otherwise a UUID) | `src/common/middleware/access-log.middleware.ts`, `src/main.ts` | IMPLEMENTED |
+| Express middleware | `csrfProtection` | All routes; enforces `X-HMS-CSRF: 1` on non-GET/HEAD/OPTIONS requests that carry `hms_at` or `hms_rt` cookies; logs a warning (method and path only) on each rejection | `src/common/middleware/csrf.middleware.ts` | IMPLEMENTED |
 | CORS | `app.enableCors({ origin: clientUrl, credentials: true })` | Single origin from `CLIENT_URL` | `src/main.ts` | IMPLEMENTED |
 | Global prefix | `app.setGlobalPrefix('api')` | All controllers | `src/main.ts` | IMPLEMENTED |
-| Global guard | `ThrottlerGuard` via `APP_GUARD`; default 120 requests / 60 s per IP | All routes, **disabled when `NODE_ENV=test`** | `src/app.module.ts` | IMPLEMENTED |
+| Global guard | `ThrottlerGuard` via `APP_GUARD`; default 120 requests / 60 s per IP | All routes except the two `@SkipThrottle()` controllers below, **disabled when `NODE_ENV=test`** | `src/app.module.ts` | IMPLEMENTED |
+| Decorator | `@SkipThrottle()` (class level, skips the single `default` throttler) | `HealthController` (`GET /api/health`) and `StripeWebhookController` (`POST /api/billing/webhooks/stripe`) | `src/health/health.controller.ts`, `src/billing/stripe-webhook.controller.ts` | IMPLEMENTED |
 | Route guard | `JwtAuthGuard` (extends `AuthGuard('jwt')`) + approval check | Per controller via `@UseGuards` | `src/auth/guards/jwt-auth.guard.ts` | IMPLEMENTED |
 | Route guard | `RolesGuard` reading `@Roles(...)` | Per controller | `src/common/guards/roles.guard.ts` | IMPLEMENTED |
 | Route guard | `GoogleAuthGuard` (extends `AuthGuard('google')`, OAuth `state` cookie) | `GET /auth/google`, `GET /auth/google/callback` | `src/auth/guards/google-auth.guard.ts` | IMPLEMENTED |
@@ -403,11 +405,12 @@ flowchart LR
   AC --> AS["AppointmentsService.book"]
   AS -->|"read"| Doc[("Doctor + User")]
   AS -->|"Serializable tx"| Appt[("Appointment")]
-  AS --> BS["BillingService.createConsultationInvoice"]
+  AS -->|"same tx"| BS["BillingService.createConsultationInvoiceInTx"]
   BS --> PS["PlatformSettingsService.getConsultationMargin"]
   PS --> Set[("PlatformSettings")]
   BS --> Inv[("Invoice + InvoiceItem")]
-  BS --> NS1["NotificationsService.create"]
+  AS -->|"after commit"| BN["BillingService.notifyConsultationInvoiceCreated"]
+  BN --> NS1["NotificationsService.create"]
   AS --> NS2["NotificationsService.create"]
   NS1 --> Notif[("Notification")]
   NS2 --> Notif
@@ -427,7 +430,7 @@ The full sequence, with the transaction boundary, is in [Appointment booking](#a
 | Local signup | `POST /auth/signup` creates `User` (+ `Doctor` and `Department` upsert for doctors) in one `$transaction`; email OTP sent afterwards | `AuthService.signupLocal` | IMPLEMENTED |
 | Email verification | 6-digit OTP, bcrypt-hashed, 10-minute expiry, 5 attempts, 60 s resend cooldown, attempt claimed atomically with `updateMany` | `AuthService.verifyOtp`, `resendOtp`, `generateAndSendOtp` | IMPLEMENTED |
 | Local login | bcrypt verify (constant-time dummy hash for unknown emails), account lockout after 10 failures for 15 minutes, lazy re-hash, role in request must match stored role, email must be verified | `AuthService.loginLocal`, `registerFailedLogin` | IMPLEMENTED |
-| MFA (TOTP) | Opt-in; setup → confirm (8 bcrypt-hashed backup codes) → challenge JWT (`purpose: 'mfa-challenge'`, 5 min, single-use `jti` stored as `User.mfaChallengeId`), 5 wrong codes → 15-minute MFA lock | `MfaService` | IMPLEMENTED |
+| MFA (TOTP) | Opt-in; setup → confirm (8 bcrypt-hashed backup codes) → challenge JWT (`purpose: 'mfa-challenge'`, 5 min, single-use `jti` stored as `User.mfaChallengeId`), 5 wrong codes → 15-minute MFA lock. The TOTP secret is encrypted at rest when `MFA_ENCRYPTION_KEY` is set (AES-256-GCM, stored as `enc:v1:<iv>:<tag>:<ciphertext>`, user id bound as additional authenticated data); values without the prefix are legacy plain text and are read unchanged. The key is required in production | `MfaService`, `src/auth/mfa-secret-crypto.ts` | IMPLEMENTED |
 | Google OAuth | Passport `google` strategy, scopes `email profile`, `prompt=select_account`, CSRF-style `state` nonce in `hms_oauth_state` cookie (path `/api/auth/google`, 10 min, SameSite Lax), first login creates a `PATIENT` user with `emailVerified: true` | `GoogleStrategy`, `GoogleAuthGuard`, `AuthService.validateGoogleUser`, `AuthController.googleCallback` | IMPLEMENTED |
 | Access token | JWT signed with `JWT_SECRET`, expiry `JWT_EXPIRES_IN` (default `15m`); payload `sub`, `email`, `role`, `tokenVersion` | `AuthService.issueAccessToken`, `AuthModule` | IMPLEMENTED |
 | Refresh token | JWT signed with `JWT_REFRESH_SECRET` (falls back to `JWT_SECRET`), expiry `JWT_REFRESH_EXPIRES_IN` (default `7d`), payload `purpose: 'refresh'` | `AuthService.issueTokens`, `refreshSession` | IMPLEMENTED |
@@ -439,6 +442,7 @@ The full sequence, with the transaction boundary, is in [Appointment booking](#a
 | Sub-role permissions | `STAFF` callers checked by `Staff.staffType` inside services: `LAB_TECHNICIAN` for laboratory (`LaboratoryService.requireLabAccess`), `NURSE` for emergency (`EmergencyService.hasResponderAccess`) | services | IMPLEMENTED |
 | Data scoping | Doctors limited to patients with an `Appointment` or `ChatMessage` relationship | `src/common/doctor-patient.ts` (`doctorPatientIds`, `doctorHasPatient`), `PatientsService`, `BillingService`, `LaboratoryService`, `BedsService`, `AppointmentsService.findAllForAdmin` | IMPLEMENTED |
 | Admin self-registration | Blocked at signup (`ForbiddenException`) and in role selection | `AuthService.signupLocal`, `UsersService.selectRole` | IMPLEMENTED |
+| Authentication audit | `AuthAuditService` (failure-proof wrapper over `AuditLogService`; a write failure is logged, never thrown) records login succeeded/failed, Google login, logout, password reset/set/changed, MFA enabled/disabled and MFA challenge succeeded/failed as `AuditLog` rows (`entityType: 'User'`, event name in `metadata.event`, no secrets). A failed login with bad credentials uses `entityId: 'unknown'` plus a SHA-256 hash of the attempted email. Signup, email verification and OTP resend are not audited | `src/auth/auth-audit.service.ts`, `AuthService`, `MfaService`, `UsersService.setPassword` | IMPLEMENTED |
 | Fine-grained permission table | — | — | **NOT FOUND** (authorization is role + service logic only) |
 
 ### Local login with optional MFA
@@ -631,16 +635,13 @@ Modules with no `imports` (they rely on the global Prisma and audit providers): 
 
 ```mermaid
 flowchart LR
-  AsstM["AssistantModule"]
   AdminAiM["AdminAiModule"]
 
-  ApptM["AppointmentsModule"]
-  BillM["BillingModule"]
-  ChatM["ChatModule"]
-  DPortalM["DoctorPortalModule"]
   ApprM["AccountApprovalsModule"]
   AnnM["AnnouncementsModule"]
+  ApptM["AppointmentsModule"]
   BedsM["BedsModule"]
+  BillM["BillingModule"]
   DocM["DoctorsModule"]
   EmergM["EmergencyModule"]
   LabM["LaboratoryModule"]
@@ -650,11 +651,6 @@ flowchart LR
   StaffM["StaffModule"]
   SchedM["StaffSchedulingModule"]
   UsersM["UsersModule"]
-
-  AsstM --> ApptM
-  AsstM --> BillM
-  AsstM --> ChatM
-  AsstM --> DPortalM
 
   AdminAiM --> ApprM
   AdminAiM --> AnnM
@@ -702,8 +698,7 @@ flowchart LR
 | `AnnouncementsModule` | `AnnouncementsController` | `AnnouncementsService` | `NotificationsModule` | `Announcement`, `Staff` | — | 2 | IMPLEMENTED |
 | `PlatformSettingsModule` | `PlatformSettingsController` | `PlatformSettingsService` | — | `PlatformSettings` | — | 2 | IMPLEMENTED |
 | `EmergencyModule` | `EmergencyController` | `EmergencyService` | `NotificationsModule` | `EmergencyCase`, `EmergencyNote`, `User`, `Doctor`, `Staff`, `AuditLog` (timeline) | — | 13 | IMPLEMENTED |
-| `AssistantModule` | `AssistantController` | `AssistantService` | `AppointmentsModule`, `BillingModule`, `ChatModule`, `DoctorPortalModule` | via imported services | Anthropic | 1 | IMPLEMENTED (needs `ANTHROPIC_API_KEY`, else 503) |
-| `AdminAiModule` | `AdminAiController` | orchestrator, gateway, registry, dispatcher, policy, store, metrics, proposals, 15 domain tool providers | 14 domain modules (see fan-out) | `AiConversation`, `AiMessage`, `AiRun`, `AiToolInvocation`, `AiActionProposal`, `AiFeedback` + domain models via tools | Anthropic | 14 | PARTIALLY IMPLEMENTED (off unless `ADMIN_AI_ENABLED`; writes off unless `AI_ENABLE_WRITES`; RAG reported `false`) |
+| `AdminAiModule` | `AdminAiController` | orchestrator, gateway, registry, dispatcher, policy, store, metrics, proposals, 15 domain tool providers | 14 domain modules (see fan-out) | `AiConversation`, `AiMessage`, `AiRun`, `AiToolInvocation`, `AiActionProposal`, `AiFeedback` + domain models via tools | Ollama (`AI_BASE_URL`) | 14 | PARTIALLY IMPLEMENTED (off unless `ADMIN_AI_ENABLED`; writes off unless `AI_ENABLE_WRITES`; RAG reported `false`; not yet run against a live Ollama) |
 
 Two classes named `StaffController` and two named `StaffService` exist: `src/staff/` (admin account provisioning for doctor/staff logins, route `/staff`) and `src/staff-scheduling/` (scheduling roster, route `/staff-scheduling/staff`). They are distinct Nest providers.
 
@@ -712,17 +707,18 @@ Two classes named `StaffController` and two named `StaffService` exist: `src/sta
 `src/admin-ai` is documented in depth in [`../../docs/ai/AI_ARCHITECTURE.md`](../../docs/ai/AI_ARCHITECTURE.md) and [`../../docs/ai/AI_SECURITY_PLAN.md`](../../docs/ai/AI_SECURITY_PLAN.md). In brief, from the code:
 
 - **Entry:** `AdminAiController` (`/api/admin-ai/*`), guarded by `AdminAiEnabledGuard` (404 when disabled), `JwtAuthGuard`, `RolesGuard` with `@Roles(Role.ADMIN)`.
-- **Core:** `AiOrchestratorService` (`prepare` then `execute`, streamed to the client as Server-Sent Events over the POST response with a 15 s heartbeat), `ModelGatewayService` with an Anthropic adapter (`providers/adapters/anthropic.provider.ts`), `ToolRegistryService`, `ToolDispatcherService`, `AiPolicyService`, `phi-masker.ts`.
+- **Core:** `AiOrchestratorService` (`prepare` then `execute`, streamed to the client as Server-Sent Events over the POST response with a 15 s heartbeat), `ModelGatewayService`, `ToolRegistryService`, `ToolDispatcherService`, `AiPolicyService`, `phi-masker.ts`.
+- **Model provider:** one adapter, `OllamaModelProvider` (`providers/adapters/ollama.provider.ts`). It streams `POST {AI_BASE_URL}/api/chat` (NDJSON) with native `fetch` and no SDK, sends `options.num_predict` and `options.num_ctx` (`AI_CONTEXT_TOKENS`), generates its own tool-call ids (Ollama has none) and maps tool results back by `tool_name`. It retries a refused connection and 429/5xx responses (`AI_MAX_RETRIES`) before streaming starts, maps 404 to "model not available, pull it with Ollama", and sends `Authorization: Bearer AI_API_KEY` only when a key is set (for an Ollama behind an authenticating proxy).
 - **Tools:** 15 domain tool files in `src/admin-ai/domain-tools/` (appointments, approvals, announcements, beds, billing, dashboard, doctors, emergency, laboratory, patients, profile, reports, scheduling, settings, staff).
 - **Writes:** never executed directly by the model. Write tools create an `AiActionProposal` that an admin approves (`POST /admin-ai/proposals/:id/approve` with a `paramsHash`) or rejects.
 - **Persistence and metrics:** `AiStoreService` (one `$transaction` in `persistence/ai-store.service.ts`), `AiMetricsService` (`GET /admin-ai/usage`).
-- **Configuration:** `src/admin-ai/admin-ai.config.ts`, every flag defaulting to the safe value.
+- **Configuration:** `src/admin-ai/admin-ai.config.ts`, every flag defaulting to the safe value (`ADMIN_AI_ENABLED=false`, `AI_PROVIDER=ollama`, `AI_BASE_URL=http://localhost:11434`, `AI_MODEL=llama3.1:8b` as a placeholder).
 
 ---
 
 ## Database architecture
 
-> Source of truth: [`database/api/schema.prisma`](../../database/api/schema.prisma) (1356 lines, **34 models, 29 enums**). Everything below is taken from that file, the migrations folder, `backend/api/src/prisma/`, `backend/api/package.json`, `render.yaml` and `.github/workflows/ci.yml`. Labels used: **[A]** existing implementation, **[B]** inferred from code, **[C]** missing or undocumented, **[D]** recommendation (never implemented).
+> Source of truth: [`database/api/schema.prisma`](../../database/api/schema.prisma) (1374 lines, **34 models, 29 enums**). Everything below is taken from that file, the migrations folder, `backend/api/src/prisma/`, `backend/api/package.json`, `render.yaml` and `.github/workflows/ci.yml`. Labels used: **[A]** existing implementation, **[B]** inferred from code, **[C]** missing or undocumented, **[D]** recommendation (never implemented).
 
 ### Prisma configuration
 
@@ -757,7 +753,7 @@ The schema lives outside the backend package, in `database/api/`, so every Prism
 3. Production (Render, `render.yaml`): `buildCommand: npm install --include=dev && npm run build`; `startCommand: npx prisma migrate deploy --schema=../../database/api/schema.prisma && node dist/main`. Pending migrations are applied on every boot, before the app starts listening.
 4. `docs/DEPLOYMENT.md` forbids `prisma db push` and `migrate reset` against production.
 
-**Migrations folder** (`database/api/migrations/`): one directory per migration, each holding a single `migration.sql`, plus `migration_lock.toml` (`provider = "postgresql"`, the standard "do not edit" header). There are **47 migrations**:
+**Migrations folder** (`database/api/migrations/`): one directory per migration, each holding a single `migration.sql`, plus `migration_lock.toml` (`provider = "postgresql"`, the standard "do not edit" header). There are **48 migrations**:
 
 | # | Migration | # | Migration |
 |---|---|---|---|
@@ -784,9 +780,9 @@ The schema lives outside the backend package, in `database/api/`, so every Prism
 | 21 | `20260819104610_add_shift_notification_types` | 45 | `20261016150000_add_account_approval` |
 | 22 | `20260821194410_add_invoice_items_and_appointment_reminders` | 46 | `20261116120000_mfa_guard_and_opening_local_time` |
 | 23 | `20260822103939_add_password_reset` | 47 | `20261117183437_admin_ai_copilot` |
-| 24 | `20260823115935_add_staff_portal` | | |
+| 24 | `20260823115935_add_staff_portal` | 48 | `20261118164101_fk_indexes_and_ai_message_run` |
 
-Migrations 14 and 17 add and then remove a pharmacy module. No pharmacy model exists in the current schema.
+Migrations 14 and 17 add and then remove a pharmacy module. No pharmacy model exists in the current schema. Migration 47 adds the Admin AI tables and enums (additive only). Migration 48 adds the missing FK indexes (including several on the AI tables), drops two redundant indexes and turns `AiMessage.runId` into a real relation to `AiRun` (`ON DELETE SET NULL`).
 
 **`PrismaService`** (`backend/api/src/prisma/prisma.service.ts`) [A]: `PrismaService extends PrismaClient` and implements `OnModuleInit` / `OnModuleDestroy`. `onModuleInit()` calls `this.$connect()` and logs `Connected to the database`. `onModuleDestroy()` calls `this.$disconnect()`. The constructor passes no options (no `datasources` override, no `log` config), so the client reads `DATABASE_URL` from the environment. `PrismaModule` (`prisma.module.ts`) is `@Global()` and provides and exports `PrismaService`, so every feature module injects it without importing the module.
 
@@ -823,7 +819,7 @@ Migrations 14 and 17 add and then remove a pharmacy module. No pharmacy model ex
 | 27 | `EmergencyCase` | Beds, lab, emergency | Patient emergency request and its lifecycle | `patientId`, `emergencyType`, `priority`, `status`, `locationShared`, lifecycle actor ids and timestamps | -> User x4 (patient, acknowledgedBy, assignedBy, resolvedBy), -> Doctor (opt.), -> Staff (opt.) |
 | 28 | `EmergencyNote` | Beds, lab, emergency | Responder note on a case | `caseId`, `authorId`, `body` | -> EmergencyCase, -> User (optional) |
 | 29 | `AiConversation` | Admin AI | Copilot conversation | `userId`, `title`, `activeModule` | -> User ("AiConversationOwner") |
-| 30 | `AiMessage` | Admin AI | Conversation message | `conversationId`, `role`, `content`, `runId` (plain column, no relation) | -> AiConversation |
+| 30 | `AiMessage` | Admin AI | Conversation message | `conversationId`, `role`, `content`, `runId` | -> AiConversation, -> AiRun (opt.) |
 | 31 | `AiRun` | Admin AI | One model run with telemetry | (`userId`, `requestKey`) UK, `status`, `provider`, `model`, token counts | -> AiConversation, -> User ("AiRunUser") |
 | 32 | `AiToolInvocation` | Admin AI | Tool call telemetry (argument names only) | `runId`, `toolName`, `domain`, `status`, `argKeys` | -> AiRun |
 | 33 | `AiActionProposal` | Admin AI | State-changing action awaiting admin approval | `actionType`, `params`, `paramsHash`, `status`, `expiresAt`, `decidedById` | -> AiConversation, -> AiRun (opt.), -> User ("AiProposalRequester"), -> User (opt., "AiProposalDecider") |
@@ -1415,7 +1411,7 @@ erDiagram
         String conversationId FK
         AiMessageRole role
         String content
-        String runId "nullable, plain column, no FK"
+        String runId FK "nullable"
         DateTime createdAt
     }
     AiRun {
@@ -1481,6 +1477,7 @@ erDiagram
     }
     User ||--o{ AiConversation : "AiConversationOwner (Cascade)"
     AiConversation ||--o{ AiMessage : "messages (Cascade)"
+    AiRun |o--o{ AiMessage : "messages (SetNull)"
     AiConversation ||--o{ AiRun : "runs (Cascade)"
     User ||--o{ AiRun : "AiRunUser (Cascade)"
     AiRun ||--o{ AiToolInvocation : "toolInvocations (Cascade)"
@@ -1547,6 +1544,7 @@ erDiagram
     User |o--o{ AuditLog : "actor"
     User ||--o{ AiConversation : "owner"
     AiConversation ||--o{ AiMessage : "messages"
+    AiRun |o--o{ AiMessage : "messages"
     AiConversation ||--o{ AiRun : "runs"
     User ||--o{ AiRun : "user"
     AiRun ||--o{ AiToolInvocation : "toolInvocations"
@@ -1585,7 +1583,7 @@ Only fields with non-obvious semantics are listed. Types are Prisma types; "?" m
 | `tokenVersion` | Int | 0 | Embedded in JWTs. Incremented on logout or password reset to invalidate issued tokens |
 | `mustChangePassword` | Boolean | false | Admin-provisioned temp-password accounts |
 | `failedLoginAttempts` / `lockedUntil` | Int / DateTime? | 0 | Per-account login lockout |
-| `mfaEnabled` / `mfaSecret` / `mfaBackupCodeHashes` | Boolean / String? / String[] | false / [] | TOTP MFA. Backup codes are hashed and single-use |
+| `mfaEnabled` / `mfaSecret` / `mfaBackupCodeHashes` | Boolean / String? / String[] | false / [] | TOTP MFA. `mfaSecret` is AES-256-GCM ciphertext (`enc:v1:...`) when `MFA_ENCRYPTION_KEY` is set, otherwise plain base32 (see `auth/mfa-secret-crypto.ts`). Backup codes are hashed and single-use |
 | `mfaFailedAttempts` / `mfaLockedUntil` / `mfaChallengeId` | | 0 | MFA brute-force guard. `mfaChallengeId` holds the jti of the single open challenge |
 
 **`Doctor`**: `consultationFee` Float (default 0) is the base charge for a booking. `appointmentDurationMinutes` Int (default 30) is informational only (schema comment: no working-hours model). `socialLinks` Json? holds public links. `rating` Float (default 4.5).
@@ -1612,7 +1610,7 @@ Only fields with non-obvious semantics are listed. Types are Prisma types; "?" m
 
 **`AiActionProposal`**: `params` Json plus `paramsHash` String are the exact payload executed on approval. `status` moves PENDING, then EXECUTING, then EXECUTED or FAILED; or PENDING to REJECTED or EXPIRED. `expiresAt` bounds approval. `result` Json? holds a small confirmation payload.
 
-**`AiRun` / `AiToolInvocation`**: `requestKey` is a client idempotency key, unique per user. Token, tool-call and latency counters are telemetry. `AiToolInvocation.argKeys` stores argument names only, never values.
+**`AiRun` / `AiToolInvocation` / `AiMessage`**: `requestKey` is a client idempotency key, unique per user. Token, tool-call and latency counters are telemetry; `provider` and `model` record which adapter and model tag answered (`ollama` and, for example, `llama3.1:8b`). `AiToolInvocation.argKeys` stores argument names only, never values. `AiMessage.runId` links a message to the run that produced it (SetNull when the run is deleted).
 
 ### Indexes and constraints
 
@@ -1628,46 +1626,46 @@ All entries below are copied from `schema.prisma`. There are no `@map` or `@@map
 | Bed | `patientId` | | `[departmentId]` | `updatedAt` | status AVAILABLE |
 | Invoice | `invoiceNumber`, `stripeCheckoutSessionId`, `appointmentId` | | `[patientId]` | | invoiceNumber autoincrement(), discount 0, tax 0, status PENDING |
 | InvoiceItem | | | `[invoiceId]` | | quantity 1, discount 0 (no createdAt) |
-| Payment | `stripePaymentIntentId` | | `[invoiceId]` | | |
-| Refund | `stripeRefundId` | | `[paymentId]` | | |
+| Payment | `stripePaymentIntentId` | | `[invoiceId]`, `[recordedById]` | | |
+| Refund | `stripeRefundId` | | `[paymentId]`, `[refundedById]` | | |
 | Notification | | | `[userId, isRead]`, `[userId, createdAt]` | | isRead false |
 | MedicalRecord | `appointmentId` | | `[patientId]`, `[doctorId]` | `updatedAt` | |
 | Prescription | | | `[medicalRecordId]` | | |
 | LabTest | | | `[patientId]`, `[doctorId]`, `[assignedToId]` | | status PENDING, requestedAt now() |
 | Staff | `email`, `userId` | | `[staffType]`, `[departmentId]` | `updatedAt` | isActive true |
-| StaffShift | | | `[staffId]`, `[departmentId]`, `[date]`, `[groupId]`, `[status]` | `updatedAt` | status SCHEDULED |
-| ShiftOpening | | | `[date]`, `[requiredStaffType]`, `[isOpen]` | `updatedAt` | positions 1, isOpen true |
-| ShiftApplication | `resultingShiftId` | `[openingId, staffId]` | `[staffId]`, `[status]` | `updatedAt` | status PENDING, appliedAt now() |
-| Task | | | `[assignedToId]`, `[dueAt]`, `[status]` | `updatedAt` | priority MEDIUM, status PENDING |
-| Announcement | | | `[createdAt]` | | priority NORMAL |
+| StaffShift | | | `[staffId]`, `[departmentId]`, `[date]`, `[groupId]`, `[status]`, `[createdById]` | `updatedAt` | status SCHEDULED |
+| ShiftOpening | | | `[date]`, `[requiredStaffType]`, `[isOpen]`, `[departmentId]`, `[createdById]` | `updatedAt` | positions 1, isOpen true |
+| ShiftApplication | `resultingShiftId` | `[openingId, staffId]` | `[staffId]`, `[status]`, `[respondedById]` | `updatedAt` | status PENDING, appliedAt now() |
+| Task | | | `[assignedToId]`, `[dueAt]`, `[status]`, `[departmentId]`, `[assignedById]` | `updatedAt` | priority MEDIUM, status PENDING |
+| Announcement | | | `[createdAt]`, `[authorId]` | | priority NORMAL |
 | ShiftTemplate | `name` | | | `updatedAt` | |
-| StaffAvailability | | `[staffId, dayOfWeek]` | `[staffId]` | `updatedAt` | isAvailable true |
-| StaffLeave | | `[staffId, date]` | `[staffId]`, `[date]` | | |
+| StaffAvailability | | `[staffId, dayOfWeek]` | | `updatedAt` | isAvailable true |
+| StaffLeave | | `[staffId, date]` | `[date]` | | |
 | Attendance | `shiftId` | | `[staffId]` | `updatedAt` | status SCHEDULED |
 | AuditLog | | | `[entityType, entityId]`, `[actorId]`, `[createdAt]` | | |
 | PlatformSettings | | | | `updatedAt` | `id` has **no** default; consultationMargin 0; no createdAt |
-| EmergencyCase | | | `[patientId]`, `[status]`, `[priority]`, `[createdAt]`, `[assignedStaffId]`, `[assignedDoctorId]` | `updatedAt` | emergencyType OTHER, priority NORMAL, status NEW, locationShared false |
-| EmergencyNote | | | `[caseId]` | | |
+| EmergencyCase | | | `[patientId]`, `[status]`, `[priority]`, `[createdAt]`, `[assignedStaffId]`, `[assignedDoctorId]`, `[acknowledgedById]`, `[assignedById]`, `[resolvedById]` | `updatedAt` | emergencyType OTHER, priority NORMAL, status NEW, locationShared false |
+| EmergencyNote | | | `[caseId]`, `[authorId]` | | |
 | AiConversation | | | `[userId, updatedAt]` | `updatedAt` | |
-| AiMessage | | | `[conversationId, createdAt]` | | |
-| AiRun | | `[userId, requestKey]` | `[userId, startedAt]`, `[startedAt]` | | status RUNNING, inputTokens 0, outputTokens 0, toolCalls 0, startedAt now() (no createdAt) |
+| AiMessage | | | `[conversationId, createdAt]`, `[runId]` | | |
+| AiRun | | `[userId, requestKey]` | `[userId, startedAt]`, `[startedAt]`, `[conversationId, status]` | | status RUNNING, inputTokens 0, outputTokens 0, toolCalls 0, startedAt now() (no createdAt) |
 | AiToolInvocation | | | `[runId]`, `[toolName, createdAt]` | | argKeys [] |
-| AiActionProposal | | | `[conversationId]`, `[requestedById, status]`, `[status, expiresAt]` | `updatedAt` | status PENDING |
-| AiFeedback | | `[messageId, userId]` | `[createdAt]` | `updatedAt` | |
+| AiActionProposal | | | `[conversationId]`, `[requestedById, status]`, `[status, expiresAt]`, `[runId]`, `[decidedById]` | `updatedAt` | status PENDING |
+| AiFeedback | | `[messageId, userId]` | `[createdAt]`, `[userId]` | `updatedAt` | |
 
 Unique constraints that the code relies on as concurrency or idempotency backstops [B]: `Bed.patientId` (one bed per patient; `beds/beds.service.ts` maps P2002), `Payment.stripePaymentIntentId` and `Refund.stripeRefundId` (webhook dedupe; `billing/stripe.service.ts` maps P2002), `MedicalRecord.appointmentId` (`medical-records/medical-records.service.ts` maps P2002), and `AiRun[userId, requestKey]` (`admin-ai/core/ai-orchestrator.service.ts` maps P2002). The `Appointment[doctorId, scheduledAt]` index is deliberately non-unique. The schema comment explains that double-booking is prevented by a Serializable transaction instead, because a unique constraint would block re-booking a cancelled slot.
 
 #### Referential actions (`onDelete`)
 
-No relation sets `onUpdate`, so the Prisma default applies to all of them (`Cascade` on update). Of the 62 FK relations, 60 set `onDelete` explicitly:
+No relation sets `onUpdate`, so the Prisma default applies to all of them (`Cascade` on update). Of the 63 FK relations, 61 set `onDelete` explicitly:
 
 | onDelete | Relations (child.field -> parent) |
 |---|---|
 | **Cascade** (34) | Doctor.userId -> User; Appointment.patientId -> User; Appointment.doctorId -> Doctor; ChatMessage.patientId -> User; ChatMessage.doctorId -> Doctor; Invoice.patientId -> User; InvoiceItem.invoiceId -> Invoice; Payment.invoiceId -> Invoice; Refund.paymentId -> Payment; Notification.userId -> User; MedicalRecord.patientId -> User; MedicalRecord.doctorId -> Doctor; Prescription.medicalRecordId -> MedicalRecord; LabTest.patientId -> User; LabTest.doctorId -> Doctor; StaffShift.staffId -> Staff; ShiftApplication.openingId -> ShiftOpening; ShiftApplication.staffId -> Staff; Task.assignedToId -> Staff; StaffAvailability.staffId -> Staff; StaffLeave.staffId -> Staff; Attendance.shiftId -> StaffShift; Attendance.staffId -> Staff; EmergencyCase.patientId -> User; EmergencyNote.caseId -> EmergencyCase; AiConversation.userId -> User; AiMessage.conversationId -> AiConversation; AiRun.conversationId -> AiConversation; AiRun.userId -> User; AiToolInvocation.runId -> AiRun; AiActionProposal.conversationId -> AiConversation; AiActionProposal.requestedById -> User; AiFeedback.messageId -> AiMessage; AiFeedback.userId -> User |
-| **SetNull** (26) | Bed.patientId -> User; Invoice.appointmentId -> Appointment; Payment.recordedById -> User; Refund.refundedById -> User; MedicalRecord.appointmentId -> Appointment; LabTest.assignedToId -> User; Staff.userId -> User; Staff.departmentId -> Department; StaffShift.departmentId -> Department; StaffShift.createdById -> User; ShiftOpening.departmentId -> Department; ShiftOpening.createdById -> User; ShiftApplication.respondedById -> User; ShiftApplication.resultingShiftId -> StaffShift; Task.departmentId -> Department; Task.assignedById -> User; Announcement.authorId -> User; AuditLog.actorId -> User; EmergencyCase.acknowledgedById -> User; EmergencyCase.assignedDoctorId -> Doctor; EmergencyCase.assignedStaffId -> Staff; EmergencyCase.assignedById -> User; EmergencyCase.resolvedById -> User; EmergencyNote.authorId -> User; AiActionProposal.runId -> AiRun; AiActionProposal.decidedById -> User |
+| **SetNull** (27) | Bed.patientId -> User; Invoice.appointmentId -> Appointment; Payment.recordedById -> User; Refund.refundedById -> User; MedicalRecord.appointmentId -> Appointment; LabTest.assignedToId -> User; Staff.userId -> User; Staff.departmentId -> Department; StaffShift.departmentId -> Department; StaffShift.createdById -> User; ShiftOpening.departmentId -> Department; ShiftOpening.createdById -> User; ShiftApplication.respondedById -> User; ShiftApplication.resultingShiftId -> StaffShift; Task.departmentId -> Department; Task.assignedById -> User; Announcement.authorId -> User; AuditLog.actorId -> User; EmergencyCase.acknowledgedById -> User; EmergencyCase.assignedDoctorId -> Doctor; EmergencyCase.assignedStaffId -> Staff; EmergencyCase.assignedById -> User; EmergencyCase.resolvedById -> User; EmergencyNote.authorId -> User; AiMessage.runId -> AiRun; AiActionProposal.runId -> AiRun; AiActionProposal.decidedById -> User |
 | **Not set (Prisma default)** (2) | Doctor.departmentId -> Department; Bed.departmentId -> Department. Both are required relations, so the Prisma default is `Restrict`: a Department cannot be deleted while doctors or beds reference it |
 
-Count check: the Cascade row lists 34 relations and the SetNull row lists 26, which with the 2 defaults gives 62.
+Count check: the Cascade row lists 34 relations and the SetNull row lists 27, which with the 2 defaults gives 63.
 
 ### Transaction patterns
 
@@ -1677,12 +1675,12 @@ All paths are under `backend/api/src/`. Raw row locks: `billing/invoice-lock.ts`
 
 | File | Method | Purpose |
 |---|---|---|
-| `appointments/appointments.service.ts` | `book()` | Checks overlapping doctor and patient appointments, then inserts (`createAppointmentRow`), so no double-booking |
+| `appointments/appointments.service.ts` | `book()` | Checks overlapping doctor and patient appointments, then inserts (`createAppointmentRow`), so no double-booking. The consultation invoice is created in the same transaction (`BillingService.createConsultationInvoiceInTx`); its notification is sent after commit |
 | `emergency/emergency.service.ts` | `create()` | Enforces one active emergency case per patient (`createCaseRow`) |
 | `staff-scheduling/shifts.service.ts` | `create()` | Shift conflict and availability check plus insert |
-| `staff-scheduling/shifts.service.ts` | `createRecurring()` | Same as `create()`, one transaction per occurrence |
+| `staff-scheduling/shifts.service.ts` | `createRecurring()` | Same checks as `create()` for every occurrence, all in one transaction (all-or-nothing) |
 | `staff-scheduling/shifts.service.ts` | `update()` (two sites) | Re-validates on time change; on unchanged times re-checks the active flag and overlaps |
-| `staff-scheduling/shifts.service.ts` | `assignFromOpening()` | Conflict-checked shift creation for an approved application |
+| `staff-scheduling/shift-applications.service.ts` | `respond()` (approve) | `SELECT ... FROM "ShiftOpening" ... FOR UPDATE`, capacity check, CAS approval, possibly close the opening, then the conflict-checked shift insert (`ShiftsService.assignFromOpeningInTx`) and the `resultingShiftId` link, all in one transaction |
 
 **Interactive transactions at default isolation** (Read Committed):
 
@@ -1695,7 +1693,6 @@ All paths are under `backend/api/src/`. Raw row locks: `billing/invoice-lock.ts`
 | `billing/stripe.service.ts` | `recordCheckoutPayment()` | `lockInvoice`, then idempotently record a Checkout payment (dedupe on PaymentIntent, P2002 handled) |
 | `billing/stripe.service.ts` | `syncChargeRefunds()` | `lockInvoice`, then insert Stripe refunds not yet recorded |
 | `billing/stripe.service.ts` | `reverseFailedRefund()` | `lockInvoice`, then delete a failed refund row and recompute the invoice |
-| `staff-scheduling/shift-applications.service.ts` | `respond()` | `SELECT ... FROM "ShiftOpening" ... FOR UPDATE`, then capacity check, CAS approval and possibly close the opening |
 | `staff-scheduling/shifts.service.ts` | `remove()` | Releases the linked opening slot, then deletes the shift (order matters because of SetNull on `resultingShiftId`) |
 | `auth/auth.service.ts` | `signupLocal()` | Creates the User and, for doctors, upserts the Department and creates the Doctor profile |
 | `staff/staff.service.ts` | `create()` | Same pattern for admin-provisioned accounts (temp password) |
@@ -1706,10 +1703,9 @@ All paths are under `backend/api/src/`. Raw row locks: `billing/invoice-lock.ts`
 | File | Method | Purpose |
 |---|---|---|
 | `users/users.service.ts` | `deleteAccount()` | Frees OCCUPIED beds held by the user, then deletes the User (which cascades, see the gaps below) |
-| `staff-scheduling/shift-applications.service.ts` | `respond()` (catch branch) | Compensation: reverts the application to PENDING and reopens the opening if shift creation failed |
 | `staff-scheduling/availability.service.ts` | `upsertForStaff()` | Upserts all weekday rows on `staffId_dayOfWeek` atomically |
 
-**`updateMany` as compare-and-swap** (the WHERE clause carries the expected state, and `count === 0` means another request won; 11 sites):
+**`updateMany` as compare-and-swap** (the WHERE clause carries the expected state, and `count === 0` means another request won; 14 sites):
 
 | File | Method | Guarded transition |
 |---|---|---|
@@ -1720,7 +1716,10 @@ All paths are under `backend/api/src/`. Raw row locks: `billing/invoice-lock.ts`
 | `auth/mfa.service.ts` | `verifyChallenge()` | Consumes the MFA challenge where `mfaChallengeId = jti` |
 | `account-approvals/account-approvals.service.ts` | `review()` | Approval transition only from the allowed `approvalStatus` values |
 | `appointments/appointment-reminders.service.ts` | `sendDueReminders()` | Claims a reminder where `reminderSentAt IS NULL` (at-most-once) |
-| `staff-scheduling/shift-applications.service.ts` | `respond()` | PENDING to APPROVED, inside the locked transaction |
+| `billing/invoice-reminders.service.ts` | `sendOverdueNotices()` | Claims an overdue notice where `overdueNotifiedAt IS NULL` before sending (at-most-once) |
+| `staff-scheduling/task-reminders.service.ts` | `sendDueSoonNudges()` | Claims a due-soon nudge where `reminderSentAt IS NULL` before notifying (at-most-once) |
+| `staff-scheduling/task-reminders.service.ts` | `sendOverdueNotices()` | Claims an overdue notice where `overdueNotifiedAt IS NULL` before notifying (at-most-once) |
+| `staff-scheduling/shift-applications.service.ts` | `claimOpening()` (called by `respond()`) | PENDING to APPROVED, inside the locked approval transaction |
 | `admin-ai/workflows/ai-proposal.service.ts` | `approve()` | PENDING to EXECUTING, only before `expiresAt` (single-use) |
 | `admin-ai/workflows/ai-proposal.service.ts` | `reject()` | PENDING to REJECTED |
 | `admin-ai/workflows/ai-proposal.service.ts` | `expireIfDue()` | PENDING to EXPIRED |
@@ -1744,29 +1743,19 @@ Two other `updateMany` calls are plain bulk updates, not CAS: `notifications/not
 
 ### Known gaps
 
+FK index coverage [A]: every FK column is now the leftmost column of an `@@index`, `@@unique` or `@unique`. Migration 48 added the missing indexes (`Announcement.authorId`; `EmergencyCase.acknowledgedById` / `assignedById` / `resolvedById`; `EmergencyNote.authorId`; `Payment.recordedById`; `Refund.refundedById`; `ShiftApplication.respondedById`; `ShiftOpening.departmentId` / `createdById`; `StaffShift.createdById`; `Task.departmentId` / `assignedById`; `AiRun[conversationId, status]`; `AiMessage.runId`; `AiActionProposal.runId` / `decidedById`; `AiFeedback.userId`) and dropped the redundant `StaffAvailability_staffId_idx` and `StaffLeave_staffId_idx`, whose column is already the leftmost column of each model's `@@unique([staffId, ...])`.
+
 #### Observations [C] (the current state, with no change implied)
 
-1. **FK columns without an index.** Postgres does not index FK columns automatically. These FKs have no `@@index`, and no `@unique` or composite index has them as its leftmost column:
-   - `AiRun.conversationId`, which is filtered by `ai-store.service.ts` `hasActiveRun()` (`where: { conversationId, status, startedAt }`) on each run.
-   - `ShiftOpening.departmentId`, `Task.departmentId`.
-   - Actor and audit columns: `Payment.recordedById`, `Refund.refundedById`, `StaffShift.createdById`, `ShiftOpening.createdById`, `ShiftApplication.respondedById`, `Task.assignedById`, `Announcement.authorId`, `EmergencyCase.acknowledgedById` / `assignedById` / `resolvedById`, `EmergencyNote.authorId`, `AiActionProposal.runId` / `decidedById`, `AiFeedback.userId`.
-
-   Every one of these is a SetNull or Cascade target of `User` or `AiRun`. Deleting a parent row therefore scans each of these tables.
-2. **Redundant indexes.** `StaffAvailability @@index([staffId])` and `StaffLeave @@index([staffId])` duplicate the leftmost column of their `@@unique([staffId, ...])`.
-3. **`AiMessage.runId` is not a relation.** It is a plain `String?` with no FK and no index, so the database does not enforce referential integrity to `AiRun`.
-4. **Money is `Float`** (`Invoice.amount/discount/tax`, `InvoiceItem.unitPrice/discount`, `Payment.amount`, `Refund.amount`, `Doctor.consultationFee`, `Appointment.consultationFee`, `PlatformSettings.consultationMargin`). No field uses `Decimal`. The code uses tolerance comparisons such as `amountPaid > 0.01` in `billing.service.ts` `cancel()`.
-5. **Cascade breadth from `User`.** Deleting a User (`users.service.ts` `deleteAccount()`) cascades to that patient's Appointments, Invoices (and their Payments, Refunds and items), MedicalRecords (and Prescriptions), LabTests, EmergencyCases (and notes), ChatMessages, Notifications and Admin AI data. Deleting a Doctor cascades their Appointments, MedicalRecords, LabTests and ChatMessages. `AuditLog` survives because it uses SetNull.
-6. **Polymorphic references.** `AuditLog.entityType/entityId` and `StaffShift.groupId` have no FK enforcement, by design.
-7. **No `directUrl`.** Runtime and `migrate deploy` share one URL. If that URL is a Neon pooled (PgBouncer) endpoint, Prisma Migrate's advisory locking would run through the pooler. The repo does not show which endpoint type is configured.
-8. **Not every model has timestamps.** There is no `createdAt` on `AiRun` (it uses `startedAt`), `InvoiceItem` or `PlatformSettings`. There is no `updatedAt` on `Department`, `Doctor`, `Invoice`, `Payment`, `Refund`, `ChatMessage`, `Notification`, `LabTest`, `Prescription`, `Announcement`, `StaffLeave`, `EmergencyNote`, `AuditLog`, `AiMessage` or `AiToolInvocation`.
-9. **Two nullable unique columns rely on Postgres NULL semantics.** `Staff.email` and `Bed.patientId` allow many NULLs (the schema comment on `Bed.patientId` states this). This is correct behaviour and is noted for clarity.
+1. **Money is `Float`** (`Invoice.amount/discount/tax`, `InvoiceItem.unitPrice/discount`, `Payment.amount`, `Refund.amount`, `Doctor.consultationFee`, `Appointment.consultationFee`, `PlatformSettings.consultationMargin`). No field uses `Decimal`. The code uses tolerance comparisons such as `amountPaid > 0.01` in `billing.service.ts` `cancel()`.
+2. **Cascade breadth from `User`.** Deleting a User (`users.service.ts` `deleteAccount()`) cascades to that patient's Appointments, Invoices (and their Payments, Refunds and items), MedicalRecords (and Prescriptions), LabTests, EmergencyCases (and notes), ChatMessages, Notifications and Admin AI data. Deleting a Doctor cascades their Appointments, MedicalRecords, LabTests and ChatMessages. `AuditLog` survives because it uses SetNull.
+3. **Polymorphic references.** `AuditLog.entityType/entityId` and `StaffShift.groupId` have no FK enforcement, by design.
+4. **No `directUrl`.** Runtime and `migrate deploy` share one URL. If that URL is a Neon pooled (PgBouncer) endpoint, Prisma Migrate's advisory locking would run through the pooler. The repo does not show which endpoint type is configured.
+5. **Not every model has timestamps.** There is no `createdAt` on `AiRun` (it uses `startedAt`), `InvoiceItem` or `PlatformSettings`. There is no `updatedAt` on `Department`, `Doctor`, `Invoice`, `Payment`, `Refund`, `ChatMessage`, `Notification`, `LabTest`, `Prescription`, `Announcement`, `StaffLeave`, `EmergencyNote`, `AuditLog`, `AiMessage` or `AiToolInvocation`.
+6. **Two nullable unique columns rely on Postgres NULL semantics.** `Staff.email` and `Bed.patientId` allow many NULLs (the schema comment on `Bed.patientId` states this). This is correct behaviour and is noted for clarity.
 
 #### Recommendations [D] (not implemented)
 
-- Add `@@index([conversationId])` (or `[conversationId, status]`) on `AiRun`, and consider indexes on `ShiftOpening.departmentId` and `Task.departmentId` if department filters are used on those lists.
-- Consider indexes on the actor FKs, or accept the cost of the SetNull scan when a user is deleted, which is rare.
-- Consider dropping the two redundant `[staffId]` indexes.
-- Consider making `AiMessage.runId` a real relation with `onDelete: SetNull`.
 - Consider `Decimal` for money columns. This needs a data migration and code changes.
 - For Neon, consider adding `directUrl = env("DIRECT_URL")` (unpooled) for migrations if the runtime URL is pooled.
 - Consider soft-delete or anonymisation for users with clinical or financial history instead of a hard cascade delete.
@@ -1781,9 +1770,9 @@ Two other `updateMany` calls are plain bulk updates, not CAS: `notifications/not
 - **Envelope:** success `{ success: true, message: 'Request successful', data }`; error `{ success: false, message, errors[] }`.
 - **AuthN column:** `Public` = no auth guard. `JWT` = `JwtAuthGuard` (approved accounts only unless noted). `+Demo` = `DemoAccountGuard`. `+AIEnabled` = `AdminAiEnabledGuard`.
 - **AuthZ column:** roles from `@Roles` (handler overrides class). "Any role" = authenticated, any role.
-- **Throttle:** every route has the global limit of 120 requests / 60 s per IP (off when `NODE_ENV=test`) unless an override is shown (for example `T5` = 5 / 60 s).
+- **Throttle:** every route has the global limit of 120 requests / 60 s per IP (off when `NODE_ENV=test`) unless an override is shown (for example `T5` = 5 / 60 s). `GET /api/health` and `POST /api/billing/webhooks/stripe` are exempt (`@SkipThrottle()` on their controllers).
 - **CSRF:** every non-GET route called with session cookies must send `X-HMS-CSRF: 1`.
-- **DTO column:** request DTO class. `—` = none. Raw `@Query('x')` strings are listed as `query: x` (not validated by a DTO class).
+- **DTO column:** request DTO class. `—` = none. `(query)` marks a query-string DTO bound with `@Query()`, so `ValidationPipe` validates it. No handler reads raw `@Query('x')` strings; shared field validators (entity id, ISO date, department name) are in `src/common/validators/query-fields.ts`.
 
 ### Endpoint count
 
@@ -1810,9 +1799,8 @@ Two other `updateMany` calls are plain bulk updates, not CAS: `notifications/not
 | Announcements | `AnnouncementsController` | 2 |
 | Platform settings | `PlatformSettingsController` | 2 |
 | Emergency | `EmergencyController` | 13 |
-| Assistant | `AssistantController` | 1 |
 | Admin AI | `AdminAiController` | 14 |
-| **Total** | **32 controllers** | **144** |
+| **Total** | **31 controllers** | **143** |
 
 Not counted: the Swagger UI and JSON at `/api/docs`, mounted by `SwaggerModule.setup('api/docs', ...)` only when `NODE_ENV !== 'production'`.
 
@@ -1926,7 +1914,7 @@ flowchart LR
 
 | Method | Path | Controller → Service | AuthN | AuthZ | DTO | Main models |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/health` | `HealthController.check` → `PrismaService.$queryRaw` (`SELECT 1`) | Public | — | — | none (503 if DB unreachable) |
+| GET | `/api/health` | `HealthController.check` → `PrismaService.$queryRaw` (`SELECT 1`) | Public, not throttled | — | — | none (503 if DB unreachable) |
 
 ### Auth — `src/auth/auth.controller.ts`
 
@@ -1994,7 +1982,7 @@ Class: `@Roles(Role.DOCTOR)`.
 | PATCH | `/api/doctor-portal/appointments/:id/cancel` | `cancelAppointment` → `DoctorPortalService.cancelAppointment` (+ `BillingService.cancelInvoiceForAppointment`) | JWT | DOCTOR (own) | — | `Appointment`, `Invoice`, `Notification` |
 | PATCH | `/api/doctor-portal/appointments/:id/complete` | `completeAppointment` → `DoctorPortalService.completeAppointment` | JWT | DOCTOR (own) | — | `Appointment` |
 | GET | `/api/doctor-portal/chat` | `listInbox` → `DoctorPortalService.listInboxPatients` | JWT | DOCTOR | — | `ChatMessage` |
-| GET | `/api/doctor-portal/chat/:patientId` | `getThread` → `DoctorPortalService.getThread` | JWT | DOCTOR (relationship) | query: `before` | `ChatMessage` |
+| GET | `/api/doctor-portal/chat/:patientId` | `getThread` → `DoctorPortalService.getThread` | JWT | DOCTOR (relationship) | `ChatThreadQueryDto` (query: `before`) | `ChatMessage` |
 | POST | `/api/doctor-portal/chat/:patientId` | `sendMessage` → `DoctorPortalService.sendMessage` | JWT | DOCTOR (relationship) | `SendMessageDto` | `ChatMessage`, `Notification` |
 | GET | `/api/doctor-portal/patients/:patientId/medical-records` | `listPatientMedicalRecords` → `MedicalRecordsService.listForPatientByDoctor` | JWT | DOCTOR | — | `MedicalRecord`, `Prescription` |
 | POST | `/api/doctor-portal/patients/:patientId/medical-records` | `addMedicalRecord` → `MedicalRecordsService.createForPatient` | JWT | DOCTOR | `CreateMedicalRecordDto` | `MedicalRecord`, `Prescription`, `Notification` |
@@ -2016,7 +2004,7 @@ Class: `@Roles(Role.PATIENT)`; two handlers override it.
 | Method | Path | Controller → Service | AuthN | AuthZ | DTO | Main models |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/chat` | `listInbox` → `ChatService.listInboxDoctors` | JWT | PATIENT | — | `ChatMessage`, `Doctor` |
-| GET | `/api/chat/:doctorId` | `getThread` → `ChatService.getThread` | JWT | PATIENT | query: `before` | `ChatMessage` |
+| GET | `/api/chat/:doctorId` | `getThread` → `ChatService.getThread` | JWT | PATIENT | `ChatThreadQueryDto` (query: `before`) | `ChatMessage` |
 | POST | `/api/chat/:doctorId` | `sendMessage` → `ChatService.sendMessage` | JWT | PATIENT | `SendMessageDto` | `ChatMessage`, `Notification` |
 
 ### Medical records — `src/medical-records/medical-records.controller.ts`
@@ -2049,7 +2037,7 @@ Class: `@Roles(Role.PATIENT)`; two handlers override it.
 | POST | `/api/billing/invoices/:invoiceId/payments/:paymentId/refund` | `refundPayment` → `BillingService.refundPayment` (+ `StripeService.refundPayment`) | JWT | ADMIN | `RefundPaymentDto` | `Refund`, `Payment`, `Invoice`, `AuditLog`, `Notification` |
 | PATCH | `/api/billing/invoices/:id/cancel` | `cancel` → `BillingService.cancel` | JWT | ADMIN | — | `Invoice`, `AuditLog` |
 | GET | `/api/billing/revenue` | `revenueThisMonth` → `BillingService.revenueThisMonth` | JWT | ADMIN | — | `Invoice` |
-| POST | `/api/billing/webhooks/stripe` | `StripeWebhookController.handleStripeWebhook` → `StripeService.handleWebhook` | Public (Stripe signature on raw body) | — | — (raw `Buffer`) | `Invoice`, `Payment`, `Refund`, `AuditLog`, `Notification` |
+| POST | `/api/billing/webhooks/stripe` | `StripeWebhookController.handleStripeWebhook` → `StripeService.handleWebhook` | Public (Stripe signature on raw body), not throttled | — | — (raw `Buffer`) | `Invoice`, `Payment`, `Refund`, `AuditLog`, `Notification` |
 
 ### Notifications — `src/notifications/notifications.controller.ts`
 
@@ -2088,11 +2076,11 @@ Every controller in this module: `@UseGuards(JwtAuthGuard, RolesGuard)`, `@Roles
 
 | Method | Path | Controller → Service | AuthN | AuthZ | DTO | Main models |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/staff-scheduling/staff` | `StaffController.findAll` → `StaffService.findAll` | JWT | ADMIN | query: `staffType`, `department` | `Staff` |
+| GET | `/api/staff-scheduling/staff` | `StaffController.findAll` → `StaffService.findAll` | JWT | ADMIN | `ListStaffQueryDto` (query: `staffType`, `department`) | `Staff` |
 | POST | `/api/staff-scheduling/staff` | `StaffController.create` → `StaffService.create` | JWT | ADMIN | `CreateStaffDto` (`src/staff-scheduling/dto`) | `Staff`, `User`, `Department`, `AuditLog` |
 | PATCH | `/api/staff-scheduling/staff/:id` | `StaffController.update` → `StaffService.update` | JWT | ADMIN | `UpdateStaffDto` | `Staff`, `AuditLog` |
 | DELETE | `/api/staff-scheduling/staff/:id` | `StaffController.remove` → `StaffService.remove` | JWT | ADMIN | — | `Staff` (cascades shifts), `AuditLog` |
-| GET | `/api/staff-scheduling/shifts` | `ShiftsController.findAll` → `ShiftsService.findAll` | JWT | ADMIN | query: `staffId`, `department`, `status`, `dateFrom`, `dateTo` | `StaffShift` |
+| GET | `/api/staff-scheduling/shifts` | `ShiftsController.findAll` → `ShiftsService.findAll` | JWT | ADMIN | `ListShiftsQueryDto` (query: `staffId`, `department`, `status`, `dateFrom`, `dateTo`) | `StaffShift` |
 | GET | `/api/staff-scheduling/shifts/:id` | `ShiftsController.findOne` → `ShiftsService.findOne` | JWT | ADMIN | — | `StaffShift` |
 | POST | `/api/staff-scheduling/shifts` | `ShiftsController.create` → `ShiftsService.create` | JWT | ADMIN | `CreateShiftDto` | `StaffShift`, `Staff`, `StaffLeave`, `StaffAvailability`, `AuditLog`, `Notification` |
 | POST | `/api/staff-scheduling/shifts/recurring` | `ShiftsController.createRecurring` → `ShiftsService.createRecurring` | JWT | ADMIN | `CreateRecurringShiftDto` | same as above |
@@ -2107,17 +2095,17 @@ Every controller in this module: `@UseGuards(JwtAuthGuard, RolesGuard)`, `@Roles
 | GET | `/api/staff-scheduling/leave/:staffId` | `AvailabilityController.listLeave` → `AvailabilityService.listLeave` | JWT | ADMIN | — | `StaffLeave` |
 | POST | `/api/staff-scheduling/leave/:staffId` | `AvailabilityController.createLeave` → `AvailabilityService.createLeave` | JWT | ADMIN | `CreateLeaveDto` | `StaffLeave`, `AuditLog` |
 | DELETE | `/api/staff-scheduling/leave/:staffId/:id` | `AvailabilityController.removeLeave` → `AvailabilityService.removeLeave` | JWT | ADMIN | — | `StaffLeave`, `AuditLog` |
-| GET | `/api/staff-scheduling/attendance` | `AttendanceController.findAll` → `AttendanceService.findAll` | JWT | ADMIN | query: `staffId`, `dateFrom`, `dateTo` | `Attendance` |
+| GET | `/api/staff-scheduling/attendance` | `AttendanceController.findAll` → `AttendanceService.findAll` | JWT | ADMIN | `ListAttendanceQueryDto` (query: `staffId`, `dateFrom`, `dateTo`) | `Attendance` |
 | POST | `/api/staff-scheduling/attendance` | `AttendanceController.create` → `AttendanceService.create` | JWT | ADMIN | `CreateAttendanceDto` | `Attendance`, `AuditLog` |
 | PATCH | `/api/staff-scheduling/attendance/:id` | `AttendanceController.update` → `AttendanceService.update` | JWT | ADMIN | `UpdateAttendanceDto` | `Attendance`, `AuditLog` |
-| GET | `/api/staff-scheduling/shift-openings` | `ShiftOpeningsController.findAll` → `ShiftOpeningsService.findAll` | JWT | ADMIN | query: `isOpen`, `requiredStaffType`, `department` | `ShiftOpening` |
+| GET | `/api/staff-scheduling/shift-openings` | `ShiftOpeningsController.findAll` → `ShiftOpeningsService.findAll` | JWT | ADMIN | `ListShiftOpeningsQueryDto` (query: `isOpen`, `requiredStaffType`, `department`) | `ShiftOpening` |
 | GET | `/api/staff-scheduling/shift-openings/:id` | `ShiftOpeningsController.findOne` → `ShiftOpeningsService.findOne` | JWT | ADMIN | — | `ShiftOpening` |
 | POST | `/api/staff-scheduling/shift-openings` | `ShiftOpeningsController.create` → `ShiftOpeningsService.create` | JWT | ADMIN | `CreateShiftOpeningDto` | `ShiftOpening`, `Department`, `AuditLog` |
 | PATCH | `/api/staff-scheduling/shift-openings/:id` | `ShiftOpeningsController.update` → `ShiftOpeningsService.update` | JWT | ADMIN | `UpdateShiftOpeningDto` | `ShiftOpening`, `AuditLog` |
 | DELETE | `/api/staff-scheduling/shift-openings/:id` | `ShiftOpeningsController.remove` → `ShiftOpeningsService.remove` | JWT | ADMIN | — | `ShiftOpening`, `AuditLog` |
-| GET | `/api/staff-scheduling/shift-applications` | `ShiftApplicationsController.findAll` → `ShiftApplicationsService.listAll` | JWT | ADMIN | query: `openingId`, `staffId`, `status` | `ShiftApplication` |
+| GET | `/api/staff-scheduling/shift-applications` | `ShiftApplicationsController.findAll` → `ShiftApplicationsService.listAll` | JWT | ADMIN | `ListShiftApplicationsQueryDto` (query: `openingId`, `staffId`, `status`) | `ShiftApplication` |
 | PATCH | `/api/staff-scheduling/shift-applications/:id` | `ShiftApplicationsController.respond` → `ShiftApplicationsService.respond` | JWT | ADMIN | `RespondShiftApplicationDto` | `ShiftApplication`, `ShiftOpening`, `StaffShift`, `AuditLog`, `Notification` |
-| GET | `/api/staff-scheduling/tasks` | `TasksController.findAll` → `TasksService.findAll` | JWT | ADMIN | query: `assignedToId`, `department`, `status` | `Task` |
+| GET | `/api/staff-scheduling/tasks` | `TasksController.findAll` → `TasksService.findAll` | JWT | ADMIN | `ListTasksQueryDto` (query: `assignedToId`, `department`, `status`) | `Task` |
 | POST | `/api/staff-scheduling/tasks` | `TasksController.create` → `TasksService.create` | JWT | ADMIN | `CreateTaskDto` | `Task`, `Department`, `AuditLog`, `Notification` |
 | PATCH | `/api/staff-scheduling/tasks/:id` | `TasksController.update` → `TasksService.update` | JWT | ADMIN | `UpdateTaskDto` | `Task`, `AuditLog`, `Notification` |
 
@@ -2128,12 +2116,12 @@ Class: `@Roles(Role.STAFF)`. The caller's `Staff` row is always resolved from th
 | Method | Path | Controller → Service | AuthN | AuthZ | DTO | Main models |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/staff-portal/profile` | `getProfile` → `StaffPortalService.getProfile` | JWT | STAFF | — | `Staff` |
-| GET | `/api/staff-portal/shifts` | `getMyShifts` → `ShiftsService.findAll` | JWT | STAFF (own) | query: `status`, `dateFrom`, `dateTo` | `StaffShift` |
+| GET | `/api/staff-portal/shifts` | `getMyShifts` → `ShiftsService.findAll` | JWT | STAFF (own) | `MyShiftsQueryDto` (query: `status`, `dateFrom`, `dateTo`) | `StaffShift` |
 | GET | `/api/staff-portal/shift-openings` | `getAvailableShifts` → `ShiftOpeningsService.findAvailableForStaff` | JWT | STAFF (matching type) | — | `ShiftOpening` |
 | POST | `/api/staff-portal/shift-openings/:id/apply` | `applyToShift` → `ShiftApplicationsService.apply` | JWT | STAFF | `ApplyShiftDto` | `ShiftApplication`, `ShiftOpening` |
 | GET | `/api/staff-portal/shift-applications` | `getMyApplications` → `ShiftApplicationsService.listMine` | JWT | STAFF (own) | — | `ShiftApplication` |
 | DELETE | `/api/staff-portal/shift-applications/:id` | `withdrawApplication` → `ShiftApplicationsService.withdraw` | JWT | STAFF (own) | — | `ShiftApplication` |
-| GET | `/api/staff-portal/tasks` | `getMyTasks` → `TasksService.findMine` | JWT | STAFF (own) | query: `status` | `Task` |
+| GET | `/api/staff-portal/tasks` | `getMyTasks` → `TasksService.findMine` | JWT | STAFF (own) | `MyTasksQueryDto` (query: `status`) | `Task` |
 | PATCH | `/api/staff-portal/tasks/:id/status` | `updateTaskStatus` → `TasksService.updateStatusAsOwner` | JWT | STAFF (own) | `UpdateTaskStatusDto` | `Task` |
 
 ### Announcements — `src/announcements/announcements.controller.ts`
@@ -2169,12 +2157,6 @@ Class: `@UseGuards(JwtAuthGuard, RolesGuard)`, no class-level roles.
 | PATCH | `/api/emergency/:id/priority` | `updatePriority` → `EmergencyService.updatePriority` | JWT | ADMIN, DOCTOR | `UpdateEmergencyPriorityDto` | `EmergencyCase`, `AuditLog` |
 | POST | `/api/emergency/:id/notes` | `addNote` → `EmergencyService.addNote` | JWT | ADMIN, DOCTOR, STAFF (nurse) | `AddEmergencyNoteDto` | `EmergencyNote`, `AuditLog` |
 | POST | `/api/emergency/:id/cancel` | `cancel` → `EmergencyService.cancel` | JWT | PATIENT (own), ADMIN | `CancelEmergencyDto` | `EmergencyCase`, `AuditLog`, `Notification` |
-
-### Assistant — `src/assistant/assistant.controller.ts`
-
-| Method | Path | Controller → Service | AuthN | AuthZ | DTO | Main models |
-| --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/assistant/chat` | `chat` → `AssistantService.chat` (Anthropic tool loop, max 4 rounds) | JWT, T20 | Any role (role-specific tools) | `AssistantChatDto` | read-only via `AppointmentsService`, `BillingService`, `ChatService`, `DoctorPortalService` |
 
 ### Admin AI — `src/admin-ai/admin-ai.controller.ts`
 
@@ -2250,13 +2232,16 @@ sequenceDiagram
       AS-->>P: 409 time conflict
     end
     AS->>DB: create Appointment with consultationFee snapshot
+    opt doctor.consultationFee greater than 0
+      AS->>BS: createConsultationInvoiceInTx(tx, fee plus platform margin)
+      BS->>DB: create Invoice and InvoiceItem
+    end
+    Note over AS,DB: an invoice failure rolls the appointment back with it
   end
   Note over AS: P2034 serialization failure becomes 409 slot no longer available
-  opt doctor.consultationFee greater than 0
-    AS->>BS: createConsultationInvoice(fee plus platform margin)
-    BS->>DB: create Invoice and InvoiceItem
+  opt invoice created
+    AS->>BS: notifyConsultationInvoiceCreated (after commit)
     BS->>NS: INVOICE_CREATED to patient
-    Note over AS: on invoice failure the appointment is deleted (compensation)
   end
   AS->>NS: APPOINTMENT_BOOKED to doctor
   AS-->>P: 201 data appointment
@@ -2444,7 +2429,7 @@ stateDiagram-v2
 
 ### Staff scheduling
 
-`ShiftsService.create` runs `assertValidAssignment` inside a **Serializable `$transaction`**: timing checks, staff exists and is active, no `StaffLeave` that date, `StaffAvailability` for that weekday allows the start time, no overlapping non-cancelled `StaffShift`. `P2034` → 409. After commit: `AuditLog`, `SHIFT_SCHEDULED` notification. `createRecurring` runs one Serializable transaction **per occurrence** and deletes already-created occurrences if a later one fails (compensation, not one transaction). `update`, `remove` and `assignFromOpening` also use Serializable or interactive transactions (`src/staff-scheduling/shifts.service.ts`). `AvailabilityService.upsertForStaff` writes all seven days in one array `$transaction`.
+`ShiftsService.create` runs `assertValidAssignment` inside a **Serializable `$transaction`**: timing checks, staff exists and is active, no `StaffLeave` that date, `StaffAvailability` for that weekday allows the start time, no overlapping non-cancelled `StaffShift`. `P2034` → 409. After commit: `AuditLog`, `SHIFT_SCHEDULED` notification. `createRecurring` validates and creates **every occurrence inside one Serializable transaction** (longer timeout), so a recurring batch is all-or-nothing and later occurrences' overlap checks see the earlier ones. `update` and `remove` also use Serializable or interactive transactions; `assignFromOpeningInTx` runs the same checks against the caller's transaction client (`src/staff-scheduling/shifts.service.ts`). `AvailabilityService.upsertForStaff` writes all seven days in one array `$transaction`.
 
 Shift application approval:
 
@@ -2461,7 +2446,7 @@ sequenceDiagram
   SAC->>SAS: respond(id, dto, adminId)
   SAS->>DB: load application with opening and staff
   rect rgb(230, 240, 255)
-    Note over SAS,DB: $transaction
+    Note over SAS,DB: $transaction isolationLevel Serializable
     SAS->>DB: SELECT ShiftOpening FOR UPDATE
     SAS->>DB: reload opening with application statuses
     alt opening closed or positions full
@@ -2472,16 +2457,13 @@ sequenceDiagram
       SAS-->>A: 400 already responded
     end
     SAS->>DB: close opening if last position filled
+    SAS->>SS: assignFromOpeningInTx(tx) (same conflict checks)
+    SS->>DB: create StaffShift
+    SAS->>DB: set resultingShiftId
+    Note over SAS,DB: any failure rolls back every step, nothing to compensate
   end
-  SAS->>SS: assignFromOpening (same conflict checks, Serializable)
-  alt shift creation fails
-    rect rgb(255, 235, 230)
-      Note over SAS,DB: compensating array $transaction
-      SAS->>DB: application back to PENDING, reopen opening
-    end
-    SAS-->>A: original error
-  end
-  SAS->>DB: set resultingShiftId
+  Note over SAS: P2034 serialization failure becomes 409
+  SAS->>SS: recordAssignedFromOpening (AuditLog for the shift)
   SAS->>DB: AuditLog and SHIFT_APPLICATION_APPROVED notification
   SAS-->>A: 200 data application
 ```
@@ -2544,8 +2526,7 @@ Notifications are written synchronously inside the request (after the main write
 | Google OAuth 2.0 | Social sign-in | `src/auth/strategies/google.strategy.ts`, `src/auth/guards/google-auth.guard.ts`, `AuthController.googleLogin/googleCallback` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` (all required at boot) | Any callback failure redirects to `${CLIENT_URL}/oauth/callback?error=oauth_failed` | IMPLEMENTED |
 | Resend | OTP, password reset, appointment reminder, account decision, invoice overdue emails | `src/email/email.service.ts` (`sendOtpEmail`, `sendPasswordResetEmail`, `sendAppointmentReminderEmail`, `sendAccountDecisionEmail`, `sendInvoiceOverdueEmail`) | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Without a key, OTP/reset codes are logged (redacted in production) instead of sent; send errors raise 500 for OTP/reset, are logged elsewhere | IMPLEMENTED |
 | Stripe | Checkout Sessions, session expiry, refunds, webhooks | `src/billing/stripe.service.ts`, `src/billing/stripe-webhook.controller.ts`, raw body in `src/main.ts` | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Missing key → 500 "Online payments are not set up yet"; bad signature → 400 | IMPLEMENTED |
-| Anthropic (Assistant) | Role-aware in-app assistant with navigation and read-only lookup tools | `src/assistant/assistant.service.ts` (`client.messages.create`, `MODEL_MAX_TOKENS = 500`, `MAX_TOOL_ROUNDS = 4`) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Missing key → 503 | IMPLEMENTED |
-| Anthropic (Admin AI) | Admin copilot via model gateway | `src/admin-ai/providers/adapters/anthropic.provider.ts`, `model-gateway.service.ts` | `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY` (falls back to `ANTHROPIC_API_KEY`) and the other `AI_*` flags | Feature returns 404 when disabled | PARTIALLY IMPLEMENTED (opt-in) |
+| Ollama (Admin AI) | Admin AI Copilot model calls through the model gateway; a local model, so prompts and tool results stay on the machine running Ollama unless `AI_BASE_URL` points elsewhere | `src/admin-ai/providers/adapters/ollama.provider.ts`, `model-gateway.service.ts` | `AI_PROVIDER` (`ollama`), `AI_BASE_URL`, `AI_MODEL`, optional `AI_API_KEY`, `AI_CONTEXT_TOKENS` and the other `AI_*` flags | Feature returns 404 when disabled; an invalid `AI_BASE_URL` means "not configured" (503); an unreachable server or missing model ends the run with an SSE `error` event | PARTIALLY IMPLEMENTED (opt-in; no live Ollama run yet) |
 | Sentry | Error reporting (no tracing, `tracesSampleRate: 0`) | `src/main.ts` (`Sentry.init`), `HttpExceptionFilter` (`captureException` for status ≥ 500) | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | Undefined DSN makes Sentry a no-op | IMPLEMENTED |
 | File / object storage | — | — | — | Chat images travel as data URLs inside JSON (3 MB body limit) | **NOT FOUND** |
 | SMS / push notifications | — | — | — | — | **NOT FOUND** |
@@ -2559,8 +2540,8 @@ Notifications are written synchronously inside the request (after the main write
 | Job | Schedule | Source | What it does | Idempotency guard |
 | --- | --- | --- | --- | --- |
 | `AppointmentRemindersService.handleDueReminders` | `EVERY_10_MINUTES` | `src/appointments/appointment-reminders.service.ts` | `SCHEDULED` appointments starting within 24 h and `reminderSentAt` null → email + `APPOINTMENT_REMINDER` notification | Claims each row with `updateMany where reminderSentAt null` **before** sending (at-most-once) |
-| `InvoiceRemindersService.handleOverdueInvoices` | `EVERY_10_MINUTES` | `src/billing/invoice-reminders.service.ts` | Non-cancelled invoices past `dueDate` with `overdueNotifiedAt` null and derived status `overdue` → email + `INVOICE_OVERDUE` notification | Sets `overdueNotifiedAt` **after** sending |
-| `TaskRemindersService.handleDueTasks` | `EVERY_10_MINUTES` | `src/staff-scheduling/task-reminders.service.ts` | Tasks due within 2 h (`TASK_DUE_SOON`) and overdue tasks (`TASK_OVERDUE`) → notifications | Sets `reminderSentAt` / `overdueNotifiedAt` **after** notifying |
+| `InvoiceRemindersService.handleOverdueInvoices` | `EVERY_10_MINUTES` | `src/billing/invoice-reminders.service.ts` | Non-cancelled invoices past `dueDate` with `overdueNotifiedAt` null and derived status `overdue` → email + `INVOICE_OVERDUE` notification | Claims each row with `updateMany where overdueNotifiedAt null` **before** sending (at-most-once) |
+| `TaskRemindersService.handleDueTasks` | `EVERY_10_MINUTES` | `src/staff-scheduling/task-reminders.service.ts` | Tasks due within 2 h (`TASK_DUE_SOON`) and overdue tasks (`TASK_OVERDUE`) → notifications | Claims each row with `updateMany where reminderSentAt null` (due soon) or `where overdueNotifiedAt null` (overdue) **before** notifying (at-most-once) |
 
 ```mermaid
 flowchart LR
@@ -2589,14 +2570,14 @@ flowchart LR
 | HTTP errors | Services throw Nest exceptions (`BadRequestException`, `NotFoundException`, `ConflictException`, `ForbiddenException`, `UnauthorizedException`, `ServiceUnavailableException`, `InternalServerErrorException`, `HttpException(429)`) | services |
 | Validation failures | Global `ValidationPipe` → 400 with constraint messages; unknown properties rejected (`forbidNonWhitelisted`) | `src/main.ts` |
 | Rate limit | `ThrottlerException` → 429 with a user-friendly message substituted by the filter | filter |
-| Auth failures | Passport → 401; approval gate → 403; `RolesGuard` false → 403; CSRF middleware → 403 JSON (bypasses the filter) | `jwt-auth.guard.ts`, `csrf.middleware.ts` |
+| Auth failures | Passport → 401; approval gate → 403; `RolesGuard` false → 403; CSRF middleware → 403 JSON in the same error envelope (bypasses the filter; the middleware logs a warning and the access log records the 403) | `jwt-auth.guard.ts`, `csrf.middleware.ts` |
 | Database errors | Translated where expected: `P2034` → 409, `P2025` → 409, `P2002` → 409; other Prisma errors → 500 via filter | services |
-| Provider errors | Stripe/Resend/Anthropic failures logged with `Logger`; unconfigured providers return explicit 500/503 messages | `stripe.service.ts`, `email.service.ts`, `assistant.service.ts` |
+| Provider errors | Stripe/Resend failures logged with `Logger`; unconfigured providers return explicit 500 messages. Ollama failures are normalised to `AiProviderError` codes (`not_configured`, `unavailable`, `rate_limited`, `auth`, `bad_request`, `cancelled`); `prepare()` answers 503 when the provider is not configured | `stripe.service.ts`, `email.service.ts`, `admin-ai/providers/adapters/ollama.provider.ts` |
 | Application logging | Nest `Logger` per class (bootstrap, auth, Prisma connect, cron failures, filter warn/error) | various |
-| Request/access logging | — | **NOT FOUND** (no logging middleware or interceptor; only failed requests are logged by the filter) |
+| Request/access logging | `createAccessLogMiddleware()`: one `HTTP` logger line per request (method, path without query string, status, duration in ms, `reqId`, `user` once authenticated; `error` level for 5xx). Every response carries `X-Request-Id` (a safe incoming id is reused, otherwise a UUID). Skips `/api/health`; not registered when `NODE_ENV=test`. Bodies, cookies, headers and query strings are never logged | `src/common/middleware/access-log.middleware.ts`, `src/main.ts` |
 | Error reporting | Sentry `captureException` for status ≥ 500 | filter, `main.ts` |
 | Audit logging | `AuditLogService.log` writes `AuditLog` rows (actor, action, entityType, entityId, JSON metadata). Called from billing, Stripe, doctor portal, account approvals, emergency, platform settings, announcements and all staff-scheduling services, plus Admin AI | `src/audit-log/audit-log.service.ts` |
-| Audit of authentication events (login, logout, MFA) | — | **NOT FOUND** (`AuditLogService` is not used in `src/auth`) |
+| Audit of authentication events | `AuthAuditService.record` writes login (password and Google), failed login, logout, password reset/set/change, MFA enable/disable and MFA challenge outcomes to `AuditLog`. Audit write failures are logged and swallowed | `src/auth/auth-audit.service.ts` |
 
 ---
 
@@ -2609,7 +2590,7 @@ flowchart LR
   User["Browser"] -->|"HTTPS"| Vercel["Vercel<br/>frontend static build"]
   Vercel -->|"rewrite /api/:path*"| Render["Render web service<br/>hospital-management-api<br/>rootDir backend/api"]
   Render -->|"DATABASE_URL"| PG[("External PostgreSQL<br/>e.g. Neon or Supabase (per comment)")]
-  Render --> Ext["Stripe, Resend, Anthropic,<br/>Google, Sentry"]
+  Render --> Ext["Stripe, Resend,<br/>Google, Sentry"]
   Stripe["Stripe webhooks"] -->|"POST /api/billing/webhooks/stripe"| Vercel
   RenderHC["Render health check"] -->|"GET /api/health"| Render
 ```
@@ -2631,7 +2612,7 @@ flowchart LR
 | Graceful shutdown | `enableShutdownHooks()` | `src/main.ts` |
 | CI | GitHub Actions: `npm ci`, `prisma generate`, lint, unit tests, `migrate deploy` against a Postgres 16 service, e2e, build (Node 24) | `../../.github/workflows/ci.yml` |
 
-**Known build-output gap:** the start command runs `dist/main`, but a local `nest build` emits `dist/src/main.js`. `[B]` The likely cause is that `tsconfig.json` sets no `rootDir`/`include`, so the TypeScript files under `scripts/` widen the inferred root to `backend/api`. See [Known gaps](#known-gaps).
+**Build output:** `tsconfig.build.json` sets `include: ["src/**/*"]` (and excludes `test`, `dist` and spec files), so `nest build` compiles only `src/` and emits `dist/main.js`, which is what `render.yaml` `startCommand` and `package.json` `start:prod` (`node dist/main`) run. A local build produces `dist/main.js` and no `dist/src/`.
 
 ### Environment variables (names only)
 
@@ -2645,17 +2626,17 @@ flowchart LR
 | `COOKIE_SAMESITE` | No (`lax`) | cookie options | same |
 | `TRUST_PROXY_HOPS` | No (`0`) | Express trust proxy | same, `main.ts` |
 | `DEMO_MODE` | No | `DemoAccountGuard`, logout | same |
+| `MFA_ENCRYPTION_KEY` | Yes when `NODE_ENV=production`; optional otherwise (unset means MFA secrets are stored as plain text, with a startup warning) | AES-256-GCM key for `User.mfaSecret`; must be 32 bytes as base64 or 64 hex characters (validated, never echoed) | `env.validation.ts` (`mfaKeyErrors`), `configuration.ts` (`mfa.encryptionKey`), `auth/mfa.service.ts` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` | Yes | Google OAuth | same |
 | `CLIENT_URL` | No (`http://localhost:5173`) | CORS, OAuth and Stripe redirects | same |
 | `PORT` | No (`3000`) | listen port | same |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | No | email | same |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | No | payments | same |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | No | Assistant (and Admin AI fallback key) | same |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | No | Sentry | `main.ts`, `env.validation.ts` |
 | `NODE_ENV` | No | cookie `Secure`, Swagger off in production, throttler off in test, OTP log redaction | `configuration.ts`, `main.ts`, `app.module.ts`, `email.service.ts` |
-| `ADMIN_AI_ENABLED` (alias `AI_ENABLED`), `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY`, `AI_MAX_OUTPUT_TOKENS`, `AI_REQUEST_TIMEOUT`, `AI_MAX_TOOL_CALLS`, `AI_MAX_ITERATIONS`, `AI_DAILY_BUDGET`, `AI_RUN_TOKEN_BUDGET`, `AI_ALLOW_PHI`, `AI_ENABLE_WRITES`, `AI_RAG_ENABLED`, `AI_PROPOSAL_TTL_MINUTES`, `AI_MAX_RETRIES` | No (safe defaults) | Admin AI | `src/admin-ai/admin-ai.config.ts` |
+| `ADMIN_AI_ENABLED` (alias `AI_ENABLED`), `AI_PROVIDER`, `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`, `AI_CONTEXT_TOKENS`, `AI_MAX_OUTPUT_TOKENS`, `AI_REQUEST_TIMEOUT`, `AI_MAX_TOOL_CALLS`, `AI_MAX_ITERATIONS`, `AI_DAILY_BUDGET`, `AI_RUN_TOKEN_BUDGET`, `AI_ALLOW_PHI`, `AI_ENABLE_WRITES`, `AI_RAG_ENABLED`, `AI_PROPOSAL_TTL_MINUTES`, `AI_MAX_RETRIES` | No (safe defaults: off, `ollama`, `http://localhost:11434`, `llama3.1:8b`, 16384 context tokens) | Admin AI | `src/admin-ai/admin-ai.config.ts` |
 
-`render.yaml` defines `NODE_ENV`, `TRUST_PROXY_HOPS`, `DATABASE_URL`, the JWT variables, `COOKIE_SAMESITE`, Google, `CLIENT_URL`, Resend, Stripe, Anthropic, Sentry and `PORT`. It does **not** define `DEMO_MODE` or any `ADMIN_AI_*`/`AI_*` variable, so Admin AI is off on Render unless added manually.
+`render.yaml` defines `NODE_ENV`, `TRUST_PROXY_HOPS`, `DATABASE_URL`, the JWT variables, `COOKIE_SAMESITE`, Google, `CLIENT_URL`, Resend, Stripe, Sentry, `PORT`, `MFA_ENCRYPTION_KEY`, `DEMO_MODE` (`"false"`) and the Admin AI variables `ADMIN_AI_ENABLED` (`"false"`), `AI_BASE_URL` and `AI_API_KEY` (`sync: false`), `AI_MODEL` (`llama3.1:8b`), `AI_ALLOW_PHI`, `AI_ENABLE_WRITES` and `AI_RAG_ENABLED` (all `"false"`). The copilot stays off on Render because a Render service cannot reach an Ollama running on a local machine.
 
 ---
 
@@ -2663,9 +2644,9 @@ flowchart LR
 
 | Aspect | Implementation | Source |
 | --- | --- | --- |
-| Unit tests | 52 `*.spec.ts` files under `src/` (services, DTOs, guards, filter, mappers, Admin AI) | `jest.config.ts` (`rootDir: src`, `testRegex: .*\.spec\.ts$`) |
+| Unit tests | 59 `*.spec.ts` files under `src/` (services, DTOs, guards, filter, mappers, middleware such as CSRF and access log, `common/route-guards.spec.ts`, which checks guard metadata on every controller, and 7 Admin AI suites including `admin-ai/providers/ollama.provider.spec.ts`, which mocks `fetch`) | `jest.config.ts` (`rootDir: src`, `testRegex: .*\.spec\.ts$`) |
 | Mocking | `Test.createTestingModule` with `{ provide: PrismaService, useValue: mock }` (for example `src/beds/beds.service.spec.ts`); Admin AI helpers in `src/admin-ai/testing/admin-ai-test-utils.ts` | spec files |
-| E2E tests | 5 suites: `auth`, `account-approvals`, `emergency`, `integrity`, `admin-ai` (`test/*.e2e-spec.ts`); boot the full `AppModule`, override `EmailService`, use supertest | `test/jest-e2e.json` (`testTimeout: 60000`) |
+| E2E tests | 5 suites: `auth`, `account-approvals`, `emergency`, `integrity`, `admin-ai` (`test/*.e2e-spec.ts`; the Admin AI suite uses a fake model provider, not a live Ollama); boot the full `AppModule`, override `EmailService`, use supertest | `test/jest-e2e.json` (`testTimeout: 60000`) |
 | E2E app setup | Suites such as `auth.e2e-spec.ts` re-apply the global prefix, `ValidationPipe`, `HttpExceptionFilter` and `ResponseInterceptor`; only `integrity.e2e-spec.ts` also installs `cookieParser` and `csrfProtection` | `test/auth.e2e-spec.ts`, `test/integrity.e2e-spec.ts` |
 | Test database | `test/setup-e2e.ts` loads `backend/api/.env.test` into `process.env` before the app boots; suites clean tables with `deleteMany` | `test/setup-e2e.ts` |
 | Rate limiting in tests | `ThrottlerGuard` is not registered when `NODE_ENV=test` | `src/app.module.ts` |
@@ -2713,6 +2694,7 @@ flowchart TB
 | --- | --- | --- |
 | Transport cookies | httpOnly; `Secure` in production; `SameSite` Lax by default; refresh cookie scoped to `/api/auth` | `src/auth/auth-cookies.ts` |
 | CSRF | Custom header `X-HMS-CSRF: 1` required on cookie-authenticated unsafe requests; OAuth `state` nonce for Google | `csrf.middleware.ts`, `google-auth.guard.ts` |
+| Secrets at rest | Passwords, OTP and reset codes and MFA backup codes are bcrypt-hashed; the TOTP secret is AES-256-GCM encrypted with `MFA_ENCRYPTION_KEY` (required in production) | `password.util.ts`, `auth.service.ts`, `mfa.service.ts`, `mfa-secret-crypto.ts` |
 | Brute force | IP throttles; account lockout (10 failures / 15 min); OTP and reset attempt caps claimed atomically; MFA lockout (5 / 15 min) | `auth.service.ts`, `mfa.service.ts` |
 | Enumeration | Identical responses for unknown email on login, resend OTP, forgot/reset password; constant-time dummy bcrypt | `auth.service.ts` |
 | Session revocation | `tokenVersion` bump on logout, password reset, password change | `auth.service.ts`, `users.service.ts` |
@@ -2721,7 +2703,7 @@ flowchart TB
 | Payment integrity | Stripe signature on untouched raw body; invoice row locks; unique PaymentIntent; idempotency key on refunds | `main.ts`, `stripe.service.ts`, `billing.service.ts` |
 | Information exposure | Swagger only outside production; 500s return a generic message; OTP codes redacted from production logs | `main.ts`, filter, `email.service.ts` |
 | Demo hardening | Shared demo accounts cannot change credentials, MFA, role, profile or delete, and logout does not revoke them | `src/demo/demo-account.guard.ts`, `AuthController.logout` |
-| AI controls | Admin AI off by default (404), admin-only, writes need explicit approval, PHI masking flag | `src/admin-ai/` and `../../docs/ai/AI_SECURITY_PLAN.md` |
+| AI controls | Admin AI off by default (404), admin-only, writes need explicit approval, PHI masking flag (on by default even though the model is local) | `src/admin-ai/` and `../../docs/ai/AI_SECURITY_PLAN.md` |
 
 ---
 
@@ -2735,6 +2717,8 @@ flowchart TB
 | Env validation | `src/config/env.validation.ts` | `validateEnv`, `EnvironmentVariables` | IMPLEMENTED |
 | Prisma client | `src/prisma/prisma.service.ts`, `src/prisma/prisma.module.ts` | `PrismaService`, `PrismaModule` | IMPLEMENTED |
 | CSRF middleware | `src/common/middleware/csrf.middleware.ts` | `csrfProtection` | IMPLEMENTED |
+| Access log | `src/common/middleware/access-log.middleware.ts` | `createAccessLogMiddleware`, `isAccessLogEnabled`, `REQUEST_ID_HEADER` | IMPLEMENTED |
+| Query validators | `src/common/validators/query-fields.ts` | `OptionalEntityId`, `OptionalQueryDate`, `OptionalDepartmentName` | IMPLEMENTED |
 | Response envelope | `src/common/interceptors/response.interceptor.ts` | `ResponseInterceptor` | IMPLEMENTED |
 | Error envelope | `src/common/filters/http-exception.filter.ts` | `HttpExceptionFilter` | IMPLEMENTED |
 | Roles | `src/common/guards/roles.guard.ts`, `src/common/decorators/roles.decorator.ts` | `RolesGuard`, `Roles` | IMPLEMENTED |
@@ -2746,7 +2730,8 @@ flowchart TB
 | Google guard / strategy | `src/auth/guards/google-auth.guard.ts`, `src/auth/strategies/google.strategy.ts` | `GoogleAuthGuard`, `GoogleStrategy` | IMPLEMENTED |
 | Cookies | `src/auth/auth-cookies.ts` | `setAuthCookies`, `clearAuthCookies`, `ACCESS_COOKIE`, `REFRESH_COOKIE`, `CSRF_HEADER` | IMPLEMENTED |
 | Auth service | `src/auth/auth.service.ts` | `AuthService` | IMPLEMENTED |
-| MFA | `src/auth/mfa.service.ts` | `MfaService` | IMPLEMENTED |
+| MFA | `src/auth/mfa.service.ts`, `src/auth/mfa-secret-crypto.ts` | `MfaService`, `encryptMfaSecret`, `decryptMfaSecret`, `parseMfaEncryptionKey` | IMPLEMENTED |
+| Auth audit | `src/auth/auth-audit.service.ts` | `AuthAuditService`, `AUTH_AUDIT_EVENTS` | IMPLEMENTED |
 | Password hashing | `src/auth/password.util.ts` | `hashPassword`, `verifyPassword`, `needsRehash` | IMPLEMENTED |
 | Demo guard | `src/demo/demo-account.guard.ts` | `DemoAccountGuard`, `isLockedDemoAccount` | IMPLEMENTED |
 | Account approvals | `src/account-approvals/account-approvals.service.ts` | `AccountApprovalsService`, `requiresApproval` | IMPLEMENTED |
@@ -2756,14 +2741,13 @@ flowchart TB
 | Emergency | `src/emergency/emergency.service.ts` | `EmergencyService`, `ALLOWED_STATUS_TRANSITIONS` | IMPLEMENTED |
 | Beds | `src/beds/beds.service.ts` | `BedsService.assign`, `release` | IMPLEMENTED |
 | Laboratory | `src/laboratory/laboratory.service.ts` | `LaboratoryService.requireLabAccess` | IMPLEMENTED |
-| Shifts | `src/staff-scheduling/shifts.service.ts` | `ShiftsService.create`, `createRecurring`, `assertNoSchedulingConflict`, `assignFromOpening` | IMPLEMENTED |
+| Shifts | `src/staff-scheduling/shifts.service.ts` | `ShiftsService.create`, `createRecurring`, `assertNoSchedulingConflict`, `assignFromOpeningInTx` | IMPLEMENTED |
 | Shift applications | `src/staff-scheduling/shift-applications.service.ts` | `ShiftApplicationsService.respond` | IMPLEMENTED |
 | Notifications | `src/notifications/notifications.service.ts` | `NotificationsService` | IMPLEMENTED |
 | Audit log | `src/audit-log/audit-log.service.ts` | `AuditLogService.log`, `findForEntity` | IMPLEMENTED |
 | Email | `src/email/email.service.ts` | `EmailService` | IMPLEMENTED |
 | Cron jobs | `src/appointments/appointment-reminders.service.ts`, `src/billing/invoice-reminders.service.ts`, `src/staff-scheduling/task-reminders.service.ts` | `*RemindersService` | IMPLEMENTED |
-| Assistant | `src/assistant/assistant.service.ts` | `AssistantService.chat` | IMPLEMENTED |
-| Admin AI | `src/admin-ai/admin-ai.module.ts`, `src/admin-ai/admin-ai.controller.ts`, `src/admin-ai/admin-ai.config.ts` | `AdminAiModule`, `AdminAiController`, `loadAdminAiConfig` | PARTIALLY IMPLEMENTED (opt-in) |
+| Admin AI | `src/admin-ai/admin-ai.module.ts`, `src/admin-ai/admin-ai.controller.ts`, `src/admin-ai/admin-ai.config.ts`, `src/admin-ai/providers/adapters/ollama.provider.ts` | `AdminAiModule`, `AdminAiController`, `loadAdminAiConfig`, `OllamaModelProvider` | PARTIALLY IMPLEMENTED (opt-in) |
 | Health | `src/health/health.controller.ts` | `HealthController.check` | IMPLEMENTED |
 | Schema | `../../database/api/schema.prisma` | — | IMPLEMENTED |
 | Deployment | `../../render.yaml`, `../../frontend/vercel.json` | — | PARTIALLY IMPLEMENTED (see gaps) |
@@ -2776,24 +2760,15 @@ flowchart TB
 
 These are observations about the current code, not recommendations.
 
-1. **Start command vs build output.** `render.yaml` and `package.json` (`start:prod`) run `node dist/main`, but the local build emits `dist/src/main.js`. `[B]` `tsconfig.json` has no `rootDir`/`include`, so files under `scripts/` widen the compiled root. Whether Render's build behaves differently is **unknown**.
-2. **Vercel rewrite placeholder.** `frontend/vercel.json` points `/api/:path*` at `https://YOUR-RENDER-SERVICE.onrender.com`; the real service URL must be set before deployment works.
-3. **Opt-in authentication.** There is no global auth guard and no `@Public()` decorator; a new controller without `@UseGuards(JwtAuthGuard, ...)` is public by default. Current public routes: `/health`, `/auth/*`, `/public/doctors/:id`, `/billing/webhooks/stripe`.
-4. **Global throttle covers health and webhook.** `@SkipThrottle` is not used, so `/api/health` and the Stripe webhook share the 120/min per-IP limit.
-5. **Unvalidated query strings.** Several list endpoints read raw `@Query('...')` strings (staff-scheduling shifts, staff, attendance, shift-openings, shift-applications, tasks; staff-portal shifts and tasks; chat `before`). `ValidationPipe` does not validate them; any checks happen in services.
-6. **Non-atomic multi-step writes.** Appointment booking creates the invoice after the Serializable transaction and compensates with a delete on failure; `createRecurring` uses per-occurrence transactions with a compensating `deleteMany`; shift-application approval creates the shift outside the claim transaction with a compensating transaction. A crash between steps can leave partial state.
-7. **Cron jobs on multiple instances.** Only appointment reminders claim rows before sending. Invoice and task reminders read then update after sending, so two concurrent instances could send duplicates `[B]`.
-8. **MFA secret at rest.** `User.mfaSecret` stores the base32 TOTP secret in plain text; no encryption in code.
-9. **No request/access logging** and no correlation IDs; only failed requests are logged.
-10. **CSRF rejections bypass the exception filter** (written directly by the middleware), so they are not logged.
-11. **Authentication events are not audited** (`AuditLogService` is not used in `src/auth`).
-12. **Notifications are poll-only**; no WebSocket/SSE push for notifications.
-13. **Swagger coverage is partial.** `@ApiTags`/`@ApiOperation` appear only on five staff-scheduling controllers; docs are disabled in production.
-14. **Port fallback mismatch.** `configuration.ts` defaults `PORT` to `3000`, so the `?? 3001` in `main.ts` is unreachable.
-15. **E2E coverage of cookie/CSRF path.** Only `integrity.e2e-spec.ts` installs `cookieParser` and `csrfProtection`; other suites use Bearer tokens.
-16. **Admin AI not configured on Render.** `render.yaml` defines no `ADMIN_AI_*`/`AI_*` variables (the feature is off by default); `DEMO_MODE` is also absent.
-17. **Duplicate class names.** `StaffController`/`StaffService` exist in both `src/staff` and `src/staff-scheduling`, which is easy to confuse in imports and logs.
-18. **No coverage thresholds** in Jest config.
+1. **Vercel rewrite placeholder.** `frontend/vercel.json` points `/api/:path*` at `https://YOUR-RENDER-SERVICE.onrender.com`; the real service URL must be set before deployment works.
+2. **Opt-in authentication.** There is no global auth guard and no `@Public()` decorator; a new controller without `@UseGuards(JwtAuthGuard, ...)` is public by default. Current public routes: `/health`, `/auth/*`, `/public/doctors/:id`, `/billing/webhooks/stripe`. Mitigation [A]: `src/common/route-guards.spec.ts` discovers every `*.controller.ts` and fails the unit tests (and so CI) when a handler lacks `JwtAuthGuard` without being on its explicit public allowlist, or when `@Roles(...)` is used without `RolesGuard`.
+3. **Notifications are poll-only**; no WebSocket/SSE push for notifications.
+4. **Swagger coverage is partial.** `@ApiTags`/`@ApiOperation` appear only on five staff-scheduling controllers; docs are disabled in production.
+5. **E2E coverage of cookie/CSRF path.** Only `integrity.e2e-spec.ts` installs `cookieParser` and `csrfProtection`; other suites use Bearer tokens. The middleware itself is unit-tested in `src/common/middleware/csrf.middleware.spec.ts`.
+6. **Duplicate class names.** `StaffController`/`StaffService` exist in both `src/staff` and `src/staff-scheduling`, which is easy to confuse in imports and logs.
+7. **No coverage thresholds** in Jest config.
+8. **Admin AI not verified live.** The Ollama adapter is covered by unit tests with a mocked `fetch` and the e2e suite uses a fake provider; no run against a real Ollama server has been made yet, and the default `AI_MODEL` (`llama3.1:8b`) is a placeholder until a model is chosen for the target hardware.
+9. **Admin AI cannot run on Render as deployed.** `render.yaml` keeps `ADMIN_AI_ENABLED=false` because the Render service cannot reach an Ollama on a local machine.
 
 ---
 
@@ -2801,15 +2776,8 @@ These are observations about the current code, not recommendations.
 
 `[D]` None of the following exist in the code today.
 
-1. Fix the start path: set `rootDir: "src"` (or an `include`) in `tsconfig.build.json`, or change the start command to the emitted path, then verify on Render.
-2. Register `JwtAuthGuard` and `RolesGuard` globally with an explicit `@Public()` decorator so new routes are protected by default.
-3. Add `@SkipThrottle()` to `HealthController` and `StripeWebhookController`.
-4. Replace raw `@Query` strings with DTO classes so `ValidationPipe` enforces types and enums.
-5. Move post-commit side effects (invoices, notifications, emails) to a transactional outbox, or fold the invoice insert into the booking transaction.
-6. Use a claim-before-send `updateMany` for invoice and task reminders, or a distributed lock, before running more than one instance.
-7. Encrypt `mfaSecret` at rest with a key from the environment.
-8. Add a request-logging interceptor with a correlation ID, and send CSRF rejections through the filter.
-9. Audit login, logout, MFA and password events.
-10. Add Swagger decorators across controllers and a CI check that the generated spec builds.
-11. Add `ADMIN_AI_*` variables (disabled by default) to `render.yaml` for parity with `.env.example`.
-12. Add Jest coverage thresholds for critical services (auth, billing, appointments, emergency).
+1. Register `JwtAuthGuard` and `RolesGuard` globally with an explicit `@Public()` decorator so new routes are protected by default (today `route-guards.spec.ts` catches unguarded handlers at test time instead).
+2. Move post-commit side effects (notifications, emails, audit entries) to a transactional outbox.
+3. Add Swagger decorators across controllers and a CI check that the generated spec builds.
+4. Add Jest coverage thresholds for critical services (auth, billing, appointments, emergency).
+5. Give the Render-hosted API a way to reach a self-hosted Ollama (the planned "Local AI Bridge" phase), or keep the copilot to locally run deployments.

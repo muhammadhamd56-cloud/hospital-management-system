@@ -4,9 +4,9 @@
 >
 > - **Frontend:** [`frontend/ARCHITECTURE.md`](frontend/ARCHITECTURE.md) (routing, state, components, API client, auth UI)
 > - **Backend:** [`backend/api/ARCHITECTURE.md`](backend/api/ARCHITECTURE.md) (modules, endpoints, guards, database/ER diagrams, workflows)
-> - **Admin AI Copilot:** [`docs/ai/AI_ARCHITECTURE.md`](docs/ai/AI_ARCHITECTURE.md), [`docs/ai/AI_SECURITY_PLAN.md`](docs/ai/AI_SECURITY_PLAN.md)
+> - **Admin AI Copilot:** [`docs/ai/AI_ARCHITECTURE.md`](docs/ai/AI_ARCHITECTURE.md), [`docs/ai/AI_SECURITY_PLAN.md`](docs/ai/AI_SECURITY_PLAN.md), [`docs/ai/AI_DEPLOYMENT.md`](docs/ai/AI_DEPLOYMENT.md)
 >
-> Everything here was verified against the source on branch `feature/admin-ai` (2026-11-18). Each statement is labelled as **implemented** (seen in code), **inferred** (a relationship the code supports but does not state outright), **gap** (missing or unverifiable) or **recommendation** (future work, never drawn as if it exists).
+> Everything here was verified against the source on branch `feature/admin-ai-ollama` (2026-11-20). Each statement is labelled as **implemented** (seen in code), **inferred** (a relationship the code supports but does not state outright), **gap** (missing or unverifiable) or **recommendation** (future work, never drawn as if it exists).
 
 ## Table of contents
 
@@ -48,7 +48,7 @@ MediCore is a **modular monolith**: a single-page React app talks to a single Ne
 
 | Role | Who | Notes |
 |---|---|---|
-| `ADMIN` | Hospital administrators | Full management dashboard and the Admin AI Copilot |
+| `ADMIN` | Hospital administrators | Full management dashboard and the Admin AI Copilot (opt-in) |
 | `DOCTOR` | Physicians | Doctor portal: own appointments, patients, records and prescriptions. Must be admin-approved. |
 | `PATIENT` | Patients | Self-service booking, records, billing and messages |
 | `STAFF` | Every non-doctor employee | Nurse, receptionist, pharmacist, lab technician or other. The specific job is `Staff.staffType`, not the role. Must be admin-approved. |
@@ -60,9 +60,9 @@ MediCore is a **modular monolith**: a single-page React app talks to a single Ne
 | Layer | Technology (from `package.json` and config) |
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, `react-router` v8 (data router via `RouterProvider`), `react-hook-form` + `zod` (forms), `react-hot-toast`, `recharts`, `jspdf` (PDF export), `@sentry/react`, `lucide-react`. No global state or server-cache library is installed (no Redux, Zustand or React Query). |
-| Backend | NestJS 10 (Express platform), TypeScript, `class-validator` and `class-transformer`, Passport (`passport-jwt` and Google OAuth 2.0 strategy), `@nestjs/jwt`, `@nestjs/throttler`, `@nestjs/schedule`, `@nestjs/swagger` (outside production only), `helmet`, `compression`, `cookie-parser`, `bcryptjs`, `otplib` with `qrcode` (TOTP MFA), `@sentry/node`, `zod` (Admin AI tools only) |
+| Backend | NestJS 10 (Express platform), TypeScript, `class-validator` and `class-transformer`, Passport (`passport-jwt` and Google OAuth 2.0 strategy), `@nestjs/jwt`, `@nestjs/throttler`, `@nestjs/schedule`, `@nestjs/swagger` (outside production only), `helmet`, `compression`, `cookie-parser`, `bcryptjs`, `otplib` with `qrcode` (TOTP MFA), `@sentry/node`, `zod` (Admin AI tools only). The Admin AI talks to Ollama over native `fetch` (no AI SDK). |
 | Data | Prisma 6 ORM; PostgreSQL (Neon in production, local Postgres in development and CI) |
-| External | Google OAuth, Resend (email), Stripe (Checkout and webhooks), Anthropic Claude API (patient/doctor/staff assistant and Admin AI Copilot), Sentry (errors) |
+| External | Google OAuth, Resend (email), Stripe (Checkout and webhooks), Sentry (errors), Ollama (self-hosted local model server for the opt-in Admin AI Copilot) |
 | Hosting | Vercel (static SPA and `/api` rewrite), Render (Node web service), Neon (Postgres) |
 | CI | GitHub Actions (`.github/workflows/`): backend lint, unit tests, e2e against Postgres 16, and build; frontend job |
 
@@ -117,7 +117,7 @@ flowchart LR
         Google["Google OAuth 2.0"]
         Resend["Resend<br/>transactional email"]
         Stripe["Stripe<br/>Checkout + webhooks"]
-        Anthropic["Anthropic Claude API"]
+        Ollama["Ollama<br/>self-hosted local model"]
         Sentry["Sentry<br/>error reporting"]
     end
 
@@ -130,7 +130,7 @@ flowchart LR
     HMS -->|"OTP, reset, reminder emails"| Resend
     HMS -->|"create / expire Checkout sessions"| Stripe
     Stripe -->|"signed webhook events"| HMS
-    HMS -->|"assistant + admin copilot calls"| Anthropic
+    HMS -->|"admin copilot model calls (opt-in)"| Ollama
     HMS -->|"exceptions (browser + server)"| Sentry
 ```
 
@@ -157,7 +157,7 @@ flowchart TB
     Google["Google OAuth"]
     Resend["Resend"]
     Stripe["Stripe"]
-    Anthropic["Anthropic API"]
+    Ollama["Ollama model server<br/>self-hosted, AI_BASE_URL"]
     Sentry["Sentry"]
 
     Browser -->|"HTTPS: HTML, JS, CSS"| SPA
@@ -172,7 +172,7 @@ flowchart TB
     API --> Resend
     API --> Stripe
     Stripe -->|"POST /api/billing/webhooks/stripe"| API
-    API --> Anthropic
+    API -.->|"Admin AI only, off on Render"| Ollama
     API --> Sentry
     SPA --> Sentry
 ```
@@ -246,7 +246,6 @@ sequenceDiagram
 | `chat` | `chat` | Messages page (`pages/messages`) |
 | `account-approvals` | `account-approvals` | Approvals queue (`features/accountApprovals`) |
 | `platform-settings` | `platform-settings` | Settings page (`pages/settings`) |
-| `assistant` | `assistant` | Assistant widget for non-admin roles (`features/assistant`) |
 | `admin-ai` | `admin-ai` | Admin Copilot (`features/adminCopilot`); returns 404 unless `ADMIN_AI_ENABLED=true` |
 | `health` | `health` | Render health check only |
 
@@ -300,8 +299,9 @@ flowchart TB
 | CSRF | A state-changing request carrying a session cookie must send `X-HMS-CSRF: 1`, otherwise it gets 403 | `backend/api/src/common/middleware/csrf.middleware.ts` |
 | Revocation | `User.tokenVersion` is compared on every request; logout and password changes bump it | `backend/api/src/auth/strategies/jwt.strategy.ts` |
 | Google OAuth | Passport Google strategy; the callback sets cookies and redirects to `CLIENT_URL`; if MFA is enabled it hands off to `POST /auth/mfa/verify` | `backend/api/src/auth/auth.controller.ts`, `strategies/google.strategy.ts` |
-| MFA | TOTP via `otplib`, plus backup codes | `backend/api/src/auth/mfa.service.ts` |
-| Frontend gate | `AuthProvider` holds the current user; `ProtectedRoute` requires a session; `RoleRoute` restricts by role | `frontend/src/features/auth/AuthContext.tsx`, `frontend/src/routes/ProtectedRoute.tsx`, `RoleRoute.tsx` |
+| MFA | TOTP via `otplib`, plus hashed backup codes. The TOTP secret is encrypted at rest with AES-256-GCM using `MFA_ENCRYPTION_KEY` (required in production; legacy plain-text values are still read) | `backend/api/src/auth/mfa.service.ts`, `mfa-secret-crypto.ts` |
+| Auth audit | Logins (password and Google), failed logins, logout, password reset/set/change and MFA events are written to `AuditLog` by `AuthAuditService` | `backend/api/src/auth/auth-audit.service.ts` |
+| Frontend gate | `AuthProvider` holds the current user; `ProtectedRoute` requires a session; `RoleRoute` restricts by role and shows `AccessDenied` to a signed-in user whose role is not allowed | `frontend/src/features/auth/AuthContext.tsx`, `frontend/src/routes/ProtectedRoute.tsx`, `RoleRoute.tsx` |
 
 The frontend route guards are **UX only**. The real boundary is the API guard chain: every protected controller uses `@UseGuards(JwtAuthGuard, RolesGuard)`.
 
@@ -318,7 +318,8 @@ flowchart LR
     Json --> Helmet["helmet"]
     Helmet --> Comp["compression"]
     Comp --> Cookie["cookie-parser"]
-    Cookie --> Csrf["csrfProtection"]
+    Cookie --> Log["access log<br/>X-Request-Id, off in tests"]
+    Log --> Csrf["csrfProtection"]
     Csrf --> Cors["CORS<br/>origin CLIENT_URL, credentials"]
     Cors --> Thr["ThrottlerGuard (APP_GUARD)<br/>120 req per 60 s, off in tests"]
     Thr --> Jwt["JwtAuthGuard"]
@@ -398,8 +399,7 @@ flowchart TB
     end
 
     subgraph AI["AI"]
-        Assistant["AssistantModule"]
-        AdminAi["AdminAiModule"]
+        AdminAi["AdminAiModule<br/>Ollama adapter"]
     end
 
     Clinical --> Core
@@ -422,6 +422,8 @@ flowchart TB
 | Appointment reminders | `EVERY_10_MINUTES` | `backend/api/src/appointments/appointment-reminders.service.ts` |
 | Invoice reminders | `EVERY_10_MINUTES` | `backend/api/src/billing/invoice-reminders.service.ts` |
 | Staff task reminders | `EVERY_10_MINUTES` | `backend/api/src/staff-scheduling/task-reminders.service.ts` |
+
+Each job claims a row with a conditional `updateMany` (for example `where reminderSentAt IS NULL`) **before** sending, so overlapping runs or several instances cannot send the same reminder twice (at-most-once delivery).
 
 **Not found:** message queues (BullMQ, Redis), worker processes and event emitters.
 
@@ -447,12 +449,12 @@ flowchart LR
 | Frontend hosting | Vercel; `/api/:path*` is rewritten to `https://YOUR-RENDER-SERVICE.onrender.com/api/:path*` (a placeholder that must be edited); SPA fallback; `nosniff`, `X-Frame-Options`, `Referrer-Policy` and `Permissions-Policy` headers | `frontend/vercel.json` |
 | Backend hosting | Render web service, free plan, `rootDir: backend/api`, health check `/api/health`, `TRUST_PROXY_HOPS=2` | `render.yaml` |
 | Migrations | `prisma migrate deploy` on every start | `render.yaml` |
-| Backend env vars | `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `JWT_REFRESH_SECRET`, `JWT_REFRESH_EXPIRES_IN`, `COOKIE_SAMESITE`, `TRUST_PROXY_HOPS`, `CLIENT_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `PORT`, `NODE_ENV`, and `ADMIN_AI_ENABLED` and the `AI_*` flags | `render.yaml`, `backend/api/.env.example` |
+| Backend env vars | `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `JWT_REFRESH_SECRET`, `JWT_REFRESH_EXPIRES_IN`, `COOKIE_SAMESITE`, `TRUST_PROXY_HOPS`, `CLIENT_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `PORT`, `NODE_ENV`, `MFA_ENCRYPTION_KEY` (required in production), `DEMO_MODE` (`render.yaml` only, `"false"`), and `ADMIN_AI_ENABLED` and the `AI_*` flags (`AI_PROVIDER`, `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`, `AI_CONTEXT_TOKENS` and the budgets; `render.yaml` keeps `ADMIN_AI_ENABLED="false"`) | `render.yaml`, `backend/api/.env.example` |
 | Frontend env vars | `VITE_API_URL`, `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_DEMO_MODE` | `frontend/.env.example` |
 | CORS | `origin: CLIENT_URL`, `credentials: true` (same-origin through the rewrite in production) | `backend/api/src/main.ts` |
 | API docs | Swagger at `/api/docs`, **disabled when `NODE_ENV=production`** | `backend/api/src/main.ts` |
 
-> **Known deployment defect (gap).** The `render.yaml` start command runs `node dist/main`, but `nest build` with the current `tsconfig` emits `dist/src/main.js`. Verify the path on Render before relying on the blueprint.
+> **Build output.** `backend/api/tsconfig.build.json` limits the build to `src/**/*`, so `nest build` emits `dist/main.js`, which matches the `render.yaml` start command (`node dist/main`) and `npm run start:prod`.
 
 ## 15. Testing and CI
 
@@ -468,13 +470,15 @@ flowchart LR
 | Boundary | Control | Status |
 |---|---|---|
 | Browser to API | HTTPS, httpOnly cookies, CSRF header, CORS limited to `CLIENT_URL`, Helmet headers | Implemented |
-| Abuse | Global throttler at 120 requests per minute per IP (proxy-aware through `trust proxy`); tighter per-route `@Throttle` on authentication | Implemented |
+| Abuse | Global throttler at 120 requests per minute per IP (proxy-aware through `trust proxy`); tighter per-route `@Throttle` on authentication; `/api/health` and the Stripe webhook are exempt (`@SkipThrottle()`) | Implemented |
 | Identity | JWT re-validated against the DB on every request; `tokenVersion` revocation; admin approval gate for DOCTOR and STAFF | Implemented |
 | Authorization | `RolesGuard` per route, plus ownership checks in services | Implemented |
-| Input | Global `ValidationPipe` (whitelist and `forbidNonWhitelisted`); request body limit 3 MB | Implemented |
+| Input | Global `ValidationPipe` (whitelist and `forbidNonWhitelisted`) on bodies and on query strings (every `@Query()` is bound to a DTO class); request body limit 3 MB | Implemented |
 | Payments | The Stripe webhook verifies its signature over the raw body | Implemented |
-| Audit | `AuditLog` model and `AuditLogModule`, written by sensitive flows | Implemented (coverage per flow is listed in the backend document) |
-| AI | Admin AI: feature flag, admin-only, tool allowlist, PHI masking, human-approved writes. See `docs/ai/AI_SECURITY_PLAN.md`. | Implemented, off by default |
+| Audit | `AuditLog` model and `AuditLogModule`, written by sensitive flows and by authentication events (`AuthAuditService`) | Implemented (coverage per flow is listed in the backend document) |
+| AI | Admin AI: feature flag, admin-only, tool allowlist, PHI masking (on by default), human-approved writes. The model runs locally in Ollama, so prompts and tool results stay on the machine running it unless `AI_BASE_URL` points elsewhere. See `docs/ai/AI_SECURITY_PLAN.md`. | Implemented, off by default |
+| Secrets at rest | Passwords and one-time codes are bcrypt-hashed; the MFA TOTP secret is AES-256-GCM encrypted with `MFA_ENCRYPTION_KEY` | Implemented |
+| Request logging | One access-log line per request with an `X-Request-Id`, registered before the CSRF check so rejections are logged too | Implemented |
 | Secrets | Only names appear in docs; values are in Render/Vercel env or set by `sync: false` | Implemented |
 
 ## 17. Source-code references
@@ -489,31 +493,29 @@ flowchart LR
 | Backend bootstrap | `backend/api/src/main.ts` |
 | Root module | `backend/api/src/app.module.ts` |
 | Config and env validation | `backend/api/src/config/configuration.ts`, `backend/api/src/config/env.validation.ts` |
-| Auth | `backend/api/src/auth/` (controller, service, `strategies/`, `guards/`, `auth-cookies.ts`, `mfa.service.ts`) |
-| Cross-cutting | `backend/api/src/common/` (`guards/roles.guard.ts`, `decorators/`, `filters/http-exception.filter.ts`, `interceptors/response.interceptor.ts`, `middleware/csrf.middleware.ts`) |
+| Auth | `backend/api/src/auth/` (controller, service, `strategies/`, `guards/`, `auth-cookies.ts`, `mfa.service.ts`, `mfa-secret-crypto.ts`, `auth-audit.service.ts`) |
+| Cross-cutting | `backend/api/src/common/` (`guards/roles.guard.ts`, `decorators/`, `filters/http-exception.filter.ts`, `interceptors/response.interceptor.ts`, `middleware/csrf.middleware.ts`, `middleware/access-log.middleware.ts`, `validators/query-fields.ts`) |
 | Prisma | `backend/api/src/prisma/prisma.service.ts`, `database/api/schema.prisma`, `database/api/migrations/` |
-| Integrations | `backend/api/src/email/email.service.ts` (Resend), `backend/api/src/billing/stripe.service.ts`, `backend/api/src/auth/strategies/google.strategy.ts`, `backend/api/src/assistant/assistant.service.ts`, `backend/api/src/admin-ai/providers/adapters/anthropic.provider.ts` |
+| Integrations | `backend/api/src/email/email.service.ts` (Resend), `backend/api/src/billing/stripe.service.ts`, `backend/api/src/auth/strategies/google.strategy.ts`, `backend/api/src/admin-ai/providers/adapters/ollama.provider.ts` |
 | Deployment | `render.yaml`, `frontend/vercel.json`, `.github/workflows/` |
 
 ## 18. Known gaps and limitations
 
 These are observations, not fixes.
 
-1. **Render start path.** `node dist/main` does not match the build output `dist/src/main.js`.
-2. **Vercel rewrite placeholder.** `frontend/vercel.json` contains `YOUR-RENDER-SERVICE`, so the real host must be set before deploying.
-3. **No dedicated job runner.** Cron jobs run inside the web process and pause while a free-plan instance sleeps (inferred).
-4. **One connection string.** There is no `directUrl`, and pooled versus direct Neon usage cannot be verified from the repository.
-5. **Coarse roles.** `STAFF` covers several jobs; differences by job type are enforced in a few services only, not by a guard.
-6. **Admin AI is unverified live.** No real model call has been made yet (needs `AI_API_KEY`), and SSE streaming through the Vercel rewrite is unverified.
+1. **Vercel rewrite placeholder.** `frontend/vercel.json` contains `YOUR-RENDER-SERVICE`, so the real host must be set before deploying.
+2. **No dedicated job runner.** Cron jobs run inside the web process and pause while a free-plan instance sleeps (inferred).
+3. **One connection string.** There is no `directUrl`, and pooled versus direct Neon usage cannot be verified from the repository.
+4. **Coarse roles.** `STAFF` covers several jobs; differences by job type are enforced in a few services only, not by a guard.
+5. **Admin AI is unverified live.** No run against a real Ollama server has been made yet (the adapter is tested with a mocked `fetch`), the default model `llama3.1:8b` is a placeholder until a model is chosen for the hardware, and SSE streaming through the Vercel rewrite is unverified.
+6. **Admin AI is off on Render.** A Render service cannot reach an Ollama running on a local machine, so `render.yaml` keeps `ADMIN_AI_ENABLED=false`. A "Local AI Bridge" is planned as a later phase.
 7. **No real-time push.** There are no WebSockets. The frontend polls: notifications every 30 s and the emergency board every 15 s. The only streaming response is the Admin Copilot's SSE.
-8. **Partly non-atomic writes.** Booking an appointment and creating its invoice, recurring shifts, and shift-application approval use compensation steps instead of a single transaction. See the backend document's "Known gaps".
-9. **Stray directory.** `server-nest/` at the root is empty and untracked.
+8. **Stray directory.** `server-nest/` at the root is empty and untracked.
 
 ## 19. Future recommendations
 
 > These are **not implemented**, and none of them is drawn in the diagrams above.
 
-- Fix the `render.yaml` start command, or set `outDir`/`rootDir` so that `dist/main.js` is emitted.
 - Add a `directUrl` for migrations and use Neon's pooled URL for the app.
 - If reminder volume grows or the plan changes, move cron work to a scheduled job or worker.
 - Consider a guard keyed on `staffType` if job-specific permissions spread beyond the laboratory.

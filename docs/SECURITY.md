@@ -79,7 +79,6 @@ in the services. Hiding a button in the UI is never the only control.
 | Emergency: assign team, priority | ✅ | ✅ | — | — |
 | Platform settings, announcements (create) | ✅ | — | — | — |
 | Review doctor/staff signups (account approvals) | ✅ | — | — | — |
-| AI assistant | own data, read-only navigation | ✅ | ✅ | ✅ |
 
 **Self-signup and approval**: `doctor`, `patient` and `staff` can be chosen
 at signup (or on the Google role picker); `admin` cannot. **Doctor and staff
@@ -121,11 +120,6 @@ since changed their password. Treat it as a starting point.)
   PaymentIntent. Financial actions are audit-logged with the actor.
 - **Card data** never touches this system: Stripe Checkout hosts payment
   entry.
-- **AI assistant**: receives the user's role, page context and
-  navigation-relevant names. It does **not** receive email addresses or
-  clinical free text. Its tools are read-only and re-check ownership. Using
-  it in production still requires a data-processing agreement with the
-  provider.
 - **Logs**: no passwords, tokens or one-time codes (in production). 5xx
   errors go to Sentry. Clients only ever see "Internal server error".
 

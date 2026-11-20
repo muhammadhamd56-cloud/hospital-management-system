@@ -7,8 +7,10 @@ The goal is that the model can only ever read data the signed-in admin could alr
 ```
 Browser (admin)  --cookie session + CSRF-->  NestJS  --tools (validated, authorized)-->  domain services --> Postgres
                                                |
-                                               +--> Model provider (system prompt, masked tool results, chat text)
+                                               +--> Ollama model server at AI_BASE_URL (system prompt, masked tool results, chat text)
 ```
+
+The model is a local model served by Ollama. Everything sent to it stays on the machine running Ollama, unless `AI_BASE_URL` points at another host. The controls below do not depend on where the model runs: PHI masking, output allowlists and approvals apply the same way.
 
 The model has no credentials, no database access and no SQL. It can only ask for a named tool. NestJS decides whether that tool runs, with which validated arguments, and what the result contains.
 
@@ -17,7 +19,7 @@ The model has no credentials, no database access and no SQL. It can only ask for
 | Threat | Control | Where |
 |---|---|---|
 | Unauthenticated or non-admin access | `JwtAuthGuard` re-validates the session, role, approval and tokenVersion on every request. `RolesGuard` with `@Roles(ADMIN)` sits on the whole controller. `isApprovedAdmin()` is checked again in the orchestrator and the policy. | `admin-ai.controller.ts`, `ai-policy.service.ts` |
-| Feature off | `ADMIN_AI_ENABLED=false` makes every route return 404, and the UI falls back to the old assistant. | `admin-ai-enabled.guard.ts` |
+| Feature off | `ADMIN_AI_ENABLED=false` makes every route return 404, and the copilot UI renders nothing. | `admin-ai-enabled.guard.ts`, `AdminCopilot.tsx` |
 | Identity spoofing in the body or prompt | Identity comes only from `request.user`. Unknown body fields are rejected by `forbidNonWhitelisted` (an e2e test sends `role` and `userId`). `activeModule` is validated against the 15 domains and used as context only. | DTOs, `context-builder.ts` |
 | Cross-user conversation access | Every query is scoped by `userId` in the same `where`. Another admin's conversation returns 404 (indistinguishable from not found). Proposals and feedback are scoped the same way. | `ai-store.service.ts`, `ai-proposal.service.ts` |
 | Tool misuse or privilege escalation | The model only sees specs for permitted tools. The dispatcher re-checks permission on every call, rejects unknown tools, and denies `propose` tools while writes are off, even when the model calls them anyway. | `tool-registry.service.ts`, `tool-dispatcher.service.ts` |
@@ -29,7 +31,8 @@ The model has no credentials, no database access and no SQL. It can only ask for
 | Fabricated success claims | Outcomes are shown from proposal rows (status, `executedAt`, `result`), never from model text. The prompt forbids claiming completion. | `ProposalCard.tsx`, prompt |
 | Runaway cost or loops | <ul><li>max iterations (default 8)</li><li>max tool calls (default 12)</li><li>a per-run token budget (150k)</li><li>a per-admin daily token budget</li><li>a wall-clock timeout (90 s)</li><li>a per-tool timeout (15 s)</li><li>throttling (15 messages/min, 20 approvals/min)</li><li>a single active run per conversation</li></ul> | orchestrator, controller |
 | Duplicate submits | A client idempotency key is unique per `(userId, requestKey)`. A repeat replays the stored answer. | `AiRun` unique index |
-| Secrets leakage | The API key is read only on the backend, and the status endpoint exposes no keys. Credential-shaped strings are redacted from replies. Internal error details are never sent to the model or the client. | `phi-masker.ts`, dispatcher, orchestrator |
+| Secrets leakage | `AI_BASE_URL` and the optional `AI_API_KEY` (only needed for an Ollama behind an authenticating proxy) are read only on the backend. The status endpoint exposes no keys or URLs, and the settings tool reports only whether a model server URL is configured (`modelServerConfigured`). Credential-shaped strings are redacted from replies. Internal error details are never sent to the model or the client. | `admin-ai.config.ts`, `settings.ai-tools.ts`, `phi-masker.ts`, dispatcher, orchestrator |
+| Model server transport | The backend calls Ollama over `AI_BASE_URL`, which defaults to `http://localhost:11434`. Only `http` and `https` URLs are accepted. When Ollama runs on another machine, plain `http` would carry prompts and tool results unencrypted, so use `https` or a private network, and an authenticating proxy if anything else can reach the server. | `admin-ai.config.ts`, `ollama.provider.ts` |
 | Sensitive logging | <ul><li>Run logs hold ids, counts, durations and status only.</li><li>Tool invocations store argument names, not values.</li><li>Tool results are never persisted.</li><li>Audit entries hold the tool name and argument keys.</li></ul> | metrics, store |
 | Rendering attacks | The copilot Markdown renderer builds React elements only, with no `innerHTML`, and renders links as plain text. Navigation-free by design. | `Markdown.tsx` |
 | CSRF on streaming | The stream is a cookie-authenticated POST with the `X-HMS-CSRF` header, the same as every other write. No token ever appears in a URL. | `features/adminCopilot/api.ts` |
@@ -57,6 +60,7 @@ Each entry is keyed by the run id or the proposal id. Runs, tool invocations and
 
 ## Open items
 
-1. **PHI.** Keep `AI_ALLOW_PHI=false` until a data-processing agreement, a retention setting (for example, zero data retention where eligible) and an internal compliance sign-off exist.
+1. **PHI.** Keep `AI_ALLOW_PHI=false` until an internal compliance sign-off exists. With a local Ollama no third party receives the data, so the review covers the machine that runs Ollama (who can access it, disk encryption, and whatever Ollama and the OS log). A data-processing agreement is only needed if `AI_BASE_URL` points at a host run by someone else.
 2. **Writes.** Enable `AI_ENABLE_WRITES` in production only after the approval workflow passes in staging with real admin accounts.
-3. **Sub-admin scopes.** The HMS has no sub-admin scopes, so every admin can see all financial and administrative AI data, the same as the existing pages. When finer admin roles are added, extend `AiPolicyService.resolvePermissions`.
+3. **Live verification.** No run against a real Ollama server has been made yet. Before enabling the feature anywhere, repeat the injection and approval checks against the chosen local model, since smaller local models may follow tool and refusal instructions less reliably than the tests' scripted provider.
+4. **Sub-admin scopes.** The HMS has no sub-admin scopes, so every admin can see all financial and administrative AI data, the same as the existing pages. When finer admin roles are added, extend `AiPolicyService.resolvePermissions`.

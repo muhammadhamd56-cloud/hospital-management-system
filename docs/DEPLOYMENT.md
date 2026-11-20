@@ -44,8 +44,8 @@ The blueprint in `render.yaml` sets the non-secret values. Fill in the
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth client |
 | `RESEND_API_KEY` | Required for signup and password reset in production (codes are never logged there) |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Optional. Without them, online payment is clearly reported as unavailable |
-| `ANTHROPIC_API_KEY` | Optional (assistant returns 503 without it) |
 | `SENTRY_DSN` | Optional |
+| `AI_BASE_URL` / `AI_API_KEY` | Leave empty for now. The Admin AI Copilot runs on a local model through Ollama, and a Render service cannot reach an Ollama on a local machine, so the blueprint keeps `ADMIN_AI_ENABLED="false"`. See `docs/ai/AI_DEPLOYMENT.md` |
 
 Set by the blueprint: `NODE_ENV=production` (Secure cookies, no Swagger,
 no codes in logs), `TRUST_PROXY_HOPS=2` (Render LB + Vercel rewrite, so

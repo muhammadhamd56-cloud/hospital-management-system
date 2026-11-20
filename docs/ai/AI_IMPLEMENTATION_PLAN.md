@@ -7,7 +7,7 @@ Order of work: discovery → foundation → intelligence → interface → enter
 | 0 Discovery | Audit the codebase, decide what to reuse, list risks and gaps | Done (AI_EXISTING_SYSTEM_AUDIT.md) |
 | 1 AI module | `src/admin-ai` structure, dependency injection, typed config, guards | Done |
 | 2 Prisma | 6 models and 5 enums; additive migration; indexes, unique constraints, pagination | Done; applied to the local dev and test databases |
-| 3 Provider gateway | Provider-neutral interface, Anthropic adapter, error normalisation, timeouts, retries, env flags | Done (mock-verified; no live key available) |
+| 3 Provider gateway | Provider-neutral interface, model adapter, error normalisation, timeouts, retries, env flags. Since 2026-11-20 the adapter is `OllamaModelProvider` (local model over Ollama's HTTP API), replacing the original hosted-API adapter | Done (mock-verified; no live Ollama run yet) |
 | 4 Orchestrator | Bounded loop with budgets, cancellation, idempotency, rate limits, ownership, reply validation | Done |
 | 5 Tool registry and 15 domains | Typed registry, dispatcher, 46 tools over existing services | Done |
 | 6 Security | Admin-only guards, policy engine, input/output allowlists, PHI masking, injection boundaries, audit | Done (AI_SECURITY_PLAN.md) |
@@ -17,10 +17,12 @@ Order of work: discovery → foundation → intelligence → interface → enter
 | 10 Async jobs | BullMQ + Redis only where justified | **Deliberately not added.** No current workload needs it (see below). |
 | 11 Observability | Structured run logs, usage endpoint, cost estimate, trace via runId | Done |
 | 12 Testing | Unit, e2e (HTTP + SSE + real domain tool), security cases, frontend, regression | Done (results in AI_PROGRESS.md) |
+| Next: hardware check and model choice | Check the target machine, pick a tool-capable Ollama model that fits it, set `AI_MODEL` and `AI_CONTEXT_TOKENS`, then run the copilot live against it | **Not started.** `AI_MODEL=llama3.1:8b` is a placeholder |
+| Later: Local AI Bridge | Let the Render-hosted API reach a self-hosted Ollama | **Planned.** Until then Render keeps `ADMIN_AI_ENABLED=false` |
 
 ## Phase 9 (RAG): what is needed to proceed
 
-1. **An embedding provider.** Anthropic has no embeddings endpoint, so a choice is needed (for example Voyage AI or another approved vendor), along with its data-processing terms.
+1. **An embedding model.** Ollama can also serve embedding models locally (through its `/api/embed` endpoint), which would keep documents on the same machine as the chat model. A model has to be chosen and its retrieval quality checked; a hosted embedding vendor would instead need data-processing terms. No embedding code exists yet.
 2. **pgvector on the target Postgres.** Neon supports `CREATE EXTENSION vector`, but the local Postgres 18 used for development does not have it installed. The migration must be verified on both.
 3. **An approved corpus and an owner.** Policies and SOPs only, with access metadata and a review process. No patient records.
 

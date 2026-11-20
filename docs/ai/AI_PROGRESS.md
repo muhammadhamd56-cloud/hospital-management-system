@@ -1,6 +1,17 @@
 # MediCore Admin AI: progress log
 
-Branch: `feature/admin-ai`, based on `hardening/security-billing-approvals` at `0500ae4`. Nothing is committed yet.
+Branch: `feature/admin-ai`, based on `hardening/security-billing-approvals` at `0500ae4` (since merged to `main` as PR #2).
+
+## Update 2026-11-20: local model through Ollama
+
+On branch `feature/admin-ai-ollama` the copilot was kept, but its model provider changed:
+
+- The hosted-API adapter and its spec were deleted, and the SDK dependency was uninstalled. The new adapter is `providers/adapters/ollama.provider.ts`, tested by `providers/ollama.provider.spec.ts` (mocked `fetch`). It streams Ollama's `POST /api/chat`, generates its own tool-call ids, and sends `num_predict` and `num_ctx`.
+- Config: `AI_PROVIDER` defaults to `ollama`, `AI_MODEL` to `llama3.1:8b` (a placeholder until the hardware check picks a model), and there are two new variables, `AI_BASE_URL` (default `http://localhost:11434`) and `AI_CONTEXT_TOKENS` (default 16384). `AI_API_KEY` is optional, for an Ollama behind an authenticating proxy.
+- The settings tool now reports `modelServerConfigured` and flags an invalid `AI_BASE_URL`.
+- The separate navigation assistant for the other roles was removed. `DashboardLayout` renders `<AdminCopilot/>` for admins only, and the copilot renders nothing when the feature is off.
+- `render.yaml` keeps `ADMIN_AI_ENABLED=false`, because Render cannot reach an Ollama on a local machine.
+- **Not done yet:** a live run against a real Ollama server, and the hardware check and model choice. The test results further down were recorded on 2026-11-17/18, before this switch, and have not been re-run for this update.
 
 ## Status by phase
 
@@ -9,11 +20,11 @@ Branch: `feature/admin-ai`, based on `hardening/security-billing-approvals` at `
 | 0 Discovery | ✅ | AI_EXISTING_SYSTEM_AUDIT.md |
 | 1 Module foundation | ✅ | `backend/api/src/admin-ai`, registered in `AppModule` |
 | 2 Prisma | ✅ | Migration `20261117183437_admin_ai_copilot` (additive). Applied to the local dev and test databases; **not applied to production**. |
-| 3 Provider gateway | ✅ (mock-verified) | No API key exists in this environment, so a **live provider call has not been verified**. The live server correctly answers 503 "not configured". |
+| 3 Provider gateway | ✅ (mock-verified) | Now the Ollama adapter. No Ollama server has been run against yet, so a **live provider call has not been verified**. |
 | 4 Orchestrator | ✅ | |
 | 5 Tool registry and 15 domains | ✅ | 46 tools (39 read, 7 propose), 6 actions |
 | 6 Security | ✅ | AI_SECURITY_PLAN.md |
-| 7 React Copilot | ✅ | Replaces the navigation widget for admins only when the feature is enabled |
+| 7 React Copilot | ✅ | Shown to admins only, and only when the feature is enabled |
 | 8 Approval workflow | ✅ (flag off) | |
 | 9 RAG | ⛔ Blocked | Needs an embedding provider decision and pgvector (AI_IMPLEMENTATION_PLAN.md) |
 | 10 Async | ➖ Not needed yet | Rationale in AI_IMPLEMENTATION_PLAN.md |
@@ -25,7 +36,7 @@ Branch: `feature/admin-ai`, based on `hardening/security-billing-approvals` at `
 **Created, backend (`backend/api/src/admin-ai/`):**
 
 - Core: `admin-ai.module.ts`, `admin-ai.controller.ts`, `admin-ai.config.ts`, `admin-ai-enabled.guard.ts`, `dto/admin-ai.dto.ts`, `core/*`, `control-plane/ai-policy.service.ts`.
-- Providers: `providers/*` (interface, gateway, `adapters/anthropic.provider.ts`).
+- Providers: `providers/*` (interface, gateway, `adapters/ollama.provider.ts`).
 - Tools: `tools/*` (types, registry, dispatcher), and `domain-tools/*` (15 providers plus 2 shared helper files).
 - Workflows, data and monitoring: `workflows/ai-proposal.service.ts`, `persistence/ai-store.service.ts`, `security/phi-masker.ts`, `observability/ai-metrics.service.ts`, `testing/admin-ai-test-utils.ts`.
 - Tests: 7 spec files, plus `test/admin-ai.e2e-spec.ts`.
@@ -46,10 +57,11 @@ Branch: `feature/admin-ai`, based on `hardening/security-billing-approvals` at `
 | `backend/api/src/config/configuration.ts` | `adminAi` config section |
 | `emergency`, `announcements`, `patients`, `doctors`, `beds`, `laboratory`, `reports` and `staff` `*.module.ts` | `exports: [<Service>]` |
 | `staff-scheduling.module.ts` | Also exports `StaffService`, `AvailabilityService` and `AttendanceService` |
-| `backend/api/package.json` and lockfile | Adds `zod@^4.4.3`, the same version the frontend uses |
-| `backend/api/.env.example` | AI placeholders |
+| `backend/api/package.json` and lockfile | Adds `zod` (now `^4.6.7`; the frontend declares `^4.4.3`) |
+| `backend/api/.env.example` | AI placeholders (Ollama: `AI_BASE_URL`, `AI_MODEL`, `AI_CONTEXT_TOKENS`, optional `AI_API_KEY`) |
+| `render.yaml` | Admin AI variables, with `ADMIN_AI_ENABLED="false"` |
 | `frontend/src/lib/apiClient.ts` | Exports `fetchWithSession` and `toApiError`. `request()` now uses `fetchWithSession`, with identical behaviour. |
-| `frontend/src/layouts/DashboardLayout.tsx` | Admins get `<AdminCopilot/>`; every other role gets `<AssistantWidget/>` |
+| `frontend/src/layouts/DashboardLayout.tsx` | Admins get `<AdminCopilot/>`; no other role gets an AI widget |
 
 No existing API route, response shape, business rule or test was changed.
 
@@ -68,7 +80,7 @@ No existing API route, response shape, business rule or test was changed.
 | `POST /messages/:id/feedback` `{rating}` | Feedback |
 | `GET /usage?days=` | Usage, latency, tokens, cost estimate, tool stats, approvals, feedback |
 
-## Test results (actual runs, 2026-11-17/18)
+## Test results (actual runs, 2026-11-17/18, before the Ollama switch)
 
 | Suite | Result |
 |---|---|
@@ -79,7 +91,7 @@ No existing API route, response shape, business rule or test was changed.
 | Frontend vitest (all) | **168/168**: 158 existing plus 10 new |
 | Frontend `tsc` | Clean |
 | Frontend eslint | 55 problems, matching the pre-existing baseline exactly; none in new files |
-| Live smoke test (built API, local) | Unauthenticated 401. Admin `status` 200. Create conversation 201. Send message 503 "provider not configured", as expected with no key. Catalogue: 39 read tools across 15 domains. |
+| Live smoke test (built API, local, previous provider) | Unauthenticated 401. Admin `status` 200. Create conversation 201. Send message 503 "provider not configured", as expected with no provider set up. Catalogue: 39 read tools across 15 domains. |
 
 **Security cases covered by automated tests:**
 
@@ -98,7 +110,7 @@ No existing API route, response shape, business rule or test was changed.
 
 ## Known gaps and limitations
 
-1. **No live provider verification.** It needs `AI_API_KEY`.
+1. **No live provider verification.** It needs a running Ollama with a tool-capable model pulled; the model is still to be chosen.
 2. **No appointment rescheduling.** No domain service exists, so no proposal is offered.
 3. **No doctor working-hours model.** `findAvailableSlots` uses an explicit window (default 09:00–17:00) and says so.
 4. **Narrow direct Prisma read.** `AdminAppointmentResponse` lacks `patientId` and `doctorId`, so a read-only, ids-only lookup restricted to service-returned rows is used. Recommended fix: add those two fields to the response.
@@ -113,12 +125,13 @@ No existing API route, response shape, business rule or test was changed.
 8. **No finer admin scopes.** The HMS has no sub-admin roles, so every approved admin gets the same AI read set.
 9. **No dedicated usage page.** The usage data is available through the API only.
 10. **RAG not implemented.** See the implementation plan.
+11. **Not usable on Render yet.** Render cannot reach an Ollama on a local machine; a "Local AI Bridge" is planned.
 
 ## Deployment requirements
 
 See AI_DEPLOYMENT.md. In short:
 
 1. Run `prisma migrate deploy` (Render does this on start).
-2. Set `AI_API_KEY` and `ADMIN_AI_ENABLED=true`.
+2. Install Ollama, `ollama pull <model>` (a tool-capable model), and set `AI_BASE_URL`, `AI_MODEL` and `ADMIN_AI_ENABLED=true` on a backend that can reach it.
 3. Keep `AI_ENABLE_WRITES=false` and `AI_ALLOW_PHI=false`.
-4. Verify SSE through the Vercel rewrite.
+4. Verify SSE streaming through any proxy in front of the backend.
