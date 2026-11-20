@@ -20,17 +20,23 @@ export function AnnouncementsPage() {
   const [loadError, setLoadError] = useState(false)
   const [isCreateOpen, setCreateOpen] = useState(false)
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  // Only sets state from async callbacks, so it is safe to call from the
+  // mount effect (isLoading already starts as true).
+  function load() {
     listAnnouncements()
       .then((res) => setAnnouncements(res.announcements))
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   function handleCreated(announcement: Announcement) {

@@ -31,17 +31,21 @@ export function OpeningsPanel() {
   const [openingToDelete, setOpeningToDelete] = useState<ShiftOpening | null>(null)
   const [isMutating, setIsMutating] = useState(false)
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  function load() {
     listShiftOpenings()
       .then((res) => setOpenings(res.openings))
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   function handleSaved(opening: ShiftOpening) {

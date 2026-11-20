@@ -36,27 +36,36 @@ export function DoctorInboxPanel({ patients, isPatientsLoading = false, initialP
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  // The conversation the loading spinner was last started for.
+  const [loadingStartedFor, setLoadingStartedFor] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
   const imageAttachment = useChatImageAttachment()
   // Keyed on the newest message, so loading older ones doesn't jump to the bottom.
   const scrollRef = useAutoScrollToBottom(thread[thread.length - 1]?.id)
 
-  useEffect(() => {
-    if (selectedPatientId || patients.length === 0) return
-
+  // Auto-select a conversation once the inbox has patients (adjusting state
+  // while rendering rather than in an effect). Only happens while nothing is
+  // selected, so it never overrides the doctor's own choice.
+  if (!selectedPatientId && patients.length > 0) {
     if (initialPatientId && patients.some((patient) => patient.patientId === initialPatientId)) {
       setSelectedPatientId(initialPatientId)
     } else {
       setSelectedPatientId(patients[0].patientId)
     }
-  }, [patients, selectedPatientId, initialPatientId])
+  }
+
+  // Show the spinner as soon as the selected conversation changes; the effect
+  // below clears it once that conversation's thread request settles.
+  if (loadingStartedFor !== selectedPatientId) {
+    setLoadingStartedFor(selectedPatientId)
+    if (selectedPatientId) setIsLoading(true)
+  }
 
   useEffect(() => {
     if (!selectedPatientId) return
 
     // Drop a slower response for a previously selected patient.
     let stale = false
-    setIsLoading(true)
     getDoctorChatThread(selectedPatientId)
       .then((res) => {
         if (stale) return

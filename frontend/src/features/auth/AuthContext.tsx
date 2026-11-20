@@ -177,26 +177,35 @@ export const AuthContext = createContext<AuthContextValue | undefined>(undefined
 
 const GOOGLE_LOGIN_URL = `${API_BASE_URL}/api/auth/google`
 
+// The cookies are httpOnly, so there's no local way to tell whether a
+// session exists -- asking the server is the only check. Resolves to the
+// signed-in user, or null when there's no valid session; never rejects.
+async function fetchSessionUser(): Promise<AuthUser | null> {
+  try {
+    const raw = await api.get<RawUser>('/users/me')
+    return await toAuthUser(raw)
+  } catch {
+    return null
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // The cookies are httpOnly, so there's no local way to tell whether a
-  // session exists -- asking the server is the only check.
   async function refresh() {
-    try {
-      const raw = await api.get<RawUser>('/users/me')
-      setUser(await toAuthUser(raw))
-    } catch {
-      setUser(null)
-    } finally {
-      setIsLoading(false)
-    }
+    const sessionUser = await fetchSessionUser()
+    setUser(sessionUser)
+    setIsLoading(false)
   }
 
+  // Initial session check. isLoading starts as `true` and is only cleared
+  // once the request settles.
   useEffect(() => {
-    refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchSessionUser().then((sessionUser) => {
+      setUser(sessionUser)
+      setIsLoading(false)
+    })
   }, [])
 
   // A session that can't be refreshed surfaces as a 401 from any

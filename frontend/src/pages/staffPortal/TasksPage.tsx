@@ -36,18 +36,38 @@ export function TasksPage() {
   const highlightedTaskId = searchParams.get('taskId')
   const taskRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  function load() {
     listMyTasks()
       .then((res) => setTasks(res.tasks))
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
+
+  // When a deep-linked task is present in the loaded list, reset the filter to
+  // "All" so its card is rendered. This is local state, so it is adjusted
+  // during render whenever the link / loaded tasks change (same triggers as
+  // the effect below, which handles the scroll and the not-found case).
+  const [deepLinkInputs, setDeepLinkInputs] = useState({ highlightedTaskId, tasks, isLoading })
+  if (
+    deepLinkInputs.highlightedTaskId !== highlightedTaskId ||
+    deepLinkInputs.tasks !== tasks ||
+    deepLinkInputs.isLoading !== isLoading
+  ) {
+    setDeepLinkInputs({ highlightedTaskId, tasks, isLoading })
+    if (highlightedTaskId && !isLoading && tasks.some((task) => task.id === highlightedTaskId)) {
+      setFilter('all')
+    }
+  }
 
   // Deep link from a notification (a task assignment/reminder) -> My Tasks.
   // There's no separate task detail view -- everything is already shown
@@ -70,7 +90,6 @@ export function TasksPage() {
       return
     }
 
-    setFilter('all')
     taskRefs.current.get(highlightedTaskId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightedTaskId, tasks, isLoading])

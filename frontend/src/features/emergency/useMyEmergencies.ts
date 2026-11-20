@@ -8,8 +8,9 @@ export function useMyEmergencies() {
   const [emergencyCases, setEmergencyCases] = useState<EmergencyCaseSummary[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
-  function refresh() {
-    setIsLoading(true)
+  // Only sets state from the async callbacks, so the mount effect can call
+  // it directly (isLoading already starts as true).
+  function load() {
     listMyEmergencies()
       .then((res) => setEmergencyCases(res.emergencyCases))
       .catch((error) => {
@@ -19,8 +20,13 @@ export function useMyEmergencies() {
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   const activeCase = emergencyCases.find((c) => ACTIVE_EMERGENCY_STATUSES.includes(c.status)) ?? null

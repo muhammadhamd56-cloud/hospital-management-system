@@ -26,20 +26,38 @@ export function DoctorChatModal({ doctor, onClose }: DoctorChatModalProps) {
   const [isSending, setIsSending] = useState(false)
   const imageAttachment = useChatImageAttachment()
   const scrollRef = useAutoScrollToBottom(thread)
+  const [prevDoctor, setPrevDoctor] = useState<DirectoryDoctor | null>(null)
+
+  // Reset to a loading, empty conversation whenever a doctor is opened
+  // (adjusting state while rendering rather than in an effect).
+  if (doctor !== prevDoctor) {
+    setPrevDoctor(doctor)
+    if (doctor) {
+      setIsLoading(true)
+      setThread([])
+    }
+  }
 
   useEffect(() => {
     if (!doctor) return
 
-    setIsLoading(true)
-    setThread([])
-
+    // Drop a slower response for a previously opened doctor.
+    let stale = false
     getChatThread(doctor.id)
-      .then((res) => setThread(res.thread))
+      .then((res) => {
+        if (!stale) setThread(res.thread)
+      })
       .catch((error) => {
+        if (stale) return
         const message = error instanceof ApiError ? error.message : 'Failed to load conversation'
         toast.error(message)
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [doctor])
 
   async function handleSend() {

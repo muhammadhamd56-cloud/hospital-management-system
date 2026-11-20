@@ -64,8 +64,7 @@ export function useNotificationActions() {
   /** `silent: true` for background/polling refreshes, which shouldn't
    *  interrupt the user with a toast; omit it for a user-initiated refresh
    *  (e.g. opening the bell dropdown) where a failure should be surfaced. */
-  function refresh(options: { silent?: boolean } = {}) {
-    setIsLoading(true)
+  function load(options: { silent?: boolean } = {}) {
     listNotifications()
       .then((res) => {
         setNotifications(res.notifications)
@@ -79,8 +78,15 @@ export function useNotificationActions() {
       .finally(() => setIsLoading(false))
   }
 
+  function refresh(options: { silent?: boolean } = {}) {
+    setIsLoading(true)
+    load(options)
+  }
+
+  // isLoading already starts as true, so the initial fetch skips refresh()'s
+  // synchronous setIsLoading(true) and only sets state once it settles.
   useEffect(() => {
-    refresh({ silent: true })
+    load({ silent: true })
   }, [])
 
   /** Marks only the clicked notification read (never the others) and

@@ -29,7 +29,9 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
   const [staffId, setStaffId] = useState(staff[0]?.id ?? '')
   const [availability, setAvailability] = useState<DayAvailability[]>(defaultAvailability())
   const [leave, setLeave] = useState<Leave[]>([])
-  const [isLoading, setIsLoading] = useState(false)
+  // Starts true when there is a staff member to load; reset to true whenever
+  // the selection changes (see selectStaff) and cleared by the load effect.
+  const [isLoading, setIsLoading] = useState(Boolean(staff[0]?.id))
   // Which staff member the on-screen availability actually belongs to (null
   // while loading or after a failed load) -- Save is blocked unless it matches.
   const [loadedStaffId, setLoadedStaffId] = useState<string | null>(null)
@@ -39,11 +41,20 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
   const [leaveToRemove, setLeaveToRemove] = useState<Leave | null>(null)
   const [isRemovingLeave, setIsRemovingLeave] = useState(false)
 
-  useEffect(() => {
-    if (staff.length > 0 && !staff.some((member) => member.id === staffId)) {
-      setStaffId(staff[0].id)
-    }
-  }, [staff, staffId])
+  // Switching staff member puts the panel back into its loading state up front,
+  // so the load effect below only has to set state from its async callbacks.
+  function selectStaff(nextStaffId: string) {
+    if (nextStaffId === staffId) return
+    setStaffId(nextStaffId)
+    setIsLoading(Boolean(nextStaffId))
+    setLoadedStaffId(null)
+  }
+
+  // Keep the selection valid when the roster changes (e.g. the selected member
+  // was removed, or the list arrived after mount): adjust state during render.
+  if (staff.length > 0 && !staff.some((member) => member.id === staffId)) {
+    selectStaff(staff[0].id)
+  }
 
   useEffect(() => {
     if (!staffId) return
@@ -51,8 +62,6 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
     // Ignore a slower response for a previously selected staff member -- it
     // would otherwise show (and then save) their schedule under this one.
     let stale = false
-    setIsLoading(true)
-    setLoadedStaffId(null)
     Promise.all([getAvailability(staffId), listLeave(staffId)])
       .then(([availabilityRes, leaveRes]) => {
         if (stale) return
@@ -136,7 +145,7 @@ export function AvailabilityPanel({ staff }: AvailabilityPanelProps) {
         <Select
           label="Staff member"
           value={staffId}
-          onChange={(event) => setStaffId(event.target.value)}
+          onChange={(event) => selectStaff(event.target.value)}
           options={staff.map((member) => ({ label: member.fullName, value: member.id }))}
         />
       </div>

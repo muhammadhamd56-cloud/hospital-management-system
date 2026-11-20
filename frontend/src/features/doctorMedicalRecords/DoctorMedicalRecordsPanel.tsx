@@ -22,24 +22,42 @@ export function DoctorMedicalRecordsPanel({ patients, isPatientsLoading = false 
   const [records, setRecords] = useState<MedicalRecord[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  // The patient the loading spinner was last started for.
+  const [loadingStartedFor, setLoadingStartedFor] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!selectedPatientId && patients.length > 0) {
-      setSelectedPatientId(patients[0].patientId)
-    }
-  }, [patients, selectedPatientId])
+  // Auto-select the first patient once the list arrives (adjusting state while
+  // rendering rather than in an effect); never overrides an existing selection.
+  if (!selectedPatientId && patients.length > 0) {
+    setSelectedPatientId(patients[0].patientId)
+  }
+
+  // Show the spinner as soon as the selected patient changes; the effect below
+  // clears it once that patient's records request settles.
+  if (loadingStartedFor !== selectedPatientId) {
+    setLoadingStartedFor(selectedPatientId)
+    if (selectedPatientId) setIsLoading(true)
+  }
 
   useEffect(() => {
     if (!selectedPatientId) return
 
-    setIsLoading(true)
+    // Drop a slower response for a previously selected patient.
+    let stale = false
     listPatientMedicalRecords(selectedPatientId)
-      .then((res) => setRecords(res.records))
+      .then((res) => {
+        if (!stale) setRecords(res.records)
+      })
       .catch((error) => {
+        if (stale) return
         const message = error instanceof ApiError ? error.message : 'Failed to load medical records'
         toast.error(message)
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [selectedPatientId])
 
   const selectedPatientName = patients.find((patient) => patient.patientId === selectedPatientId)?.patientName ?? null

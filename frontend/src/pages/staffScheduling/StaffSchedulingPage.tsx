@@ -106,9 +106,7 @@ export function StaffSchedulingPage() {
   const [staffToRemove, setStaffToRemove] = useState<Staff | null>(null)
   const [isMutating, setIsMutating] = useState(false)
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  function load() {
     Promise.all([listStaffRoster(), listShifts(), listTemplates(), listAttendance()])
       .then(([staffRes, shiftsRes, templatesRes, attendanceRes]) => {
         setStaff(staffRes.staff)
@@ -120,8 +118,14 @@ export function StaffSchedulingPage() {
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   const departmentOptions = useMemo(() => {

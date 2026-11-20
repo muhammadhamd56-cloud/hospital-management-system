@@ -93,10 +93,17 @@ export function RecurringShiftModal({ isOpen, onClose, staff, onSaved }: Recurri
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
 
+  // Reset the selected days each time the modal opens (adjusting state during
+  // render rather than in the effect below, which only resets the form).
+  const [wasOpen, setWasOpen] = useState(isOpen)
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (isOpen) setSelectedDays(WEEKDAYS)
+  }
+
   useEffect(() => {
     if (!isOpen) return
 
-    setSelectedDays(WEEKDAYS)
     reset({
       staffId: activeStaff[0]?.id ?? '',
       department: '',

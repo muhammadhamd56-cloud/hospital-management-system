@@ -61,6 +61,19 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>
 
+function toFormValues(user: NonNullable<ReturnType<typeof useAuth>['user']>): FormValues {
+  return {
+    firstName: user.firstName,
+    lastName: user.lastName,
+    phone: fromE164(user.phone, detectDefaultCountry()),
+    dateOfBirth: user.dateOfBirth?.slice(0, 10) ?? '',
+    gender: user.gender ?? '',
+    address: user.address ?? '',
+    emergencyContactName: user.emergencyContactName ?? '',
+    emergencyContactPhone: fromE164(user.emergencyContactPhone, detectDefaultCountry()),
+  }
+}
+
 export function PatientProfilePage() {
   const { user, updateProfile, refresh } = useAuth()
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false)
@@ -86,21 +99,18 @@ export function PatientProfilePage() {
     },
   })
 
+  // Snapshot of the saved profile (what "Discard" reverts to), re-taken when
+  // a different user loads -- adjusted during render rather than in the
+  // effect below, which only resets the form itself.
+  const [loadedForUserId, setLoadedForUserId] = useState<string | undefined>(undefined)
+  if (user?.id !== loadedForUserId) {
+    setLoadedForUserId(user?.id)
+    if (user) setLoadedValues(toFormValues(user))
+  }
+
   useEffect(() => {
     if (!user) return
-
-    const values: FormValues = {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      phone: fromE164(user.phone, detectDefaultCountry()),
-      dateOfBirth: user.dateOfBirth?.slice(0, 10) ?? '',
-      gender: user.gender ?? '',
-      address: user.address ?? '',
-      emergencyContactName: user.emergencyContactName ?? '',
-      emergencyContactPhone: fromE164(user.emergencyContactPhone, detectDefaultCountry()),
-    }
-    reset(values)
-    setLoadedValues(values)
+    reset(toFormValues(user))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
 

@@ -37,8 +37,9 @@ export function StaffPage() {
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [revealed, setRevealed] = useState<CreateStaffResponse | null>(null)
 
-  function refresh() {
-    setIsLoading(true)
+  // Only runs on mount (isLoading starts true), so state is set solely from
+  // the promise callbacks.
+  function load() {
     listStaff()
       .then((res) => setStaff(res.staff))
       .catch((error) => {
@@ -49,7 +50,7 @@ export function StaffPage() {
   }
 
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   function handleCreated(result: CreateStaffResponse) {
