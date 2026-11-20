@@ -68,12 +68,16 @@ export class ToolRegistryService {
     return this.actions.get(type);
   }
 
-  /** Specs for the tools this permission set may call -- nothing else is ever shown to the model. */
-  specsFor(permissions: ReadonlySet<AiPermission>, writesEnabled: boolean): AiToolSpec[] {
+  /**
+   * Specs for the tools this permission set may call -- nothing else is ever shown to the model.
+   * `domains`, when given, narrows the list further to keep the prompt small; it never widens it.
+   */
+  specsFor(permissions: ReadonlySet<AiPermission>, writesEnabled: boolean, domains?: readonly AiDomain[]): AiToolSpec[] {
     const specs: AiToolSpec[] = [];
     for (const [wire, tool] of this.toolsByWireName) {
       if (tool.mode === 'propose' && !writesEnabled) continue;
       if (!permissions.has(tool.permission)) continue;
+      if (domains && !domains.includes(tool.domain)) continue;
       specs.push(this.specsByWireName.get(wire) as AiToolSpec);
     }
     return specs;
