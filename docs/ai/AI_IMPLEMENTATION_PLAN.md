@@ -17,7 +17,7 @@ Order of work: discovery → foundation → intelligence → interface → enter
 | 10 Async jobs | BullMQ + Redis only where justified | **Deliberately not added.** No current workload needs it (see below). |
 | 11 Observability | Structured run logs, usage endpoint, cost estimate, trace via runId | Done |
 | 12 Testing | Unit, e2e (HTTP + SSE + real domain tool), security cases, frontend, regression | Done (results in AI_PROGRESS.md) |
-| Next: hardware check and model choice | Check the target machine, pick a tool-capable Ollama model that fits it, set `AI_MODEL` and `AI_CONTEXT_TOKENS`, then run the copilot live against it | **Not started.** `AI_MODEL=llama3.1:8b` is a placeholder |
+| Next: hardware check and model choice | Check the target machine, pick a tool-capable Ollama model that fits it, set `AI_MODEL` and `AI_CONTEXT_TOKENS`, then run the copilot live against it | **Partly done (2026-11-20).** Ollama installed, models benchmarked, defaults set to `qwen2.5:3b` with an 8k context and a 5 min timeout (see `AI_DEPLOYMENT.md`). The copilot has not yet been run end to end against Ollama |
 | Later: Local AI Bridge | Let the Render-hosted API reach a self-hosted Ollama | **Planned.** Until then Render keeps `ADMIN_AI_ENABLED=false` |
 
 ## Phase 9 (RAG): what is needed to proceed

@@ -47,18 +47,18 @@ describe('OllamaModelProvider', () => {
   it('streams text, returns tool calls with generated ids, and sends the request in Ollama format', async () => {
     fetchMock.mockResolvedValue(
       ndjsonResponse([
-        { model: 'llama3.1:8b', message: { role: 'assistant', content: 'Look' }, done: false },
-        { model: 'llama3.1:8b', message: { role: 'assistant', content: 'ing.' }, done: false },
+        { model: 'qwen2.5:3b', message: { role: 'assistant', content: 'Look' }, done: false },
+        { model: 'qwen2.5:3b', message: { role: 'assistant', content: 'ing.' }, done: false },
         {
-          model: 'llama3.1:8b',
+          model: 'qwen2.5:3b',
           message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'beds__getOccupancy', arguments: { a: 1 } } }] },
           done: false,
         },
-        { model: 'llama3.1:8b', message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 15, eval_count: 7 },
+        { model: 'qwen2.5:3b', message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 15, eval_count: 7 },
       ]),
     );
     const provider = new OllamaModelProvider(
-      configService(testConfig({ baseUrl: 'http://ollama.local:11434', model: 'llama3.1:8b', contextTokens: 8192, apiKey: 'proxy-token' })),
+      configService(testConfig({ baseUrl: 'http://ollama.local:11434', model: 'qwen2.5:3b', contextTokens: 8192, apiKey: 'proxy-token' })),
     );
     const deltas: string[] = [];
     const signal = new AbortController().signal;
@@ -79,7 +79,7 @@ describe('OllamaModelProvider', () => {
       toolCalls: [{ name: 'beds__getOccupancy', input: { a: 1 } }],
       stopReason: 'tool_use',
       usage: { inputTokens: 15, outputTokens: 7 },
-      model: 'llama3.1:8b',
+      model: 'qwen2.5:3b',
     });
     const turn = result.providerContent as OllamaAssistantTurn;
     expect(turn.callIds).toEqual([result.toolCalls[0].id]);
@@ -94,7 +94,7 @@ describe('OllamaModelProvider', () => {
     expect(init.signal).toBe(signal);
     expect(init.headers.Authorization).toBe('Bearer proxy-token');
     expect(JSON.parse(init.body)).toEqual({
-      model: 'llama3.1:8b',
+      model: 'qwen2.5:3b',
       stream: true,
       messages: [
         { role: 'system', content: 'SYSTEM' },
@@ -240,7 +240,7 @@ describe('loadAdminAiConfig (Ollama settings)', () => {
     expect(loadAdminAiConfig({})).toMatchObject({
       provider: 'ollama',
       baseUrl: 'http://localhost:11434',
-      contextTokens: 16_384,
+      contextTokens: 8_192,
     });
     expect(loadAdminAiConfig({ AI_BASE_URL: 'http://gpu-box:11434/' }).baseUrl).toBe('http://gpu-box:11434');
     expect(loadAdminAiConfig({ AI_BASE_URL: 'file:///etc/passwd' }).baseUrl).toBeUndefined();

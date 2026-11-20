@@ -2,7 +2,7 @@
 
 The Admin AI Copilot runs on a **local model served by [Ollama](https://ollama.com)**. The backend calls Ollama's HTTP API (`POST {AI_BASE_URL}/api/chat`) directly with `fetch`; there is no AI SDK and no hosted model provider. The browser never talks to Ollama.
 
-> **Status:** the Ollama adapter is covered by unit tests with a mocked `fetch`, and the e2e suite uses a fake provider. **No run against a real Ollama server has been made yet.** The default `AI_MODEL` (`llama3.1:8b`) is a placeholder until a hardware check picks the model.
+> **Status:** the Ollama adapter is covered by unit tests with a mocked `fetch`, and the e2e suite uses a fake provider. The default model (`qwen2.5:3b`, 8k context) was chosen from a benchmark against a real Ollama on the target machine (see [Choosing a model](#choosing-a-model)), but **the copilot itself has not yet been run end to end against Ollama**.
 
 ## Environment variables (backend only)
 
@@ -11,11 +11,11 @@ The Admin AI Copilot runs on a **local model served by [Ollama](https://ollama.c
 | `ADMIN_AI_ENABLED` | `false` | Master switch. When false, `/api/admin-ai/*` returns 404 and the copilot button is not shown. `AI_ENABLED` is accepted as an alias. |
 | `AI_PROVIDER` | `ollama` | Adapter key. `ollama` is the only registered adapter. |
 | `AI_BASE_URL` | `http://localhost:11434` | The Ollama server, as seen from the backend. Must be an `http` or `https` URL; anything else leaves the provider "not configured" (503). A trailing slash is stripped. |
-| `AI_MODEL` | `llama3.1:8b` | An Ollama model tag that supports tool calling. It must already be pulled on the Ollama server (a missing model gives "model not available, pull it with Ollama first"). |
+| `AI_MODEL` | `qwen2.5:3b` | An Ollama model tag that supports tool calling. It must already be pulled on the Ollama server (a missing model gives "model not available, pull it with Ollama first"). |
 | `AI_API_KEY` | — | Optional. Sent as `Authorization: Bearer …` only when set, for an Ollama behind an authenticating proxy. A plain local Ollama needs none. Never exposed to the frontend. |
-| `AI_CONTEXT_TOKENS` | `16384` | Sent as Ollama `options.num_ctx` (allowed 2048–262144). Ollama's own small default would truncate the system prompt and the tool schemas. |
+| `AI_CONTEXT_TOKENS` | `8192` | Sent as Ollama `options.num_ctx` (allowed 2048–262144). Ollama's own small default would truncate the system prompt and the tool schemas; larger values cost memory (see [Choosing a model](#choosing-a-model)). |
 | `AI_MAX_OUTPUT_TOKENS` | `4096` | Per model call (sent as `options.num_predict`). |
-| `AI_REQUEST_TIMEOUT` | `90000` | Milliseconds of wall clock per message. A local model on modest hardware can be slow; raise this if runs time out. |
+| `AI_REQUEST_TIMEOUT` | `300000` | Milliseconds of wall clock per message (5 min). A 3B model on a laptop CPU needs roughly 30 s to 2 min for an answer that uses a tool. |
 | `AI_MAX_TOOL_CALLS` | `12` | Per message. |
 | `AI_MAX_ITERATIONS` | `8` | Model round trips per message. |
 | `AI_RUN_TOKEN_BUDGET` | `150000` | Tokens per message. |
@@ -32,11 +32,30 @@ No frontend variables are needed. The UI discovers the feature through `GET /api
 
 1. **Install Ollama** on the machine that will run the model (see ollama.com for the installer). It listens on `http://localhost:11434` by default.
 2. **Choose a model that supports tool calling.** The copilot only works through tools, so a model without tool support cannot answer. Ollama's model library marks tool-capable models with a "tools" tag. Size the model to the hardware: it has to fit in GPU memory (or RAM) together with the `AI_CONTEXT_TOKENS` context. Larger context windows use more memory.
-3. **Pull it:** `ollama pull <model>` (for example `ollama pull llama3.1:8b`), then check it with `ollama list`.
-4. **Point the backend at it** in `backend/api/.env`: `AI_BASE_URL` (default `http://localhost:11434`), `AI_MODEL=<model>`, and `AI_CONTEXT_TOKENS` if the default 16384 is too large or too small for the model and machine.
+3. **Pull it:** `ollama pull qwen2.5:3b` (the default), then check it with `ollama list`.
+4. **Point the backend at it** in `backend/api/.env`: `AI_BASE_URL` (default `http://localhost:11434`), `AI_MODEL=<model>`, and `AI_CONTEXT_TOKENS` if the default 8192 is too large or too small for the model and machine.
 5. If Ollama runs on a **different machine** than the backend, make it listen on a reachable address (Ollama's `OLLAMA_HOST` setting), keep it on a private network or behind HTTPS, and put an authenticating proxy in front of it if anything else can reach it (then set `AI_API_KEY`). Over plain `http`, prompts and tool results cross the network unencrypted.
 
 **Where the data goes:** with a local Ollama, prompts, chat history and tool results stay on the machine running Ollama. If `AI_BASE_URL` points at another host, they go to that host. PHI masking (`AI_ALLOW_PHI=false`) still applies in both cases.
+
+## Choosing a model
+
+Benchmark from 2026-11-20 on the target machine: Intel Core i7-8665U laptop (4 cores, 8 threads), 15.8 GB RAM with about 5 GB free, integrated Intel UHD 620 (so CPU-only inference), Ollama 0.40.16. Each model received the copilot's real system prompt and tool specs at temperature 0, with four admin questions (beds, overdue invoices, pending signups, a settings question).
+
+| Model | Correct tool | Arguments | Memory at 8k context | Generation | Result |
+| --- | --- | --- | --- | --- | --- |
+| `qwen2.5:3b` | 4 of 4 | correctly typed | 2.4 GB | ~7 tokens/s | **Default** |
+| `llama3.2:3b` | 4 of 4 | numbers and booleans sent as strings (`"100"`, `"true"`), which the tool validators reject, so the model needs another round trip | 3.1 GB (fails to load at 16k) | ~6 tokens/s | Works, but slower in practice |
+| `qwen3:4b` | — | — | does not load at 8k on this machine | — | Does not fit; at 4k it loads but leaks its reasoning into the answer even with thinking off |
+
+Findings that affect configuration:
+
+- **Prompt size dominates latency on CPU.** All 39 read tools are about 5,700 prompt tokens and took about 190 s before the first output token. The subset for the domains the intent router picks (2–12 tools, about 900–2,400 tokens) took 10–55 s. The orchestrator currently sends every permitted tool; sending only the routed subset is planned.
+- **An answer that uses a tool needs at least two model calls** (pick the tool, then answer from its result), so expect 30 s to 2 min per question on this hardware. That is why `AI_REQUEST_TIMEOUT` defaults to 5 minutes.
+- **Windows commit limit, not free RAM, is the ceiling.** With a fixed 4 GB page file there was only about 3.6 GB of committable memory left, which is why `qwen3:4b` failed at 8k while 5 GB of RAM was free. A system-managed page file raises the limit but makes inference page to disk.
+- **Embeddings** (for the planned knowledge engine): `nomic-embed-text` produced 768-dimension vectors at about 1.1 chunks per second (chunks of ~1,500 characters), so embedding the whole repository (~4,000 chunks) takes about an hour once; later re-indexing must be incremental.
+
+On a machine with a GPU or more memory, a larger tool-capable model and a bigger `AI_CONTEXT_TOKENS` will be faster and more reliable; rerun the comparison there before changing the default.
 
 ## Render limitation
 

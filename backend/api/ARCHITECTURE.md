@@ -712,7 +712,7 @@ Two classes named `StaffController` and two named `StaffService` exist: `src/sta
 - **Tools:** 15 domain tool files in `src/admin-ai/domain-tools/` (appointments, approvals, announcements, beds, billing, dashboard, doctors, emergency, laboratory, patients, profile, reports, scheduling, settings, staff).
 - **Writes:** never executed directly by the model. Write tools create an `AiActionProposal` that an admin approves (`POST /admin-ai/proposals/:id/approve` with a `paramsHash`) or rejects.
 - **Persistence and metrics:** `AiStoreService` (one `$transaction` in `persistence/ai-store.service.ts`), `AiMetricsService` (`GET /admin-ai/usage`).
-- **Configuration:** `src/admin-ai/admin-ai.config.ts`, every flag defaulting to the safe value (`ADMIN_AI_ENABLED=false`, `AI_PROVIDER=ollama`, `AI_BASE_URL=http://localhost:11434`, `AI_MODEL=llama3.1:8b` as a placeholder).
+- **Configuration:** `src/admin-ai/admin-ai.config.ts`, every flag defaulting to the safe value (`ADMIN_AI_ENABLED=false`, `AI_PROVIDER=ollama`, `AI_BASE_URL=http://localhost:11434`, `AI_MODEL=qwen2.5:3b`, `AI_CONTEXT_TOKENS=8192`, `AI_REQUEST_TIMEOUT=300000`; the model was picked from a hardware benchmark, see `docs/ai/AI_DEPLOYMENT.md`).
 
 ---
 
@@ -1610,7 +1610,7 @@ Only fields with non-obvious semantics are listed. Types are Prisma types; "?" m
 
 **`AiActionProposal`**: `params` Json plus `paramsHash` String are the exact payload executed on approval. `status` moves PENDING, then EXECUTING, then EXECUTED or FAILED; or PENDING to REJECTED or EXPIRED. `expiresAt` bounds approval. `result` Json? holds a small confirmation payload.
 
-**`AiRun` / `AiToolInvocation` / `AiMessage`**: `requestKey` is a client idempotency key, unique per user. Token, tool-call and latency counters are telemetry; `provider` and `model` record which adapter and model tag answered (`ollama` and, for example, `llama3.1:8b`). `AiToolInvocation.argKeys` stores argument names only, never values. `AiMessage.runId` links a message to the run that produced it (SetNull when the run is deleted).
+**`AiRun` / `AiToolInvocation` / `AiMessage`**: `requestKey` is a client idempotency key, unique per user. Token, tool-call and latency counters are telemetry; `provider` and `model` record which adapter and model tag answered (`ollama` and, for example, `qwen2.5:3b`). `AiToolInvocation.argKeys` stores argument names only, never values. `AiMessage.runId` links a message to the run that produced it (SetNull when the run is deleted).
 
 ### Indexes and constraints
 
@@ -2634,9 +2634,9 @@ flowchart LR
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | No | payments | same |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | No | Sentry | `main.ts`, `env.validation.ts` |
 | `NODE_ENV` | No | cookie `Secure`, Swagger off in production, throttler off in test, OTP log redaction | `configuration.ts`, `main.ts`, `app.module.ts`, `email.service.ts` |
-| `ADMIN_AI_ENABLED` (alias `AI_ENABLED`), `AI_PROVIDER`, `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`, `AI_CONTEXT_TOKENS`, `AI_MAX_OUTPUT_TOKENS`, `AI_REQUEST_TIMEOUT`, `AI_MAX_TOOL_CALLS`, `AI_MAX_ITERATIONS`, `AI_DAILY_BUDGET`, `AI_RUN_TOKEN_BUDGET`, `AI_ALLOW_PHI`, `AI_ENABLE_WRITES`, `AI_RAG_ENABLED`, `AI_PROPOSAL_TTL_MINUTES`, `AI_MAX_RETRIES` | No (safe defaults: off, `ollama`, `http://localhost:11434`, `llama3.1:8b`, 16384 context tokens) | Admin AI | `src/admin-ai/admin-ai.config.ts` |
+| `ADMIN_AI_ENABLED` (alias `AI_ENABLED`), `AI_PROVIDER`, `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`, `AI_CONTEXT_TOKENS`, `AI_MAX_OUTPUT_TOKENS`, `AI_REQUEST_TIMEOUT`, `AI_MAX_TOOL_CALLS`, `AI_MAX_ITERATIONS`, `AI_DAILY_BUDGET`, `AI_RUN_TOKEN_BUDGET`, `AI_ALLOW_PHI`, `AI_ENABLE_WRITES`, `AI_RAG_ENABLED`, `AI_PROPOSAL_TTL_MINUTES`, `AI_MAX_RETRIES` | No (safe defaults: off, `ollama`, `http://localhost:11434`, `qwen2.5:3b`, 8192 context tokens, 300 s timeout) | Admin AI | `src/admin-ai/admin-ai.config.ts` |
 
-`render.yaml` defines `NODE_ENV`, `TRUST_PROXY_HOPS`, `DATABASE_URL`, the JWT variables, `COOKIE_SAMESITE`, Google, `CLIENT_URL`, Resend, Stripe, Sentry, `PORT`, `MFA_ENCRYPTION_KEY`, `DEMO_MODE` (`"false"`) and the Admin AI variables `ADMIN_AI_ENABLED` (`"false"`), `AI_BASE_URL` and `AI_API_KEY` (`sync: false`), `AI_MODEL` (`llama3.1:8b`), `AI_ALLOW_PHI`, `AI_ENABLE_WRITES` and `AI_RAG_ENABLED` (all `"false"`). The copilot stays off on Render because a Render service cannot reach an Ollama running on a local machine.
+`render.yaml` defines `NODE_ENV`, `TRUST_PROXY_HOPS`, `DATABASE_URL`, the JWT variables, `COOKIE_SAMESITE`, Google, `CLIENT_URL`, Resend, Stripe, Sentry, `PORT`, `MFA_ENCRYPTION_KEY`, `DEMO_MODE` (`"false"`) and the Admin AI variables `ADMIN_AI_ENABLED` (`"false"`), `AI_BASE_URL` and `AI_API_KEY` (`sync: false`), `AI_MODEL` (`qwen2.5:3b`), `AI_ALLOW_PHI`, `AI_ENABLE_WRITES` and `AI_RAG_ENABLED` (all `"false"`). The copilot stays off on Render because a Render service cannot reach an Ollama running on a local machine.
 
 ---
 
@@ -2767,7 +2767,7 @@ These are observations about the current code, not recommendations.
 5. **E2E coverage of cookie/CSRF path.** Only `integrity.e2e-spec.ts` installs `cookieParser` and `csrfProtection`; other suites use Bearer tokens. The middleware itself is unit-tested in `src/common/middleware/csrf.middleware.spec.ts`.
 6. **Duplicate class names.** `StaffController`/`StaffService` exist in both `src/staff` and `src/staff-scheduling`, which is easy to confuse in imports and logs.
 7. **No coverage thresholds** in Jest config.
-8. **Admin AI not verified live.** The Ollama adapter is covered by unit tests with a mocked `fetch` and the e2e suite uses a fake provider; no run against a real Ollama server has been made yet, and the default `AI_MODEL` (`llama3.1:8b`) is a placeholder until a model is chosen for the target hardware.
+8. **Admin AI not verified live.** The Ollama adapter is covered by unit tests with a mocked `fetch` and the e2e suite uses a fake provider; the default `AI_MODEL` (`qwen2.5:3b`) was chosen from a benchmark against a real Ollama on the target laptop, but the copilot itself has not yet run end to end against it.
 9. **Admin AI cannot run on Render as deployed.** `render.yaml` keeps `ADMIN_AI_ENABLED=false` because the Render service cannot reach an Ollama on a local machine.
 
 ---

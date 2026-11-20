@@ -7,7 +7,7 @@ Branch: `feature/admin-ai`, based on `hardening/security-billing-approvals` at `
 On branch `feature/admin-ai-ollama` the copilot was kept, but its model provider changed:
 
 - The hosted-API adapter and its spec were deleted, and the SDK dependency was uninstalled. The new adapter is `providers/adapters/ollama.provider.ts`, tested by `providers/ollama.provider.spec.ts` (mocked `fetch`). It streams Ollama's `POST /api/chat`, generates its own tool-call ids, and sends `num_predict` and `num_ctx`.
-- Config: `AI_PROVIDER` defaults to `ollama`, `AI_MODEL` to `llama3.1:8b` (a placeholder until the hardware check picks a model), and there are two new variables, `AI_BASE_URL` (default `http://localhost:11434`) and `AI_CONTEXT_TOKENS` (default 16384). `AI_API_KEY` is optional, for an Ollama behind an authenticating proxy.
+- Config: `AI_PROVIDER` defaults to `ollama`, `AI_MODEL` to `qwen2.5:3b` (picked from a benchmark on the target laptop, see `AI_DEPLOYMENT.md`), `AI_REQUEST_TIMEOUT` to 5 minutes, and there are two new variables, `AI_BASE_URL` (default `http://localhost:11434`) and `AI_CONTEXT_TOKENS` (default 8192). `AI_API_KEY` is optional, for an Ollama behind an authenticating proxy.
 - The settings tool now reports `modelServerConfigured` and flags an invalid `AI_BASE_URL`.
 - The separate navigation assistant for the other roles was removed. `DashboardLayout` renders `<AdminCopilot/>` for admins only, and the copilot renders nothing when the feature is off.
 - `render.yaml` keeps `ADMIN_AI_ENABLED=false`, because Render cannot reach an Ollama on a local machine.

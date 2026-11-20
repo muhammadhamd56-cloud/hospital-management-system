@@ -127,7 +127,7 @@ Design choices kept on purpose:
 The gateway selects the adapter named by `AI_PROVIDER` (default `ollama`, the only registered adapter). `OllamaModelProvider` (`providers/adapters/ollama.provider.ts`) talks to a local Ollama server with native `fetch`; there is no SDK:
 
 - It streams `POST {AI_BASE_URL}/api/chat` with `stream: true`. Ollama answers with newline-delimited JSON, and each text delta is fed into SSE as it arrives.
-- It sends the system prompt as a `system` message, the tool specs as `function` tools, and `options.num_predict` (`AI_MAX_OUTPUT_TOKENS`) and `options.num_ctx` (`AI_CONTEXT_TOKENS`, default 16384, because Ollama's small default context would truncate the prompt and tool schemas).
+- It sends the system prompt as a `system` message, the tool specs as `function` tools, and `options.num_predict` (`AI_MAX_OUTPUT_TOKENS`) and `options.num_ctx` (`AI_CONTEXT_TOKENS`, default 8192, because Ollama's small default context would truncate the prompt and tool schemas).
 - Ollama tool calls carry no id, so the adapter generates one per call (`ollama_call_<n>`). It stores the assistant turn with those ids and, when replaying history, sends each tool result as a `tool` message named by `tool_name`.
 - `Authorization: Bearer <AI_API_KEY>` is sent only when a key is set, for an Ollama behind an authenticating proxy.
 - It retries a refused connection and 429/5xx responses (`AI_MAX_RETRIES`, default 2, exponential back-off from 500 ms) before any output is read. A stream that fails midway is not retried, because the admin has already seen part of the answer.
@@ -136,6 +136,6 @@ The gateway selects the adapter named by `AI_PROVIDER` (default `ollama`, the on
 
 **Where the data goes.** The model runs on the machine that runs Ollama, so prompts, history and tool results stay there unless `AI_BASE_URL` points at another host. PHI masking still applies by default (`AI_ALLOW_PHI=false`).
 
-**Not verified live yet.** The adapter is covered by `providers/ollama.provider.spec.ts` with a mocked `fetch`; no run against a real Ollama server has been made. The default model `llama3.1:8b` is a placeholder until a hardware check picks one, and the chosen model must support tool calling.
+**Not verified live yet.** The adapter is covered by `providers/ollama.provider.spec.ts` with a mocked `fetch`; no run against a real Ollama server has been made. The default model `qwen2.5:3b` was chosen from a benchmark on the target CPU-only laptop (see `AI_DEPLOYMENT.md`, Choosing a model); any replacement must support tool calling.
 
 To add another provider, implement `AiModelProvider` and add it to `MODEL_PROVIDERS` in `admin-ai.module.ts` (and to `SUPPORTED_AI_PROVIDERS` in `domain-tools/settings.ai-tools.ts`, which the settings consistency check uses).

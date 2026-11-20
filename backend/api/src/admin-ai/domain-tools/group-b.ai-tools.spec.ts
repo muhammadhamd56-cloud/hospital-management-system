@@ -520,7 +520,7 @@ describe('SettingsAiTools', () => {
   const aiConfig = {
     enabled: true,
     provider: 'ollama',
-    model: 'llama3.1:8b',
+    model: 'qwen2.5:3b',
     baseUrl: 'http://gpu-box.internal:11434',
     apiKey: 'proxy-supersecretvalue123',
     allowPhi: false,
@@ -540,7 +540,7 @@ describe('SettingsAiTools', () => {
     expect(result.adminAi).toEqual({
       enabled: true,
       provider: 'ollama',
-      model: 'llama3.1:8b',
+      model: 'qwen2.5:3b',
       writesEnabled: true,
       allowPhi: false,
       ragEnabled: false,

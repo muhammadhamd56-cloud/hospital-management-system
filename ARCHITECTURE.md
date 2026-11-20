@@ -507,7 +507,7 @@ These are observations, not fixes.
 2. **No dedicated job runner.** Cron jobs run inside the web process and pause while a free-plan instance sleeps (inferred).
 3. **One connection string.** There is no `directUrl`, and pooled versus direct Neon usage cannot be verified from the repository.
 4. **Coarse roles.** `STAFF` covers several jobs; differences by job type are enforced in a few services only, not by a guard.
-5. **Admin AI is unverified live.** No run against a real Ollama server has been made yet (the adapter is tested with a mocked `fetch`), the default model `llama3.1:8b` is a placeholder until a model is chosen for the hardware, and SSE streaming through the Vercel rewrite is unverified.
+5. **Admin AI is unverified live.** No run against a real Ollama server has been made yet (the adapter is tested with a mocked `fetch`), the default model `qwen2.5:3b` was picked from a hardware benchmark but the copilot has not run end to end against it, and SSE streaming through the Vercel rewrite is unverified.
 6. **Admin AI is off on Render.** A Render service cannot reach an Ollama running on a local machine, so `render.yaml` keeps `ADMIN_AI_ENABLED=false`. A "Local AI Bridge" is planned as a later phase.
 7. **No real-time push.** There are no WebSockets. The frontend polls: notifications every 30 s and the emergency board every 15 s. The only streaming response is the Admin Copilot's SSE.
 8. **Stray directory.** `server-nest/` at the root is empty and untracked.

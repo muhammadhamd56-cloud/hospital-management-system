@@ -18,7 +18,7 @@ function response(partial: Partial<AiModelResponse>): AiModelResponse {
     toolCalls: [],
     stopReason: 'end_turn',
     usage: { inputTokens: 100, outputTokens: 20 },
-    model: 'llama3.1:8b',
+    model: 'qwen2.5:3b',
     providerContent: [],
     ...partial,
   };

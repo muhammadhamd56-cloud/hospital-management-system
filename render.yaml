@@ -76,7 +76,7 @@ services:
       - key: AI_API_KEY
         sync: false
       - key: AI_MODEL
-        value: llama3.1:8b
+        value: qwen2.5:3b
       - key: AI_ALLOW_PHI
         value: "false"
       - key: AI_ENABLE_WRITES

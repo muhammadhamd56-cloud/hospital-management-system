@@ -8,7 +8,7 @@ export interface AdminAiConfig {
   enabled: boolean;
   /** AI_PROVIDER -- key of a registered provider adapter (only "ollama" today). */
   provider: string;
-  /** AI_MODEL -- an Ollama model tag that supports tool calling, e.g. "llama3.1:8b". */
+  /** AI_MODEL -- an Ollama model tag that supports tool calling, e.g. "qwen2.5:3b". */
   model: string;
   /** AI_BASE_URL -- the Ollama server, without a trailing slash. Undefined when the value is not an http(s) URL. */
   baseUrl: string | undefined;
@@ -54,7 +54,12 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
   return Math.min(max, Math.max(min, parsed));
 }
 
-export const DEFAULT_AI_MODEL = 'llama3.1:8b';
+/**
+ * Chosen from a 2026-11-20 benchmark on the target CPU-only laptop: correct tool
+ * choice with correctly typed arguments, ~2.4 GB at an 8k context. See
+ * docs/ai/AI_DEPLOYMENT.md (Choosing a model) before changing it.
+ */
+export const DEFAULT_AI_MODEL = 'qwen2.5:3b';
 export const DEFAULT_AI_BASE_URL = 'http://localhost:11434';
 
 function baseUrl(value: string | undefined): string | undefined {
@@ -75,9 +80,9 @@ export function loadAdminAiConfig(env: Record<string, string | undefined>): Admi
     model: env.AI_MODEL?.trim() || DEFAULT_AI_MODEL,
     baseUrl: baseUrl(env.AI_BASE_URL),
     apiKey: env.AI_API_KEY?.trim() || undefined,
-    contextTokens: int(env.AI_CONTEXT_TOKENS, 16_384, 2_048, 262_144),
+    contextTokens: int(env.AI_CONTEXT_TOKENS, 8_192, 2_048, 262_144),
     maxOutputTokens: int(env.AI_MAX_OUTPUT_TOKENS, 4096, 256, 32_000),
-    requestTimeoutMs: int(env.AI_REQUEST_TIMEOUT, 90_000, 5_000, 600_000),
+    requestTimeoutMs: int(env.AI_REQUEST_TIMEOUT, 300_000, 5_000, 600_000),
     maxToolCalls: int(env.AI_MAX_TOOL_CALLS, 12, 1, 50),
     maxIterations: int(env.AI_MAX_ITERATIONS, 8, 1, 20),
     dailyTokenBudget: int(env.AI_DAILY_BUDGET, 500_000, 0, 1_000_000_000),

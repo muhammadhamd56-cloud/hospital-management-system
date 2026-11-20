@@ -18,7 +18,7 @@ describe('loadAdminAiConfig', () => {
       enableWrites: false,
       ragEnabled: false,
       provider: 'ollama',
-      model: 'llama3.1:8b',
+      model: 'qwen2.5:3b',
       baseUrl: 'http://localhost:11434',
       apiKey: undefined,
     });
@@ -35,7 +35,7 @@ describe('loadAdminAiConfig', () => {
     expect(config.enabled).toBe(true);
     expect(config.enableWrites).toBe(true);
     expect(config.maxToolCalls).toBe(50);
-    expect(config.requestTimeoutMs).toBe(90_000);
+    expect(config.requestTimeoutMs).toBe(300_000);
     expect(config.apiKey).toBe('proxy-key');
   });
 });
