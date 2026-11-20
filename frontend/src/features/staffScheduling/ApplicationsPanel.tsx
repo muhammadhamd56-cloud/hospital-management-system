@@ -20,17 +20,21 @@ export function ApplicationsPanel() {
     null,
   )
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  function load() {
     listShiftApplications()
       .then((res) => setApplications(res.applications))
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   const filtered = useMemo(() => {

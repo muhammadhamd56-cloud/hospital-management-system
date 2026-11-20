@@ -23,10 +23,14 @@ export function StaffDashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  // Reference time for "upcoming" checks -- captured at mount and refreshed
+  // when the shifts load, so render stays pure.
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     Promise.all([listMyShifts(), listMyTasks(), listAnnouncements()])
       .then(([shiftsRes, tasksRes, announcementsRes]) => {
+        setNow(Date.now())
         setShifts(shiftsRes.shifts)
         setTasks(tasksRes.tasks)
         setAnnouncements(announcementsRes.announcements)
@@ -37,12 +41,13 @@ export function StaffDashboardPage() {
       .finally(() => setIsLoading(false))
   }, [])
 
-  const nextShift = useMemo(() => {
-    const now = Date.now()
-    return shifts
-      .filter((shift) => new Date(shift.startTime).getTime() > now && shift.status !== 'cancelled')
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))[0]
-  }, [shifts])
+  const nextShift = useMemo(
+    () =>
+      shifts
+        .filter((shift) => new Date(shift.startTime).getTime() > now && shift.status !== 'cancelled')
+        .sort((a, b) => a.startTime.localeCompare(b.startTime))[0],
+    [shifts, now],
+  )
 
   const openTasks = useMemo(
     () => tasks.filter((task) => task.status !== 'completed').sort((a, b) => a.dueAt.localeCompare(b.dueAt)),
@@ -58,7 +63,7 @@ export function StaffDashboardPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Upcoming shifts" value={String(shifts.filter((s) => new Date(s.startTime).getTime() > Date.now()).length)} icon={CalendarClock} />
+        <StatCard label="Upcoming shifts" value={String(shifts.filter((s) => new Date(s.startTime).getTime() > now).length)} icon={CalendarClock} />
         <StatCard label="Open tasks" value={String(openTasks.length)} icon={ClipboardList} />
         <StatCard label="Overdue tasks" value={String(overdueCount)} icon={ClipboardList} />
         <StatCard label="Announcements" value={String(announcements.length)} icon={Megaphone} />

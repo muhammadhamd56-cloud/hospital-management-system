@@ -1,7 +1,7 @@
 # MediCore HMS: Frontend Architecture
 
 > Source-verified architecture reference for the React single-page application in `frontend/`.
-> Every statement below was checked against the code on branch `feature/admin-ai`. Paths are relative to `frontend/` unless they start with `backend/`, `docs/` or `.github/`.
+> Every statement below was checked against the code on branch `feature/admin-ai-ollama` (2026-11-20). Paths are relative to `frontend/` unless they start with `backend/`, `docs/` or `.github/`.
 
 **Legend used throughout**
 
@@ -56,7 +56,7 @@ The frontend is a **Vite-built React 19 SPA** written in TypeScript and styled w
 - **Cookie session, no tokens in JS.** The backend sets httpOnly cookies. `src/lib/apiClient.ts` sends `credentials: 'include'`, adds a CSRF header (`X-HMS-CSRF: 1`) to unsafe methods, and on a 401 refreshes the session once before retrying.
 - **React Context plus local component state.** There is no Redux, Zustand or React Query. The single global store is `AuthContext`. All other data is fetched per page into `useState`.
 - **Four login roles** (`admin`, `doctor`, `patient`, `staff`). `staff` is further split by `staffType` (nurse, lab technician and others), which unlocks Emergency and Laboratory.
-- **AI assistants.** Admins get the streaming **Admin Copilot**. Every other role gets the lighter **AssistantWidget**.
+- **Admin AI Copilot.** Admins get the streaming **Admin Copilot** (the backend runs it on a local Ollama model). It renders nothing when the backend feature is off. No other role gets an AI feature.
 - **Same-origin API.** Calls go to relative `/api`. Vite proxies them in development and the `vercel.json` rewrite proxies them in production.
 
 ## 3. Verified Tech Stack
@@ -74,6 +74,7 @@ Taken from `package.json`. Only libraries actually imported in `src/` are listed
 | Toasts | `react-hot-toast` ^2.6 | `<Toaster>` in `src/App.tsx`, `toast.*` across the app | IMPLEMENTED |
 | Charts | `recharts` ^3.10 | `src/components/dashboard/*Chart.tsx`, `src/pages/reports/ReportsPage.tsx`, `src/features/emergency/EmergencyVolumeChart.tsx` | IMPLEMENTED |
 | PDF export | `jspdf`, `jspdf-autotable` | `src/features/billing/generateInvoicePdf.ts` | IMPLEMENTED |
+| Animation | `gsap` ^3.15.0 | `src/features/theme/ThemeTransitionLayer.tsx` (theme-change wipe, used only when the browser lacks the View Transitions API; skipped under `prefers-reduced-motion`) | IMPLEMENTED |
 | Phone numbers | `libphonenumber-js` | `src/lib/phone.ts`, `src/components/ui/PhoneInput.tsx` | IMPLEMENTED |
 | Icons | `lucide-react` | everywhere | IMPLEMENTED |
 | Error reporting | `@sentry/react` ^11 | `src/main.tsx`, `src/routes/RouteErrorBoundary.tsx` | IMPLEMENTED |
@@ -81,7 +82,7 @@ Taken from `package.json`. Only libraries actually imported in `src/` are listed
 | Lint / format | `eslint` ^10, `typescript-eslint`, `eslint-plugin-react-hooks`, `prettier` | `eslint.config.js`, `.prettierrc.json` | IMPLEMENTED |
 | HTTP client | native `fetch`, wrapped | `src/lib/apiClient.ts` | IMPLEMENTED (Axios **NOT FOUND**) |
 | Server-state cache | none | | React Query / SWR **NOT FOUND** |
-| Global store | React Context only | `src/features/auth/AuthContext.tsx` | Redux / Zustand / MobX **NOT FOUND** |
+| Global store | React Context, plus a small module-level theme store read through `useSyncExternalStore` | `src/features/auth/AuthContext.tsx`, `src/features/theme/themeStore.ts` | Redux / Zustand / MobX **NOT FOUND** |
 | Realtime | polling only | `NotificationBell` (30 s), `EmergencyCenterPage` (15 s) | WebSocket / EventSource **NOT FOUND**. Copilot streams SSE over `fetch`. |
 
 ## 4. Architecture Principles
@@ -109,11 +110,14 @@ frontend/
 ├── public/favicon.svg
 └── src/
     ├── main.tsx               # Sentry.init + createRoot
-    ├── App.tsx                # AuthProvider > RouterProvider + Toaster
-    ├── routes/                # router.tsx, ProtectedRoute, RoleRoute/LaboratoryRoute, RouteErrorBoundary
+    ├── App.tsx                # AuthProvider > RouterProvider + Toaster + ThemeTransitionLayer
+    ├── routes/                # router.tsx, ProtectedRoute, RoleRoute/LaboratoryRoute/EmergencyRoute, AccessDenied, RouteErrorBoundary
     ├── layouts/               # AuthLayout, DashboardLayout
     ├── pages/                 # route-level screens (+ *RouteSwitch role dispatchers)
     ├── features/              # domain modules: api.ts, hooks, modals, badges
+    │   ├── theme/             # themeStore (shared theme state) + ThemeTransitionLayer (gsap / View Transitions)
+    │   ├── medicalRecords/    # MedicalRecordList, shared by the patient and doctor record views
+    │   └── emergency/access.ts  # canAccessEmergency, shared by the sidebar, EmergencyRoute and EmergencyRouteSwitch
     ├── components/
     │   ├── layout/            # Sidebar, Navbar
     │   ├── dashboard/         # admin dashboard widgets
@@ -170,12 +174,14 @@ flowchart TB
         AuthP["AuthProvider<br/>features/auth/AuthContext.tsx"]
         RouterP["RouterProvider<br/>routes/router.tsx"]
         Toaster["Toaster<br/>react-hot-toast"]
+        ThemeL["ThemeTransitionLayer<br/>features/theme"]
     end
     subgraph Routing["Routing and guards"]
         EB["RouteErrorBoundary"]
         PubOnly["PublicOnlyRoute"]
         Prot["ProtectedRoute"]
-        Role["RoleRoute / LaboratoryRoute"]
+        Role["RoleRoute / LaboratoryRoute /<br/>EmergencyRoute"]
+        Denied["AccessDenied"]
     end
     subgraph Layouts["Layouts"]
         AuthL["AuthLayout"]
@@ -188,7 +194,7 @@ flowchart TB
     subgraph Features["Feature modules"]
         FeatApi["features/*/api.ts"]
         FeatUI["modals, badges, hooks"]
-        AI["AdminCopilot / AssistantWidget"]
+        AI["AdminCopilot"]
     end
     subgraph Infra["UI and infrastructure"]
         UI["components/ui primitives"]
@@ -200,15 +206,18 @@ flowchart TB
     App --> AuthP
     AuthP --> RouterP
     AuthP --> Toaster
+    AuthP --> ThemeL
     RouterP --> EB
     EB --> PubOnly --> AuthL
     EB --> Prot
     Prot --> AuthL
     Prot --> DashL
     DashL --> Role --> FeaturePages
+    Role -.->|"role not allowed"| Denied
     DashL --> Switches
     DashL --> AI
     Switches --> FeaturePages
+    Switches -.->|"role not allowed"| Denied
     FeaturePages --> FeatUI
     FeaturePages --> FeatApi
     FeatUI --> UI
@@ -236,14 +245,15 @@ flowchart TB
     Search["GlobalSearch"]
     Bell["NotificationBell<br/>polls every 30 s"]
     Theme["Theme toggle<br/>useTheme"]
+    ThemeLayer["ThemeTransitionLayer<br/>animates theme changes"]
     Logout["Logout ConfirmDialog"]
     Main["main Outlet<br/>lazy page"]
     AIChoice{"user.role is admin?"}
-    Copilot["AdminCopilot"]
-    Assistant["AssistantWidget"]
+    Copilot["AdminCopilot<br/>renders nothing when<br/>GET /admin-ai/status fails"]
 
     App --> AuthProvider --> RouterProvider --> Root
     AuthProvider --> Toaster
+    AuthProvider --> ThemeLayer
     Root --> AuthLayout
     Root --> DashboardLayout
     DashboardLayout --> Sidebar --> Avail
@@ -255,11 +265,9 @@ flowchart TB
     DashboardLayout --> Main
     DashboardLayout --> AIChoice
     AIChoice -->|"yes"| Copilot
-    AIChoice -->|"no"| Assistant
-    Copilot -.->|"status call fails"| Assistant
 ```
 
-Sources: `src/App.tsx`, `src/layouts/DashboardLayout.tsx`, `src/components/layout/Sidebar.tsx`, `src/components/layout/Navbar.tsx`, `src/features/adminCopilot/AdminCopilot.tsx`. The copilot falls back to `<AssistantWidget />` when `GET /admin-ai/status` fails.
+Sources: `src/App.tsx`, `src/layouts/DashboardLayout.tsx`, `src/components/layout/Sidebar.tsx`, `src/components/layout/Navbar.tsx`, `src/features/theme/ThemeTransitionLayer.tsx`, `src/features/adminCopilot/AdminCopilot.tsx`. The copilot renders nothing (no fallback widget) when `GET /admin-ai/status` fails, which is a 404 whenever `ADMIN_AI_ENABLED` is off.
 
 ### 7.2 Significant component groups
 
@@ -274,7 +282,7 @@ Sources: `src/App.tsx`, `src/layouts/DashboardLayout.tsx`, `src/components/layou
 | Forms | react-hook-form + zod in `ManualLoginForm`, `ManualSignupForm`, `SetPasswordCard`, `AccountInfoForm` and every `*Modal` form | `src/features/**` | IMPLEMENTED |
 | Dialogs / modals | `Modal`, `ConfirmDialog`, `TempPasswordDialog` + 31 feature `*Modal.tsx` components | `src/components/ui/`, `src/features/**/*Modal.tsx` | IMPLEMENTED |
 | Status badges | `*StatusBadge`, `*PriorityBadge`, `*TypeBadge` per domain | `src/features/**` | IMPLEMENTED |
-| AI | `AdminCopilot`, `ProposalCard`, `Markdown`, `AssistantWidget` | `src/features/adminCopilot/`, `src/features/assistant/` | IMPLEMENTED |
+| AI | `AdminCopilot`, `ProposalCard`, `Markdown` | `src/features/adminCopilot/` | IMPLEMENTED |
 
 ## 8. Routing Architecture
 
@@ -297,12 +305,12 @@ All routes are defined in `src/routes/router.tsx`. Path constants are in `src/co
 | `/notifications` | `NotificationsPage` | ProtectedRoute > DashboardLayout | yes | All roles |
 | `/settings` | `SettingsRouteSwitch` | ProtectedRoute > DashboardLayout | yes | Role-switched |
 | `/profile` | `ProfileRouteSwitch` | ProtectedRoute > DashboardLayout | yes | Role-switched |
-| `/messages` | `MessagesRouteSwitch` | ProtectedRoute > DashboardLayout | yes | doctor / patient. Others are redirected. |
-| `/medical-records` | `MedicalRecordsRouteSwitch` | ProtectedRoute > DashboardLayout | yes | doctor / patient. Others are redirected. |
-| `/billing` | `BillingRouteSwitch` | ProtectedRoute > DashboardLayout | yes | patient vs admin/doctor. Staff is redirected. |
-| `/announcements` | `AnnouncementsPage` | ProtectedRoute > DashboardLayout | yes | No route-level role guard. The sidebar shows it to admin/doctor/staff. |
-| `/emergency` | `EmergencyRouteSwitch` | ProtectedRoute > DashboardLayout | yes | patient / admin / doctor / nurse staff |
-| `/emergency/cases/:id` | `EmergencyCaseDetailPage` | ProtectedRoute > DashboardLayout | yes | No route-level role guard. The page derives `isOwner` / `isResponder` / `canAssign`. |
+| `/messages` | `MessagesRouteSwitch` | ProtectedRoute > DashboardLayout | yes | doctor / patient. Other signed-in roles see `AccessDenied`. |
+| `/medical-records` | `MedicalRecordsRouteSwitch` | ProtectedRoute > DashboardLayout | yes | doctor / patient. Other signed-in roles see `AccessDenied`. |
+| `/billing` | `BillingRouteSwitch` | ProtectedRoute > DashboardLayout | yes | patient vs admin/doctor. Staff sees `AccessDenied`. |
+| `/announcements` | `AnnouncementsPage` | ProtectedRoute > DashboardLayout | yes | No route-level role guard, by design (comment in `router.tsx`): `GET /announcements` is readable by every role and only the publish form is admin-only. The sidebar shows it to admin/doctor/staff. |
+| `/emergency` | `EmergencyRouteSwitch` | ProtectedRoute > DashboardLayout | yes | patient / admin / doctor / nurse staff (`canAccessEmergency`); others see `AccessDenied` |
+| `/emergency/cases/:id` | `EmergencyCaseDetailPage` | ProtectedRoute > DashboardLayout > EmergencyRoute | yes | Same rule as `/emergency`. The page then derives `isOwner` / `isResponder` / `canAssign`. |
 | `/find-doctor` | `FindDoctorPage` | ... > RoleRoute `['patient']` | yes | |
 | `/book-appointment` | `BookAppointmentPage` | ... > RoleRoute `['patient']` | yes | |
 | `/my-appointments` | `MyAppointmentsPage` | ... > RoleRoute `['patient']` | yes | |
@@ -376,7 +384,9 @@ flowchart LR
         R7["Route /billing"]
         R8["Route /announcements"]
         R9["Route /emergency"]
-        R10["Route /emergency/cases/:id"]
+    end
+    subgraph EmergencyGate["EmergencyRoute"]
+        E1["Route /emergency/cases/:id"]
     end
     subgraph PatientOnly["RoleRoute patient"]
         P1["Route /find-doctor"]
@@ -408,6 +418,7 @@ flowchart LR
     Dash --> PatientOnly
     Dash --> StaffOnly
     Dash --> Ops
+    Dash --> EmergencyGate
     Dash --> Lab
     Dash --> AdminOnly
 ```
@@ -431,9 +442,9 @@ flowchart TB
     ToPending["Navigate /pending-approval"]
     OnPending{"path is /pending-approval?"}
     ToDash["Navigate /dashboard"]
-    RoleG{"RoleRoute allow-list<br/>or LaboratoryRoute check"}
+    RoleG{"RoleRoute allow-list,<br/>LaboratoryRoute or EmergencyRoute check"}
     Render["Render Outlet"]
-    Home["Navigate /dashboard"]
+    Denied["Render AccessDenied<br/>inside DashboardLayout"]
 
     Start --> Loading
     Loading -->|"yes"| Spin
@@ -448,13 +459,13 @@ flowchart TB
     Appr -->|"yes"| OnPending
     OnPending -->|"yes"| ToDash
     OnPending -->|"no"| RoleG
-    RoleG -->|"denied"| Home
+    RoleG -->|"denied"| Denied
     RoleG -->|"allowed"| Render
 ```
 
 Unauthorized handling:
 
-- A role that fails a guard is **silently redirected to `/dashboard`**. There is no dedicated "403" page. This is IMPLEMENTED in `RoleRoute`, `LaboratoryRoute` and the `*RouteSwitch` fallbacks.
+- A signed-in user whose role fails a guard sees **`AccessDenied`** (`src/routes/AccessDenied.tsx`: "You don't have access to this page" with a Back to dashboard link), rendered inside `DashboardLayout` so the sidebar stays. This is IMPLEMENTED in `RoleRoute`, `LaboratoryRoute`, `EmergencyRoute` and the `MessagesRouteSwitch`, `MedicalRecordsRouteSwitch`, `BillingRouteSwitch` and `EmergencyRouteSwitch` fallbacks. With no user at all, these guards still navigate to `/dashboard` (normally `ProtectedRoute` handles that case first).
 - `PublicOnlyRoute` sends signed-in users from `/login` and the other public auth pages to `/dashboard`.
 - Unknown paths render `src/pages/NotFoundPage.tsx`.
 
@@ -495,7 +506,7 @@ flowchart LR
 | Reusable data hooks | `usePatientAppointments`, `useDoctorAppointments`, `useDoctorInbox`, `useMyInvoices`, `useMyEmergencies`, `useMyMedicalRecords`, `useNotificationActions`, `useCopilot` | `src/features/**/use*.ts` | IMPLEMENTED |
 | Form state | react-hook-form + zod resolvers | forms and modals | IMPLEMENTED |
 | UI state (modals open, sidebar open, tabs) | local `useState`, `Tabs` uses a private `TabsContext` | components | IMPLEMENTED |
-| Theme | `useTheme` toggles the `.dark` class on `<html>` and persists `hms-theme` in `localStorage` | `src/hooks/useTheme.ts`, `index.html` | IMPLEMENTED |
+| Theme | `themeStore` owns the `.dark` class on `<html>` and persists `hms-theme` in `localStorage` (failures ignored); `useTheme` reads it with `useSyncExternalStore`, so every consumer re-renders together. `ThemeTransitionLayer` registers an animated transition for toggles (View Transitions API, else a gsap wipe; none under reduced motion). `index.html` applies the initial class before paint | `src/features/theme/themeStore.ts`, `src/features/theme/ThemeTransitionLayer.tsx`, `src/hooks/useTheme.ts`, `index.html` | IMPLEMENTED |
 | Client pagination | `usePagination(items, pageSize)` | `src/hooks/usePagination.ts` | IMPLEMENTED |
 | URL state | `useSearchParams` (for example `?mfa=` on login), `useParams` for case id | pages | IMPLEMENTED |
 | Unsaved-changes guard | `useUnsavedChangesGuard` + `UnsavedChangesPrompt` | `src/features/profile/` | IMPLEMENTED |
@@ -579,7 +590,7 @@ stateDiagram-v2
 | Response envelope | `{ success, message, data?, errors? }`. `request()` returns `data` and throws `ApiError(message, { status, errors })` when `!res.ok` or `!success`. A 204 returns `undefined`. |
 | 401 handling | For paths not under `/auth/`, call `POST /auth/refresh` once. Concurrent 401s share one `refreshInFlight` promise. Retry once. If it is still 401, call the `onUnauthorized` handler. |
 | Unauthorized hook | `AuthProvider` registers `onUnauthorized(() => setUser(null))`, so guards then redirect to `/login`. |
-| Streaming | `fetchWithSession` returns the raw `Response` with the same cookies, CSRF and refresh behaviour. Used for the copilot SSE stream. |
+| Streaming | `fetchWithSession` returns the raw `Response` with the same cookies, CSRF and refresh-once-on-401 behaviour. `request()` is built on it. The only direct caller is the copilot SSE stream (`features/adminCopilot/api.ts`). |
 | Exports | `api.get/post/patch/put/del`, `fetchWithSession`, `toApiError`, `ApiError`, `onUnauthorized`, `API_BASE_URL` |
 
 ```mermaid
@@ -632,7 +643,6 @@ Every namespace below has a matching `@Controller` in `backend/api/src`. All rou
 | `features/announcements/api.ts` | listAnnouncements, createAnnouncement | `/announcements` |
 | `features/accountApprovals/api.ts` | listAccountRequests, reviewAccountRequest | `/account-approvals` |
 | `features/notifications/api.ts` | list, mark read, mark all read | `/notifications` |
-| `features/assistant/api.ts` | sendAssistantMessage | `/assistant/chat` |
 | `features/adminCopilot/api.ts` | status, conversations CRUD, messages (SSE), proposals approve/reject, feedback | `/admin-ai/*` |
 
 The backend also has `health` and `billing/webhooks` controllers. The frontend never calls them. This is *(A)*, confirmed by a code search.
@@ -658,7 +668,7 @@ flowchart LR
         fAnn["announcements"]
         fAppr["accountApprovals"]
         fNot["notifications"]
-        fAI["assistant + adminCopilot"]
+        fAI["adminCopilot"]
     end
     subgraph BE["NestJS /api namespaces"]
         bAuth["API /auth, /users"]
@@ -680,7 +690,7 @@ flowchart LR
         bAnn["API /announcements"]
         bAppr["API /account-approvals"]
         bNot["API /notifications"]
-        bAI["API /assistant, /admin-ai"]
+        bAI["API /admin-ai"]
     end
     fAuth --> bAuth
     fAuth --> bPortal
@@ -759,7 +769,7 @@ All auth state lives in `src/features/auth/AuthContext.tsx`. The tokens themselv
 | Session bootstrap | `AuthProvider` mount, `refresh()` | `GET /users/me` (+ `GET /staff-portal/profile` for staff) | IMPLEMENTED |
 | Local login | `ManualLoginForm` (`src/features/auth/ManualLoginForm.tsx`) | `POST /auth/login` (body has email, password, **role**) | IMPLEMENTED |
 | MFA (TOTP / backup code) at login | `ManualLoginForm` MFA step | `POST /auth/mfa/verify` | IMPLEMENTED |
-| MFA enrolment / disable | `MfaCard` (`src/features/mfa/MfaCard.tsx`) on admin and doctor settings | `POST /users/me/mfa/setup`, `/confirm`, `/disable` | IMPLEMENTED (shown on `SettingsPage` and `DoctorSettingsPage` only) |
+| MFA enrolment / disable | `MfaCard` (`src/features/mfa/MfaCard.tsx`) on every role's settings page | `POST /users/me/mfa/setup`, `/confirm`, `/disable` | IMPLEMENTED (shown on `SettingsPage`, `DoctorSettingsPage`, `PatientSettingsPage` and `StaffSettingsPage`) |
 | Signup + email OTP | `ManualSignupForm`, `VerifyEmailPage` | `POST /auth/signup`, `/auth/verify-otp`, `/auth/resend-otp` | IMPLEMENTED |
 | Forgot / reset password | `ForgotPasswordPage`, `ResetPasswordPage` | `POST /auth/forgot-password`, `/auth/reset-password` | IMPLEMENTED |
 | Google OAuth | `LoginPage` GoogleButton, then `OAuthCallbackPage` | `GET /auth/google` (full redirect), `GET /users/me` | IMPLEMENTED |
@@ -937,6 +947,8 @@ sequenceDiagram
     B-->>P: proposal executed or failed
 ```
 
+The model itself runs in Ollama behind the backend; the browser never talks to it.
+
 ## 13. Feature Modules
 
 Status is **IMPLEMENTED** unless stated otherwise. "Backend" is the namespace under `/api`.
@@ -968,8 +980,7 @@ Status is **IMPLEMENTED** unless stated otherwise. "Backend" is the namespace un
 | **Settings** | `SettingsRouteSwitch` to `SettingsPage` (admin), `DoctorSettingsPage`, `PatientSettingsPage`, `StaffSettingsPage` | `AccountInfoForm`, `SetPasswordCard`, `MfaCard`, theme toggle | `useTheme` | auth, mfa, staffPortal | `/users/me*`, `/staff-portal/profile` | IMPLEMENTED |
 | **Notifications** | `pages/notifications/NotificationsPage.tsx` + `NotificationBell` | `notificationIcons` | `useNotificationActions` (optimistic read, fallback deep links) | `features/notifications/api.ts` | `/notifications` | IMPLEMENTED (30 s polling in bell) |
 | **Global search** | `GlobalSearch` in Navbar | none | local state | patients, patientDashboard | `/patients`, `/doctors` | IMPLEMENTED |
-| **Admin AI Copilot** | `AdminCopilot` (admins, all dashboard pages) | `ProposalCard`, `Markdown`, history view | `useCopilot`; module context from `modules.ts` | `features/adminCopilot/api.ts`, `sse.ts` | `/admin-ai` | IMPLEMENTED |
-| **Assistant widget** | `AssistantWidget` (non-admins, or admin fallback) | none | local message history | `features/assistant/api.ts` | `/assistant/chat` | IMPLEMENTED |
+| **Admin AI Copilot** | `AdminCopilot` (admins, all dashboard pages) | `ProposalCard`, `Markdown`, history view | `useCopilot`; module context from `modules.ts` | `features/adminCopilot/api.ts`, `sse.ts` | `/admin-ai` | IMPLEMENTED (hidden unless the backend flag is on) |
 
 ### 13.1 Module composition (admin-facing pages)
 
@@ -1032,7 +1043,7 @@ flowchart LR
 | Toasts | Single `<Toaster position="top-right" />`. `toast.success` / `toast.error` after mutations. Background polling uses `silent` to suppress them. | `src/App.tsx`, `useNotificationActions` | IMPLEMENTED |
 | Loading states | `FullScreenSpinner` in guards, `Loader2` spinners, `isLoading` flags, button `isSubmitting` | various | IMPLEMENTED |
 | Empty states | `EmptyState` component | `src/components/ui/EmptyState.tsx` | IMPLEMENTED |
-| Unauthorized UI | Redirect to `/dashboard`, or to `/pending-approval` for unapproved accounts. No 403 screen. | guards | PARTIALLY IMPLEMENTED |
+| Unauthorized UI | `AccessDenied` screen for a signed-in role that a guard or `*RouteSwitch` rejects; redirect to `/pending-approval` for unapproved accounts | `src/routes/AccessDenied.tsx`, guards | IMPLEMENTED |
 | Not found | `NotFoundPage` for unknown URLs. `RouteErrorBoundary` covers thrown 404 responses. | `src/pages/NotFoundPage.tsx` | IMPLEMENTED |
 | Copilot errors | `CopilotError` with optional retry (same `requestKey`); malformed SSE events are skipped | `useCopilot.ts`, `api.ts` | IMPLEMENTED |
 | React error boundary outside the router | | | NOT FOUND (`AuthProvider` and `Toaster` sit outside `RouteErrorBoundary`) |
@@ -1119,8 +1130,8 @@ Why same-origin matters (from comments in `apiClient.ts` and `.env.example`): th
 | Runner | Vitest (`npm run test` runs `vitest run`, `npm run test:watch` runs watch mode) |
 | Environment | `jsdom`, `globals: true`, `css: false` (`vitest.config.ts`) |
 | Setup | `src/test/setup.ts`: jest-dom matchers, `cleanup()` and `localStorage.clear()` after each test |
-| Test files | 29 `*.test.ts(x)` files co-located with source |
-| Covered areas | route guards (`ProtectedRoute`, `RoleRoute`, `RouteErrorBoundary`), `apiClient`, `AuthContext`, auth forms and pages (login, signup, set-password, OAuth callback, select-role, verify-email, pending-approval), billing modals and PDF, emergency modal/badge/route switch, notifications bell, profile/settings pages, account approvals, admin copilot + SSE parser, assistant widget, `QuickActions`, `chatMessage` type helpers |
+| Test files | 30 `*.test.ts(x)` files co-located with source |
+| Covered areas | route guards (`ProtectedRoute`, `RoleRoute`, `RouteErrorBoundary`), `apiClient`, `AuthContext`, auth forms and pages (login, signup, set-password, OAuth callback, select-role, verify-email, pending-approval), billing modals and PDF, emergency modal/badge/route switch, notifications bell, profile/settings pages, MFA card placement on every settings page, theme store and transition layer, account approvals, admin copilot + SSE parser, `QuickActions`, `chatMessage` type helpers |
 | Mocking | `vi.mock` of `useAuth`, API modules and `react-hot-toast` |
 | E2E (Playwright/Cypress) | NOT FOUND in `frontend/` |
 
@@ -1132,7 +1143,7 @@ Why same-origin matters (from comments in `apiClient.ts` and `.env.example`): th
 | CSRF | `X-HMS-CSRF: 1` on non-safe methods | `apiClient.ts`, verified server-side |
 | Authorization | Route guards and sidebar filtering are **UX only**. Every protected call is re-authorized by the API (comments in `ProtectedRoute.tsx` and `RoleRoute.tsx`). | backend guards |
 | Approval gate | Unapproved doctor/staff accounts can only reach `/pending-approval` | `ProtectedRoute` + backend |
-| Staff sub-type gating | Emergency (nurse) and Laboratory (lab technician) mirror backend checks such as `LaboratoryService.requireLabAccess` | `RoleRoute.tsx`, `EmergencyRouteSwitch.tsx`, `nav.ts` |
+| Staff sub-type gating | Emergency (nurse) and Laboratory (lab technician) mirror backend checks such as `LaboratoryService.requireLabAccess` and `EmergencyService.hasResponderAccess`. The emergency rule lives in one function, `canAccessEmergency` | `RoleRoute.tsx`, `EmergencyRouteSwitch.tsx`, `src/features/emergency/access.ts`, `nav.ts` |
 | Public surface | Only `/doctor/:id` (`GET /public/doctors/:id`) and the auth pages work unauthenticated | `router.tsx` |
 | Copilot writes | AI-proposed actions run only after an explicit admin Approve on `ProposalCard`, which calls `POST /admin-ai/proposals/:id/approve` | `ProposalCard.tsx`, `useCopilot.ts` |
 | Clickjacking / sniffing | `X-Frame-Options: SAMEORIGIN`, `nosniff`, restrictive `Permissions-Policy` | `vercel.json` |
@@ -1146,7 +1157,8 @@ Why same-origin matters (from comments in `apiClient.ts` and `.env.example`): th
 | Entry point | `src/main.tsx` | `Sentry.init`, `createRoot` |
 | App shell | `src/App.tsx` | `App` |
 | Router | `src/routes/router.tsx` | `router` |
-| Guards | `src/routes/ProtectedRoute.tsx`, `src/routes/RoleRoute.tsx` | `ProtectedRoute`, `PublicOnlyRoute`, `RoleRoute`, `LaboratoryRoute` |
+| Guards | `src/routes/ProtectedRoute.tsx`, `src/routes/RoleRoute.tsx`, `src/features/emergency/access.ts` | `ProtectedRoute`, `PublicOnlyRoute`, `RoleRoute`, `LaboratoryRoute`, `EmergencyRoute`, `canAccessEmergency` |
+| Access denied screen | `src/routes/AccessDenied.tsx` | `AccessDenied` |
 | Error boundary | `src/routes/RouteErrorBoundary.tsx` | `RouteErrorBoundary` |
 | Route constants | `src/constants/routes.ts` | `ROUTES`, `buildPublicDoctorProfileUrl`, `buildEmergencyCaseUrl` |
 | Nav config | `src/constants/nav.ts` | `NAV_ITEMS` |
@@ -1156,9 +1168,8 @@ Why same-origin matters (from comments in `apiClient.ts` and `.env.example`): th
 | HTTP client | `src/lib/apiClient.ts` | `api`, `fetchWithSession`, `ApiError`, `onUnauthorized` |
 | Role switches | `src/pages/dashboard/DashboardRouteSwitch.tsx`, `src/pages/settings/SettingsRouteSwitch.tsx`, `src/pages/profile/ProfileRouteSwitch.tsx`, `src/pages/messages/MessagesRouteSwitch.tsx`, `src/pages/medicalRecords/MedicalRecordsRouteSwitch.tsx`, `src/pages/billing/BillingRouteSwitch.tsx`, `src/pages/emergency/EmergencyRouteSwitch.tsx` | |
 | Admin Copilot | `src/features/adminCopilot/AdminCopilot.tsx`, `useCopilot.ts`, `api.ts`, `sse.ts`, `modules.ts`, `ProposalCard.tsx` | |
-| Assistant | `src/features/assistant/AssistantWidget.tsx`, `src/features/assistant/api.ts` | |
 | Notifications | `src/features/notifications/NotificationBell.tsx`, `useNotificationActions.ts` | |
-| Theme | `src/hooks/useTheme.ts`, `index.html` | |
+| Theme | `src/features/theme/themeStore.ts`, `src/features/theme/ThemeTransitionLayer.tsx`, `src/hooks/useTheme.ts`, `index.html` | `getTheme`, `toggleTheme`, `applyTheme`, `registerThemeTransition`, `ThemeTransitionLayer`, `useTheme` |
 | Build config | `vite.config.ts`, `vitest.config.ts`, `vercel.json`, `scripts/check-deploy-config.mjs`, `package.json` | |
 | CI | `.github/workflows/ci.yml` | `frontend` job |
 | Backend controllers referenced | `backend/api/src/main.ts` (`setGlobalPrefix('api')`), `backend/api/src/auth/auth.controller.ts`, `backend/api/src/users/`, and one folder per namespace in section 10.2 | |
@@ -1170,17 +1181,14 @@ Related docs (not re-verified here beyond what is cited): `README.md`, `DOCTOR_P
 These are category *(C)*: absent or limited, as observed in code.
 
 1. **No server-state cache.** Every page refetches on mount. There is no deduplication or stale-while-revalidate, and the same list (for example doctors or patients) is fetched independently by several widgets on the admin dashboard.
-2. **No realtime push.** Chat, notifications and the emergency board rely on polling (30 s and 15 s) or manual refresh. There is no WebSocket or EventSource.
-3. **No dedicated 403 page.** Denied routes silently redirect to `/dashboard`.
-4. **`/announcements` and `/emergency/cases/:id` have no route-level role guard.** Access depends on sidebar visibility, in-page role logic and backend authorization.
-5. **Staff with a null `staffType`** (not yet linked to the roster) see no Emergency or Laboratory entries. That is intended, but there is no in-app message explaining it.
-6. **Admin has no Messages or Medical Records page.** Both switches redirect admins to `/dashboard`.
-7. **Prescriptions** is a read-only projection of medical records, with no prescription workflow or endpoint.
-8. **MFA enrolment UI** (`MfaCard`) appears only on the admin `SettingsPage` and `DoctorSettingsPage`, not on the patient or staff settings pages.
-9. **No error boundary above the router.** A render error in `AuthProvider` or `Toaster` would not be caught by `RouteErrorBoundary`.
-10. **Stale comment.** `src/constants/nav.ts` says items without a `path` render disabled, but every current `NAV_ITEMS` entry has a path.
-11. **Production backend URL is a placeholder** in the committed `vercel.json`. The deployed value cannot be verified from source.
-12. **No frontend E2E tests.**
+2. **No realtime push.** Chat, notifications and the emergency board rely on polling (30 s and 15 s) or manual refresh. There is no WebSocket or EventSource. The only stream is the Admin Copilot's SSE response, read over `fetch`.
+3. **Staff with a null `staffType`** (not yet linked to the roster) see no Emergency or Laboratory entries. That is intended, but nothing explains it: opening those URLs directly shows the generic `AccessDenied` screen, which does not mention the missing roster link.
+4. **Admin has no Messages or Medical Records page.** Both switches show admins `AccessDenied`.
+5. **Prescriptions** is a read-only projection of medical records, with no prescription workflow or endpoint.
+6. **No error boundary above the router.** A render error in `AuthProvider`, `Toaster` or `ThemeTransitionLayer` would not be caught by `RouteErrorBoundary`.
+7. **Production backend URL is a placeholder** in the committed `vercel.json`. The deployed value cannot be verified from source.
+8. **No frontend E2E tests.**
+9. **Empty directory.** `src/features/dashboard/` exists on disk but is empty and untracked; the admin dashboard widgets live in `src/components/dashboard/`.
 
 ## 20. Future Recommendations
 
@@ -1188,9 +1196,6 @@ These are category *(D)*: suggestions only, none of which are implemented.
 
 1. Consider a server-state library such as TanStack Query, or a small shared cache, to deduplicate admin-dashboard fetches and standardize loading and error states.
 2. Add a top-level React error boundary around `AuthProvider` to complement `RouteErrorBoundary`.
-3. Add a "Not authorized" screen in place of silent redirects, so users understand why a link did nothing.
-4. Add explicit `RoleRoute` wrappers to `/announcements` and `/emergency/cases/:id` so the frontend gating matches the sidebar.
-5. Replace polling with server push (SSE or WebSocket) for notifications, chat and the emergency board.
-6. Expose `MfaCard` on the patient and staff settings pages if MFA is meant for all roles.
-7. Add Playwright smoke tests for login, role routing and one CRUD flow per role.
-8. Remove or update the stale "disabled nav item" comment in `src/constants/nav.ts`.
+3. Replace polling with server push (SSE or WebSocket) for notifications, chat and the emergency board.
+4. Add Playwright smoke tests for login, role routing and one CRUD flow per role.
+5. Remove the empty `src/features/dashboard/` directory.

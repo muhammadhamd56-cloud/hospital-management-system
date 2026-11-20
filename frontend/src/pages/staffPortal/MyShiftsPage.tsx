@@ -51,29 +51,46 @@ export function MyShiftsPage() {
   const [viewingShift, setViewingShift] = useState<Shift | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  function load() {
     listMyShifts()
       .then((res) => setShifts(res.shifts))
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   // Deep link from a notification (e.g. a shift assignment) -> My Shifts.
   // Left in the URL so refreshing the page re-opens the same shift.
+  // Opening the linked shift is local state, so it is adjusted during render
+  // whenever the URL / loaded shifts change; the effect below only handles the
+  // side effects (toast + URL cleanup) when the linked shift isn't found.
+  const [deepLinkInputs, setDeepLinkInputs] = useState({ searchParams, shifts, isLoading })
+  if (
+    deepLinkInputs.searchParams !== searchParams ||
+    deepLinkInputs.shifts !== shifts ||
+    deepLinkInputs.isLoading !== isLoading
+  ) {
+    setDeepLinkInputs({ searchParams, shifts, isLoading })
+    const linkedShiftId = searchParams.get('shiftId')
+    const linkedShift = linkedShiftId && !isLoading ? shifts.find((shift) => shift.id === linkedShiftId) : undefined
+    if (linkedShift) setViewingShift(linkedShift)
+  }
+
   useEffect(() => {
     const shiftId = searchParams.get('shiftId')
     if (!shiftId || isLoading) return
 
     const found = shifts.find((shift) => shift.id === shiftId)
-    if (found) {
-      setViewingShift(found)
-    } else {
+    if (!found) {
       toast.error('This shift is no longer available.')
       setSearchParams(
         (prev) => {

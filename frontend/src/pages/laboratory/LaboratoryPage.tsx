@@ -55,8 +55,9 @@ export function LaboratoryPage() {
   const [isRequestOpen, setRequestOpen] = useState(false)
   const [editingTest, setEditingTest] = useState<LabTest | null>(null)
 
-  function refresh() {
-    setIsLoading(true)
+  // Only sets state from async callbacks, so it is safe to call from the
+  // mount effect (isLoading already starts as true).
+  function load() {
     listLabTests()
       .then((res) => setLabTests(res.tests))
       .catch((error) => {
@@ -67,8 +68,7 @@ export function LaboratoryPage() {
   }
 
   useEffect(() => {
-    refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load()
   }, [])
 
   function handleUpdated(updated: LabTest) {

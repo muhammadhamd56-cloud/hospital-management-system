@@ -7,6 +7,7 @@ import type { AiToolDefinition } from '../tools/ai-tool.types';
 import { validateReply } from './ai-orchestrator.service';
 import { buildMessages } from './context-builder';
 import { routeIntent } from './intent-router';
+import { toolDomains } from './ai-orchestrator.service';
 import { ACTIVE_PROMPT_VERSION, PROMPT_VERSIONS, activePrompt } from './prompt-registry';
 
 describe('loadAdminAiConfig', () => {
@@ -17,8 +18,9 @@ describe('loadAdminAiConfig', () => {
       allowPhi: false,
       enableWrites: false,
       ragEnabled: false,
-      provider: 'anthropic',
-      model: 'claude-opus-5-5',
+      provider: 'ollama',
+      model: 'qwen2.5:3b',
+      baseUrl: 'http://localhost:11434',
       apiKey: undefined,
     });
   });
@@ -29,13 +31,13 @@ describe('loadAdminAiConfig', () => {
       AI_ENABLE_WRITES: 'TRUE',
       AI_MAX_TOOL_CALLS: '9999',
       AI_REQUEST_TIMEOUT: 'not-a-number',
-      ANTHROPIC_API_KEY: 'fallback-key',
+      AI_API_KEY: ' proxy-key ',
     });
     expect(config.enabled).toBe(true);
     expect(config.enableWrites).toBe(true);
     expect(config.maxToolCalls).toBe(50);
-    expect(config.requestTimeoutMs).toBe(90_000);
-    expect(config.apiKey).toBe('fallback-key');
+    expect(config.requestTimeoutMs).toBe(300_000);
+    expect(config.apiKey).toBe('proxy-key');
   });
 });
 
@@ -90,6 +92,13 @@ describe('PhiMasker', () => {
   it('redacts credential-shaped strings', () => {
     const text = 'key sk-ant-abcdefghijkl and sk_live_ABCDEFGHIJ and eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.abcdefghijklmnop';
     expect(redactSecrets(text)).toBe('key [redacted] and [redacted] and [redacted]');
+  });
+});
+
+describe('toolDomains', () => {
+  it('offers the routed domains, or only the overview tools when nothing matched', () => {
+    expect(toolDomains(['beds', 'billing'])).toEqual(['beds', 'billing']);
+    expect(toolDomains([])).toEqual(['dashboard', 'reports']);
   });
 });
 

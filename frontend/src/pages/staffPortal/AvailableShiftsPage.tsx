@@ -31,20 +31,29 @@ export function AvailableShiftsPage() {
   const [withdrawing, setWithdrawing] = useState<ShiftApplication | null>(null)
   const [isMutating, setIsMutating] = useState(false)
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  // Reference time for the "deadline passed" check -- captured at mount and
+  // refreshed whenever the openings are (re)loaded, so render stays pure.
+  const [now, setNow] = useState(() => Date.now())
+
+  function load() {
     Promise.all([listAvailableShifts(), listMyApplications()])
       .then(([openingsRes, applicationsRes]) => {
         setOpenings(openingsRes.openings)
         setApplications(applicationsRes.applications)
+        setNow(Date.now())
       })
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   const openOpenings = useMemo(
@@ -135,7 +144,7 @@ export function AvailableShiftsPage() {
                     {openOpenings.map((opening) => {
                       const applied = opening.myApplicationStatus && opening.myApplicationStatus !== 'withdrawn'
                       const full = opening.approvedCount >= opening.positions
-                      const deadlinePassed = new Date(opening.applicationDeadline).getTime() < Date.now()
+                      const deadlinePassed = new Date(opening.applicationDeadline).getTime() < now
                       return (
                         <TableRow key={opening.id}>
                           <TableCell>{formatCalendarDate(opening.date)}</TableCell>

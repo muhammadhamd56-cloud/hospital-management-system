@@ -24,12 +24,21 @@ export function AssignTeamModal({ isOpen, caseId, onClose, onAssigned }: AssignT
   const [staffId, setStaffId] = useState('')
   const [teamName, setTeamName] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [wasOpen, setWasOpen] = useState(false)
+
+  // Clear the form each time the modal opens (adjusting state while
+  // rendering rather than in an effect).
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (isOpen) {
+      setDoctorId('')
+      setStaffId('')
+      setTeamName('')
+    }
+  }
 
   useEffect(() => {
     if (!isOpen) return
-    setDoctorId('')
-    setStaffId('')
-    setTeamName('')
     listDoctors({ limit: 50 })
       .then((res) => setDoctors(res.doctors))
       .catch(() => setDoctors([]))

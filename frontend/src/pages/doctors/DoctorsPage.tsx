@@ -56,8 +56,9 @@ export function DoctorsPage() {
   const [selectedDoctor, setSelectedDoctor] = useState<DirectoryDoctor | null>(null)
   const [revealed, setRevealed] = useState<CreateStaffResponse | null>(null)
 
-  function refresh() {
-    setIsLoading(true)
+  // Only sets state from async callbacks, so it is safe to call from the
+  // mount effect (isLoading already starts as true).
+  function load() {
     listDoctors({ limit: 50 })
       .then((res) => setDoctors(res.doctors))
       .catch((error) => {
@@ -67,19 +68,36 @@ export function DoctorsPage() {
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load()
   }, [])
 
   // Deep-link from the navbar's global search: open a specific doctor's
   // profile as soon as the directory has loaded, then clear the nav state so
   // it doesn't reopen on a later visit via the back button.
-  useEffect(() => {
+  // Selecting the doctor is adjusted during render (re-checked whenever the
+  // loading flag or the list changes); only the nav-state cleanup is an effect.
+  const [deepLinkSource, setDeepLinkSource] = useState<{
+    isLoading: boolean
+    doctors: DirectoryDoctor[]
+  } | null>(null)
+  if (deepLinkSource === null || deepLinkSource.isLoading !== isLoading || deepLinkSource.doctors !== doctors) {
+    setDeepLinkSource({ isLoading, doctors })
     const openDoctorId = (location.state as { openDoctorId?: string } | null)?.openDoctorId
     if (openDoctorId && !isLoading) {
       const match = doctors.find((doctor) => doctor.id === openDoctorId)
       if (match) setSelectedDoctor(match)
+    }
+  }
+
+  useEffect(() => {
+    const openDoctorId = (location.state as { openDoctorId?: string } | null)?.openDoctorId
+    if (openDoctorId && !isLoading) {
       navigate(location.pathname, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -46,8 +46,9 @@ export function BedsPage() {
   const [departmentFilter, setDepartmentFilter] = useState('all')
   const [assigningBed, setAssigningBed] = useState<Bed | null>(null)
 
-  function refresh() {
-    setIsLoading(true)
+  // Only sets state from async callbacks, so it is safe to call from the
+  // mount effect (isLoading already starts as true).
+  function load() {
     listBeds()
       .then((res) => {
         setBeds(res.beds)
@@ -62,8 +63,7 @@ export function BedsPage() {
   }
 
   useEffect(() => {
-    refresh()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load()
   }, [])
 
   async function handleRelease(bed: Bed) {

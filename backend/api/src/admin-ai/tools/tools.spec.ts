@@ -103,6 +103,14 @@ describe('ToolRegistryService', () => {
     expect(registry.specsFor(new Set(), true)).toEqual([]);
   });
 
+  it('narrows specs to the requested domains without widening permissions', () => {
+    const registry = new ToolRegistryService([provider()]);
+    const permissions = new AiPolicyService(configService(testConfig())).resolvePermissions(ADMIN);
+    expect(registry.specsFor(permissions, false, ['beds']).length).toBeGreaterThan(0);
+    expect(registry.specsFor(permissions, false, ['billing'])).toEqual([]);
+    expect(registry.specsFor(new Set(), false, ['beds'])).toEqual([]);
+  });
+
   it('refuses malformed, mis-namespaced or duplicate tools at boot', () => {
     const bad = (name: string, permission = 'ai.read.beds') =>
       provider({

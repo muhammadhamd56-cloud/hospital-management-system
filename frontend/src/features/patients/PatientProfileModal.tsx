@@ -25,21 +25,39 @@ interface PatientProfileModalProps {
 export function PatientProfileModal({ patientId, onClose }: PatientProfileModalProps) {
   const [patient, setPatient] = useState<PatientDetail | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [prevPatientId, setPrevPatientId] = useState<string | null>(null)
+
+  // Reset to a loading, empty profile whenever a patient is opened (adjusting
+  // state while rendering rather than in an effect).
+  if (patientId !== prevPatientId) {
+    setPrevPatientId(patientId)
+    if (patientId) {
+      setIsLoading(true)
+      setPatient(null)
+    }
+  }
 
   useEffect(() => {
     if (!patientId) return
 
-    setIsLoading(true)
-    setPatient(null)
-
+    // Drop a slower response for a previously opened patient.
+    let stale = false
     getPatient(patientId)
-      .then((res) => setPatient(res.patient))
+      .then((res) => {
+        if (!stale) setPatient(res.patient)
+      })
       .catch((error) => {
+        if (stale) return
         const message = error instanceof ApiError ? error.message : 'Failed to load patient'
         toast.error(message)
         onClose()
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (!stale) setIsLoading(false)
+      })
+    return () => {
+      stale = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId])
 

@@ -19,7 +19,7 @@ import { AiProviderError, type AiChatMessage, type AiContentBlock } from '../pro
 import { PhiMasker, redactSecrets } from '../security/phi-masker';
 import { ToolDispatcherService } from '../tools/tool-dispatcher.service';
 import { ToolRegistryService } from '../tools/tool-registry.service';
-import type { AiPermission } from '../tools/ai-tool.types';
+import type { AiDomain, AiPermission } from '../tools/ai-tool.types';
 import type { ProposalView } from '../workflows/ai-proposal.service';
 import { buildMessages, HISTORY_TURNS } from './context-builder';
 import { routeIntent } from './intent-router';
@@ -166,16 +166,19 @@ export class AiOrchestratorService {
       const history = await this.store.recentHistory(conversation.id, HISTORY_TURNS);
       await this.store.addMessage(conversation.id, AiMessageRole.USER, input.message, run.id);
 
+      const intent = routeIntent(input.message, input.activeModule);
       const messages: AiChatMessage[] = buildMessages({
         history,
         message: input.message,
         activeModule: input.activeModule,
-        intent: routeIntent(input.message, input.activeModule),
+        intent,
         now: new Date(),
         phiMasked: !this.config.allowPhi,
         writesEnabled: this.config.enableWrites,
       });
-      const tools = this.registry.specsFor(permissions, this.config.enableWrites);
+      // Only the routed domains' tools are offered: on a CPU-only local model every tool schema
+      // costs prompt-processing time (all ~40 tools is ~5.7k tokens, several minutes per answer).
+      const tools = this.registry.specsFor(permissions, this.config.enableWrites, toolDomains(intent.domains));
       const phi = new PhiMasker(this.config.allowPhi);
 
       let finished = false;
@@ -301,4 +304,11 @@ function toMessageView(message: { id: string; role: AiMessageRole; content: stri
     createdAt: message.createdAt,
     feedback: null,
   };
+}
+
+/** Questions that name no area get the overview tools rather than the whole catalogue. */
+const FALLBACK_TOOL_DOMAINS: readonly AiDomain[] = ['dashboard', 'reports'];
+
+export function toolDomains(routed: readonly AiDomain[]): readonly AiDomain[] {
+  return routed.length > 0 ? routed : FALLBACK_TOOL_DOMAINS;
 }

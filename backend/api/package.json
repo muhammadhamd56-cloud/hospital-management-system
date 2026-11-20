@@ -23,7 +23,6 @@
     "db:seed:demo": "ts-node scripts/seed-demo.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.122.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",
     "@nestjs/core": "^10.0.0",
@@ -53,7 +52,7 @@
     "resend": "^6.18.1",
     "rxjs": "^7.8.1",
     "stripe": "^22.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

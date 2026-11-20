@@ -1,10 +1,10 @@
 # MediCore Admin AI: architecture
 
-The design is a modular monolith with one central orchestrator and a domain tool registry. It is one NestJS module (`backend/api/src/admin-ai`) inside the existing API. It uses the existing database, auth and domain services, and runs no new infrastructure.
+The design is a modular monolith with one central orchestrator and a domain tool registry. It is one NestJS module (`backend/api/src/admin-ai`) inside the existing API. It uses the existing database, auth and domain services. The only extra piece is the model server: a local [Ollama](https://ollama.com) instance that the backend calls over HTTP.
 
 ```
 React DashboardLayout
-  └─ AdminCopilot (admins only; falls back to AssistantWidget if the feature is off)
+  └─ AdminCopilot (admins only; renders nothing if the feature is off)
        │  POST /api/admin-ai/conversations/:id/messages   (cookie session + CSRF, SSE response)
        ▼
 AdminAiController ── AdminAiEnabledGuard → JwtAuthGuard → RolesGuard(ADMIN) → ValidationPipe
@@ -13,7 +13,7 @@ AiOrchestratorService.prepare()   ownership · idempotency · one active run · 
 AiOrchestratorService.execute()   bounded loop: iterations · tool calls · tokens · wall clock · cancellation
    ├─ prompt-registry (versioned system prompt)      ├─ context-builder (history + request context)
    ├─ intent-router (domain hint only)               ├─ AiPolicyService (permissions from the session)
-   ├─ ModelGatewayService ──► AnthropicModelProvider (AI_PROVIDER; adapters are swappable)
+   ├─ ModelGatewayService ──► OllamaModelProvider ──► Ollama POST {AI_BASE_URL}/api/chat (local model)
    └─ ToolDispatcherService
         resolve → authorize → zod-validate input → execute with timeout → output allowlist → record/audit
         ├─ read tools ─────────► existing domain services (BedsService, BillingService, …)
@@ -33,7 +33,7 @@ Observability: AiMetricsService (structured run log, usage endpoint)
 | Prompt registry | `core/prompt-registry.ts` (version saved on every `AiRun.promptVersion`) |
 | Context builder and intent router | `core/context-builder.ts`, `core/intent-router.ts` |
 | Policy engine and permission resolver | `control-plane/ai-policy.service.ts` |
-| Provider gateway | `providers/model-provider.interface.ts`, `providers/model-gateway.service.ts`, `providers/adapters/anthropic.provider.ts` |
+| Provider gateway | `providers/model-provider.interface.ts`, `providers/model-gateway.service.ts`, `providers/adapters/ollama.provider.ts` |
 | Tool registry and dispatcher | `tools/ai-tool.types.ts`, `tools/ai-action.types.ts`, `tools/tool-registry.service.ts`, `tools/tool-dispatcher.service.ts` |
 | 15 domain namespaces | `domain-tools/<domain>.ai-tools.ts` |
 | Human approval workflow | `workflows/ai-proposal.service.ts` |
@@ -104,12 +104,12 @@ There are 46 tools (39 read, 7 propose) and 6 approvable actions.
 | profile | getAdminProfile, explainFields, prepareProfileUpdate | profile.update (caller's own id only) |
 | settings | getConfiguration, findInconsistencies, prepareConfigurationChange | settings.updateConsultationMargin |
 
-## Data model (additive migration `20261117183437_admin_ai_copilot`)
+## Data model (additive migrations `20261117183437_admin_ai_copilot` and `20261118164101_fk_indexes_and_ai_message_run`)
 
 | Model | Holds |
 |---|---|
 | `AiConversation` | Owner, title, last module |
-| `AiMessage` | USER/ASSISTANT text, run id |
+| `AiMessage` | USER/ASSISTANT text, run id (a foreign key to `AiRun`, `SetNull`, since migration `20261118164101_fk_indexes_and_ai_message_run`) |
 | `AiRun` | Idempotency key (unique per user), status, provider, model, prompt version, token counts, tool calls, latency, error code |
 | `AiToolInvocation` | Tool, domain, status, argument names only, duration |
 | `AiActionProposal` | Action, params plus SHA-256 hash, status, expiry, decider, result |
@@ -124,13 +124,18 @@ Design choices kept on purpose:
 
 ## Provider
 
-The gateway selects the adapter named by `AI_PROVIDER`. The Anthropic adapter is built on the official `@anthropic-ai/sdk` 0.122:
+The gateway selects the adapter named by `AI_PROVIDER` (default `ollama`, the only registered adapter). `OllamaModelProvider` (`providers/adapters/ollama.provider.ts`) talks to a local Ollama server with native `fetch`; there is no SDK:
 
-- It uses `beta.messages.stream`, with streaming text deltas fed into SSE.
-- It sets `output_config.effort: "medium"`. The default model `claude-opus-5-5` always uses adaptive thinking, so no `thinking` parameter is sent.
-- The system block uses ephemeral prompt caching.
-- On models that support it, it enables the server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`).
-- The SDK's bounded retries (`AI_MAX_RETRIES`, default 2) handle 429 and 5xx responses.
-- Errors are normalised to `AiProviderError` codes.
+- It streams `POST {AI_BASE_URL}/api/chat` with `stream: true`. Ollama answers with newline-delimited JSON, and each text delta is fed into SSE as it arrives.
+- It sends the system prompt as a `system` message, the tool specs as `function` tools, and `options.num_predict` (`AI_MAX_OUTPUT_TOKENS`) and `options.num_ctx` (`AI_CONTEXT_TOKENS`, default 8192, because Ollama's small default context would truncate the prompt and tool schemas).
+- Ollama tool calls carry no id, so the adapter generates one per call (`ollama_call_<n>`). It stores the assistant turn with those ids and, when replaying history, sends each tool result as a `tool` message named by `tool_name`.
+- `Authorization: Bearer <AI_API_KEY>` is sent only when a key is set, for an Ollama behind an authenticating proxy.
+- It retries a refused connection and 429/5xx responses (`AI_MAX_RETRIES`, default 2, exponential back-off from 500 ms) before any output is read. A stream that fails midway is not retried, because the admin has already seen part of the answer.
+- Errors are normalised to `AiProviderError` codes: an unreachable server becomes `unavailable` ("Check that Ollama is running"), HTTP 404 becomes "model not available, pull it with Ollama first", 401/403 become `auth`, 429 `rate_limited`.
+- `isConfigured()` is true when `AI_BASE_URL` is a valid http(s) URL and `AI_MODEL` is set. It does not contact the server.
 
-To add another provider, implement `AiModelProvider` and add it to `MODEL_PROVIDERS` in `admin-ai.module.ts`.
+**Where the data goes.** The model runs on the machine that runs Ollama, so prompts, history and tool results stay there unless `AI_BASE_URL` points at another host. PHI masking still applies by default (`AI_ALLOW_PHI=false`).
+
+**Not verified live yet.** The adapter is covered by `providers/ollama.provider.spec.ts` with a mocked `fetch`; no run against a real Ollama server has been made. The default model `qwen2.5:3b` was chosen from a benchmark on the target CPU-only laptop (see `AI_DEPLOYMENT.md`, Choosing a model); any replacement must support tool calling.
+
+To add another provider, implement `AiModelProvider` and add it to `MODEL_PROVIDERS` in `admin-ai.module.ts` (and to `SUPPORTED_AI_PROVIDERS` in `domain-tools/settings.ai-tools.ts`, which the settings consistency check uses).

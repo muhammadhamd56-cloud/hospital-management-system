@@ -25,7 +25,7 @@ export interface RoutedIntent {
 
 /**
  * Lightweight, deterministic domain detection. It only produces a hint for
- * the model and for run analytics -- it never narrows what the user is
+ * the model, for run analytics and for choosing which tools to offer -- it never widens what the user is
  * allowed to do, and the UI-reported module is context, not authorization.
  */
 export function routeIntent(message: string, activeModule?: string | null): RoutedIntent {

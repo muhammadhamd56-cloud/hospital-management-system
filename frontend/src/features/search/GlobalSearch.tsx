@@ -129,17 +129,24 @@ export function GlobalSearch() {
     }
   }, [isOpen])
 
-  useEffect(() => {
-    const trimmed = query.trim()
-
-    if (trimmed.length < MIN_QUERY_LENGTH) {
+  // Synchronous part of reacting to a new query, done while rendering rather
+  // than in the effect: clear results for a too-short query, otherwise show
+  // the searching state until the debounced request below settles.
+  const [prevQuery, setPrevQuery] = useState(query)
+  if (query !== prevQuery) {
+    setPrevQuery(query)
+    if (query.trim().length < MIN_QUERY_LENGTH) {
       setPatients([])
       setDoctors([])
       setIsSearching(false)
-      return
+    } else {
+      setIsSearching(true)
     }
+  }
 
-    setIsSearching(true)
+  useEffect(() => {
+    const trimmed = query.trim()
+    if (trimmed.length < MIN_QUERY_LENGTH) return
 
     // Set on cleanup (next keystroke / cleared query) so a slower, older
     // response can't overwrite newer results.

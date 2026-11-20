@@ -101,10 +101,6 @@ function CountrySelect({ label, value, onChange }: CountrySelectProps) {
     }
   }, [isOpen])
 
-  useEffect(() => {
-    setHighlightedIndex(0)
-  }, [query])
-
   function handleSelect(code: CountryCode) {
     onChange(code)
     setIsOpen(false)
@@ -166,7 +162,10 @@ function CountrySelect({ label, value, onChange }: CountrySelectProps) {
                 ref={searchRef}
                 type="text"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  setHighlightedIndex(0)
+                }}
                 onKeyDown={handleSearchKeyDown}
                 placeholder="Search country or code"
                 aria-label="Search country"

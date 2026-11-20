@@ -73,30 +73,38 @@ export function DoctorChatPanel({ appointments, isAppointmentsLoading = false, i
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const [draft, setDraft] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  // The conversation the loading spinner was last started for.
+  const [loadingStartedFor, setLoadingStartedFor] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const imageAttachment = useChatImageAttachment()
   // Keyed on the newest message, so loading older ones doesn't jump to the bottom.
   const scrollRef = useAutoScrollToBottom(thread[thread.length - 1]?.id)
 
-  useEffect(() => {
-    // Wait for the inbox too: a ?doctorId= deep link may only be in the inbox
-    // (a thread without an appointment), and once a default is picked it sticks.
-    if (selectedDoctorId || doctorOptions.length === 0 || isInboxLoading) return
-
+  // Auto-select a conversation (adjusting state while rendering rather than in
+  // an effect). Wait for the inbox too: a ?doctorId= deep link may only be in
+  // the inbox (a thread without an appointment), and once a default is picked
+  // it sticks.
+  if (!selectedDoctorId && doctorOptions.length > 0 && !isInboxLoading) {
     if (initialDoctorId && doctorOptions.some((doctor) => doctor.doctorId === initialDoctorId)) {
       setSelectedDoctorId(initialDoctorId)
     } else {
       setSelectedDoctorId(doctorOptions[0].doctorId)
     }
-  }, [doctorOptions, selectedDoctorId, initialDoctorId, isInboxLoading])
+  }
+
+  // Show the spinner as soon as the selected conversation changes; the effect
+  // below clears it once that conversation's thread request settles.
+  if (loadingStartedFor !== selectedDoctorId) {
+    setLoadingStartedFor(selectedDoctorId)
+    if (selectedDoctorId) setIsLoading(true)
+  }
 
   useEffect(() => {
     if (!selectedDoctorId) return
 
     // Drop a slower response for a previously selected doctor.
     let stale = false
-    setIsLoading(true)
     getChatThread(selectedDoctorId)
       .then((res) => {
         if (stale) return

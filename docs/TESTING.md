@@ -6,7 +6,7 @@
 |---|---|---|
 | Typecheck | `npx tsc --noEmit` | — |
 | Lint | `npx eslint "{src,test}/**/*.ts"` (`npm run lint` also applies `--fix`) | — |
-| Unit | `npm test` | — (Prisma, Stripe, Resend, Anthropic are mocked) |
+| Unit | `npm test` | — (Prisma, Stripe, Resend and the Ollama model server are mocked) |
 | E2E | `npm run test:e2e` | local Postgres with the **test** DB from `.env.test` |
 
 E2E suites boot the real Nest app against
@@ -19,6 +19,7 @@ DATABASE_URL="<url from .env.test>" npx prisma migrate deploy --schema=../../dat
 
 - `test/auth.e2e-spec.ts`: signup, OTP, login, lockout, MFA, password flows.
 - `test/emergency.e2e-spec.ts`: emergency case lifecycle and role rules.
+- `test/admin-ai.e2e-spec.ts`: Admin AI Copilot routes (auth and role, ownership, validation, SSE with a real beds tool, idempotent replay, provider failure, writes disabled). The model provider is faked, so no Ollama server is needed.
 - `test/integrity.e2e-spec.ts`: **race conditions and cookie sessions**.
   It fires simultaneous payments and refunds at one invoice and asserts
   exactly one succeeds. It also checks logout with an expired access

@@ -10,7 +10,7 @@ import { defineTool, type AiToolDefinition, type AiToolProvider } from '../tools
 import { validateDto } from './group-b.shared';
 
 /** Provider adapters registered in AdminAiModule (MODEL_PROVIDERS). */
-const SUPPORTED_AI_PROVIDERS = ['anthropic'];
+const SUPPORTED_AI_PROVIDERS = ['ollama'];
 
 /** Same bound as UpdatePlatformSettingsDto (@IsNumber, @Min(0)); no upper bound exists there. */
 const marginParams = z.object({ consultationMargin: z.number().finite().min(0) }).strict();
@@ -44,7 +44,7 @@ export class SettingsAiTools implements AiToolProvider {
       writesEnabled: ai.enableWrites,
       allowPhi: ai.allowPhi,
       ragEnabled: ai.ragEnabled,
-      apiKeyConfigured: Boolean(ai.apiKey),
+      modelServerConfigured: Boolean(ai.baseUrl),
     };
   }
 
@@ -56,7 +56,7 @@ export class SettingsAiTools implements AiToolProvider {
         mode: 'read',
         permission: 'ai.read.settings',
         description:
-          'Current platform settings (consultation margin added to every new consultation invoice) and the Admin AI switches: enabled, provider, model, writesEnabled, allowPhi, ragEnabled and whether an API key is configured (yes/no only). Never returns secrets or environment values.',
+          'Current platform settings (consultation margin added to every new consultation invoice) and the Admin AI switches: enabled, provider, model, writesEnabled, allowPhi, ragEnabled and whether a model server URL is configured (yes/no only). Never returns secrets, URLs or environment values.',
         input: z.object({}),
         output: z.object({
           platform: z.object({ consultationMargin: z.number() }),
@@ -67,7 +67,7 @@ export class SettingsAiTools implements AiToolProvider {
             writesEnabled: z.boolean(),
             allowPhi: z.boolean(),
             ragEnabled: z.boolean(),
-            apiKeyConfigured: z.boolean(),
+            modelServerConfigured: z.boolean(),
           }),
         }),
         execute: async () => ({ platform: await this.platformSettings.getSettings(), adminAi: this.aiFlags() }),
@@ -78,7 +78,7 @@ export class SettingsAiTools implements AiToolProvider {
         mode: 'read',
         permission: 'ai.read.settings',
         description:
-          'Check settings for inconsistencies: consultation margin negative, non-numeric or with more than 2 decimals (the settings form requires >= 0, money is stored to cents); AI enabled or writes enabled without an API key or with an unsupported provider; RAG switched on although it is not implemented; PHI sharing with the model provider switched on. Returns each issue with a severity.',
+          'Check settings for inconsistencies: consultation margin negative, non-numeric or with more than 2 decimals (the settings form requires >= 0, money is stored to cents); AI enabled or writes enabled without a valid model server URL or with an unsupported provider; RAG switched on although it is not implemented; PHI sharing with the model provider switched on. Returns each issue with a severity.',
         input: z.object({}),
         output: z.object({
           checked: z.array(z.string()),
@@ -104,10 +104,10 @@ export class SettingsAiTools implements AiToolProvider {
           if (ai.enabled && !providerSupported) {
             add('error', 'AI_PROVIDER', `Provider "${ai.provider}" has no registered adapter`);
           }
-          if (ai.enabled && !ai.apiKeyConfigured) {
-            add('error', 'AI_API_KEY', 'Admin AI is enabled but no API key is configured');
+          if (ai.enabled && !ai.modelServerConfigured) {
+            add('error', 'AI_BASE_URL', 'Admin AI is enabled but AI_BASE_URL is not a valid http(s) URL');
           }
-          if (ai.writesEnabled && (!ai.apiKeyConfigured || !providerSupported)) {
+          if (ai.writesEnabled && (!ai.modelServerConfigured || !providerSupported)) {
             add('warning', 'AI_ENABLE_WRITES', 'AI writes are enabled while the model provider is not configured');
           }
           if (ai.writesEnabled && !ai.enabled) {
@@ -117,9 +117,9 @@ export class SettingsAiTools implements AiToolProvider {
             add('warning', 'AI_RAG_ENABLED', 'RAG is switched on but knowledge retrieval is not implemented yet');
           }
           if (ai.allowPhi) {
-            add('warning', 'AI_ALLOW_PHI', 'Patient identifiers are sent to the external model provider');
+            add('warning', 'AI_ALLOW_PHI', 'Patient identifiers are sent to the model unmasked');
           }
-          const checked = ['consultationMargin', 'AI_PROVIDER', 'AI_API_KEY', 'AI_ENABLE_WRITES', 'AI_RAG_ENABLED', 'AI_ALLOW_PHI'];
+          const checked = ['consultationMargin', 'AI_PROVIDER', 'AI_BASE_URL', 'AI_ENABLE_WRITES', 'AI_RAG_ENABLED', 'AI_ALLOW_PHI'];
           return { checked, issues };
         },
       }),

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Outlet } from 'react-router'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Navbar } from '@/components/layout/Navbar'
-import { AssistantWidget } from '@/features/assistant/AssistantWidget'
 import { AdminCopilot } from '@/features/adminCopilot/AdminCopilot'
 import { useAuth } from '@/features/auth/useAuth'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
@@ -21,7 +20,7 @@ export function DashboardLayout() {
           <Outlet />
         </main>
       </div>
-      {user?.role === 'admin' ? <AdminCopilot /> : <AssistantWidget />}
+      {user?.role === 'admin' && <AdminCopilot />}
     </div>
   )
 }

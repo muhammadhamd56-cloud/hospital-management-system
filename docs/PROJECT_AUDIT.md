@@ -22,7 +22,6 @@ not reproduced.
 | Database | PostgreSQL via Prisma 6 | schema + migrations in `database/api/` |
 | Payments | Stripe Checkout + webhook | optional — disabled when `STRIPE_SECRET_KEY` is unset |
 | Email | Resend | optional in dev (codes are logged instead — never in production) |
-| AI assistant | Anthropic API | optional; navigation-only, read-only tools |
 | Monitoring | Sentry (backend + frontend) | no-op when the DSN is unset |
 
 **Request flow.** Browser → `/api/*` on the app's own origin (Vite proxy in
@@ -81,7 +80,7 @@ See [SECURITY.md](SECURITY.md) for the full permission matrix.
 | APT-4 | `scheduledAt` accepted any string `Date` could parse. A time without an offset was read in the server's timezone (UTC), shifting the appointment. | **Fixed.** Strict ISO-8601 with an explicit offset is required. The frontend already sends `toISOString()`. |
 | PRV-1 | A doctor viewing a patient saw the patient's appointments (with free-text reasons) at **every other** doctor. | **Fixed.** Only the doctor's own appointments with that patient are returned. |
 | PRV-2 | Every patient could read all doctors' emails and phone numbers from the directory and probe staff emails via search. The directory also loaded the whole doctors table into memory for every search. | **Fixed.** Contact details are hidden from patients and email search is staff-only. Filtering and the limit now run in SQL. |
-| PRV-3 | The AI assistant sent the user's email and the clinical free-text appointment reason to the model provider. | **Fixed** (role only; no reason). Patient and doctor names still go to the provider for navigation answers, so a data-processing agreement is still needed. |
+| PRV-3 | The AI assistant sent the user's email and the clinical free-text appointment reason to the model provider. | **Fixed** (role only; no reason). Patient and doctor names still go to the provider for navigation answers, so a data-processing agreement is still needed. **Resolved by removal** (2026-11-20): the AI assistant was deleted. |
 | SEC-5 | OTP and password-reset attempt limits could be raced with parallel guesses. The reset endpoint also distinguished "unknown email" (400) from "wrong code" (401), confirming which accounts exist. | **Fixed.** An attempt is claimed atomically before comparing. All reset failures return the same 400. Codes are single-use even under concurrent submission. |
 | SCH-1 | Two simultaneous approvals could overfill a shift opening. | **Fixed.** A row lock on the opening, a conditional claim, and a compensating rollback if the shift can't be created. |
 | UX-1 | Adding a doctor or patient from the dashboard's **Quick Actions** discarded the one-time temporary password, so the new account was unusable. | **Fixed.** Shared `TempPasswordDialog` (also replaces three duplicated copies). |
@@ -107,7 +106,7 @@ See [SECURITY.md](SECURITY.md) for the full permission matrix.
 | BIL-6 | Invoice due dates are stored as UTC midnight, so "overdue" starts the evening before in the Americas. | **Open.** |
 | OPS-1 | Swagger UI was public in production. | **Fixed** (non-production only). |
 | OPS-2 | Shutdown hooks weren't enabled, so Prisma never disconnected on SIGTERM. | **Fixed.** |
-| OPS-3 | A missing `ANTHROPIC_API_KEY` returned 500 on every assistant call (and alerted Sentry). | **Fixed** (503). |
+| OPS-3 | A missing `ANTHROPIC_API_KEY` returned 500 on every assistant call (and alerted Sentry). | **Fixed** (503). **Resolved by removal** (2026-11-20): the AI assistant was deleted. |
 | SEC-6 | Changing a password doesn't revoke other sessions (a reset does). | **Open.** |
 | SCH-2 | Shift availability checks read UTC hours as local wall-clock time. | **Open.** |
 | FE-1 | 44 pre-existing frontend lint errors (`set-state-in-effect`). | **Open.** Unchanged in count by this pass. |

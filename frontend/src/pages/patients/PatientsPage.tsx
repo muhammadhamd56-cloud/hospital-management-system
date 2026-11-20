@@ -50,10 +50,18 @@ export function PatientsPage() {
   // Deep-link from the navbar's global search: open a specific patient's
   // profile as soon as the directory has loaded, then clear the nav state so
   // it doesn't reopen on a later visit via the back button.
+  // Selecting the patient is adjusted during render (re-checked whenever the
+  // loading flag changes); only the nav-state cleanup is an effect.
+  const [deepLinkIsLoading, setDeepLinkIsLoading] = useState<boolean | null>(null)
+  if (deepLinkIsLoading !== isLoading) {
+    setDeepLinkIsLoading(isLoading)
+    const openPatientId = (location.state as { openPatientId?: string } | null)?.openPatientId
+    if (openPatientId && !isLoading) setSelectedPatientId(openPatientId)
+  }
+
   useEffect(() => {
     const openPatientId = (location.state as { openPatientId?: string } | null)?.openPatientId
     if (openPatientId && !isLoading) {
-      setSelectedPatientId(openPatientId)
       navigate(location.pathname, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

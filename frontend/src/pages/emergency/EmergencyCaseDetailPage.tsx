@@ -53,10 +53,20 @@ export function EmergencyCaseDetailPage() {
   const [isCancelOpen, setCancelOpen] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
+  const [loadedId, setLoadedId] = useState(id)
 
-  function refresh() {
+  // Navigating to a different case (same route, new :id) shows the loading
+  // state again until that case has been fetched -- adjusted during render
+  // rather than in the effect below (isLoading already starts as true).
+  if (id !== loadedId) {
+    setLoadedId(id)
+    if (id) setIsLoading(true)
+  }
+
+  // Only sets state from async callbacks, so it is safe to call from the
+  // effect below.
+  function load() {
     if (!id) return
-    setIsLoading(true)
     getEmergency(id)
       .then((res) => setEmergencyCase(res.emergencyCase))
       .catch((error) => {
@@ -67,8 +77,14 @@ export function EmergencyCaseDetailPage() {
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    if (!id) return
+    setIsLoading(true)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 

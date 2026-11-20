@@ -27,14 +27,35 @@ export function PatientBillingPage() {
   // Deep link from a notification (e.g. "Invoice INV-0001" -> Billing).
   // Left in the URL (not stripped like ?paid= below) so refreshing the page
   // re-opens the same invoice instead of losing it to component state.
+  //
+  // Opening the modal is adjusted during render (re-checked whenever the URL,
+  // the list, or the loading flag changes) instead of setting state in an
+  // effect; only the "not found" toast + URL cleanup runs as an effect.
+  const [deepLinkSource, setDeepLinkSource] = useState<{
+    searchParams: URLSearchParams
+    invoices: typeof invoices
+    isLoading: boolean
+  } | null>(null)
+  if (
+    deepLinkSource === null ||
+    deepLinkSource.searchParams !== searchParams ||
+    deepLinkSource.invoices !== invoices ||
+    deepLinkSource.isLoading !== isLoading
+  ) {
+    setDeepLinkSource({ searchParams, invoices, isLoading })
+    const deepLinkedInvoiceId = searchParams.get('invoiceId')
+    const found =
+      deepLinkedInvoiceId && !isLoading
+        ? invoices.find((invoice) => invoice.id === deepLinkedInvoiceId)
+        : undefined
+    if (found) setViewingInvoice(found)
+  }
+
   useEffect(() => {
     const invoiceId = searchParams.get('invoiceId')
     if (!invoiceId || isLoading) return
 
-    const found = invoices.find((invoice) => invoice.id === invoiceId)
-    if (found) {
-      setViewingInvoice(found)
-    } else {
+    if (!invoices.some((invoice) => invoice.id === invoiceId)) {
       toast.error('This invoice is no longer available.')
       setSearchParams(
         (prev) => {
@@ -89,7 +110,7 @@ export function PatientBillingPage() {
     [invoices],
   )
 
-  // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
+  // ?filter=unpaid -- e.g. from a deep link to unpaid bills.
   // Same "unpaid" definition already used to decide whether "Pay now" shows.
   const isUnpaidFilterActive = searchParams.get('filter') === 'unpaid'
   const visibleInvoices = useMemo(

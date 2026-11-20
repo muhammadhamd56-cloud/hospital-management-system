@@ -6,12 +6,19 @@
 export interface AdminAiConfig {
   /** ADMIN_AI_ENABLED -- master switch; when false every /admin-ai route 404s. */
   enabled: boolean;
-  /** AI_PROVIDER -- key of a registered provider adapter (only "anthropic" today). */
+  /** AI_PROVIDER -- key of a registered provider adapter (only "ollama" today). */
   provider: string;
-  /** AI_MODEL */
+  /** AI_MODEL -- an Ollama model tag that supports tool calling, e.g. "qwen2.5:3b". */
   model: string;
-  /** AI_API_KEY, falling back to the ANTHROPIC_API_KEY the existing assistant already uses. */
+  /** AI_BASE_URL -- the Ollama server, without a trailing slash. Undefined when the value is not an http(s) URL. */
+  baseUrl: string | undefined;
+  /**
+   * AI_API_KEY -- optional. Sent as a Bearer token, for an Ollama server that
+   * sits behind an authenticating proxy. A plain local Ollama needs none.
+   */
   apiKey: string | undefined;
+  /** AI_CONTEXT_TOKENS -- Ollama `num_ctx`. Its small default would truncate the system prompt and tool schemas. */
+  contextTokens: number;
   /** AI_MAX_OUTPUT_TOKENS -- per model call. */
   maxOutputTokens: number;
   /** AI_REQUEST_TIMEOUT (ms) -- wall-clock limit for one whole run, all model and tool calls included. */
@@ -47,16 +54,35 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
   return Math.min(max, Math.max(min, parsed));
 }
 
-export const DEFAULT_AI_MODEL = 'claude-opus-5-5';
+/**
+ * Chosen from a 2026-11-20 benchmark on the target CPU-only laptop: correct tool
+ * choice with correctly typed arguments, ~2.4 GB at an 8k context. See
+ * docs/ai/AI_DEPLOYMENT.md (Choosing a model) before changing it.
+ */
+export const DEFAULT_AI_MODEL = 'qwen2.5:3b';
+export const DEFAULT_AI_BASE_URL = 'http://localhost:11434';
+
+function baseUrl(value: string | undefined): string | undefined {
+  const raw = value?.trim() || DEFAULT_AI_BASE_URL;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+    return raw.replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
+}
 
 export function loadAdminAiConfig(env: Record<string, string | undefined>): AdminAiConfig {
   return {
     enabled: flag(env.ADMIN_AI_ENABLED ?? env.AI_ENABLED, false),
-    provider: (env.AI_PROVIDER ?? 'anthropic').trim().toLowerCase(),
+    provider: (env.AI_PROVIDER ?? 'ollama').trim().toLowerCase(),
     model: env.AI_MODEL?.trim() || DEFAULT_AI_MODEL,
-    apiKey: env.AI_API_KEY?.trim() || env.ANTHROPIC_API_KEY?.trim() || undefined,
+    baseUrl: baseUrl(env.AI_BASE_URL),
+    apiKey: env.AI_API_KEY?.trim() || undefined,
+    contextTokens: int(env.AI_CONTEXT_TOKENS, 8_192, 2_048, 262_144),
     maxOutputTokens: int(env.AI_MAX_OUTPUT_TOKENS, 4096, 256, 32_000),
-    requestTimeoutMs: int(env.AI_REQUEST_TIMEOUT, 90_000, 5_000, 600_000),
+    requestTimeoutMs: int(env.AI_REQUEST_TIMEOUT, 300_000, 5_000, 600_000),
     maxToolCalls: int(env.AI_MAX_TOOL_CALLS, 12, 1, 50),
     maxIterations: int(env.AI_MAX_ITERATIONS, 8, 1, 20),
     dailyTokenBudget: int(env.AI_DAILY_BUDGET, 500_000, 0, 1_000_000_000),

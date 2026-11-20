@@ -65,7 +65,8 @@ hospital-management-system/
 │           ├── billing, beds, chat, laboratory
 │           ├── emergency, platform-settings, staff, staff-scheduling
 │           ├── reports, notifications, announcements, doctor-portal
-│           └── medical-records, assistant, audit-log
+│           ├── medical-records, audit-log
+│           └── admin-ai       # Admin AI Copilot (opt-in, local model via Ollama)
 └── database/
     └── api/               # Prisma schema + migrations (PostgreSQL)
 ```

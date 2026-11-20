@@ -19,7 +19,6 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { Badge, Button } from '@/components/ui'
-import { AssistantWidget } from '@/features/assistant/AssistantWidget'
 import { cn } from '@/utils/cn'
 import { getCopilotStatus, type CopilotMessage, type CopilotProposal, type CopilotStatus } from '@/features/adminCopilot/api'
 import { Markdown } from '@/features/adminCopilot/Markdown'
@@ -29,8 +28,7 @@ import { useCopilot, type StreamingState } from '@/features/adminCopilot/useCopi
 
 /**
  * Admin entry point. Shows the full copilot when the backend reports it
- * enabled; otherwise (feature flag off, 404) falls back to the existing
- * navigation assistant so admins lose nothing.
+ * enabled; otherwise (feature flag off, 404) renders nothing.
  */
 export function AdminCopilot() {
   const [status, setStatus] = useState<CopilotStatus | null | 'unavailable'>(null)
@@ -45,8 +43,7 @@ export function AdminCopilot() {
     }
   }, [])
 
-  if (status === null) return null
-  if (status === 'unavailable') return <AssistantWidget />
+  if (status === null || status === 'unavailable') return null
   return <CopilotShell status={status} />
 }
 

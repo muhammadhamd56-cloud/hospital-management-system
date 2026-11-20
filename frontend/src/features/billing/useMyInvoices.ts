@@ -8,8 +8,9 @@ export function useMyInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
-  function refresh() {
-    setIsLoading(true)
+  // Only sets state from the async callbacks, so the mount effect can call
+  // it directly (isLoading already starts as true).
+  function load() {
     listMyInvoices()
       .then((res) => setInvoices(res.invoices))
       .catch((error) => {
@@ -19,8 +20,13 @@ export function useMyInvoices() {
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   return { invoices, isLoading, refresh }

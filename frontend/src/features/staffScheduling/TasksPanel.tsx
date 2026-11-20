@@ -24,17 +24,21 @@ export function TasksPanel({ staff }: { staff: Staff[] }) {
   const [isFormOpen, setFormOpen] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
 
-  function refresh() {
-    setIsLoading(true)
-    setLoadError(false)
+  function load() {
     listTasks()
       .then((res) => setTasks(res.tasks))
       .catch(() => setLoadError(true))
       .finally(() => setIsLoading(false))
   }
 
+  function refresh() {
+    setIsLoading(true)
+    setLoadError(false)
+    load()
+  }
+
   useEffect(() => {
-    refresh()
+    load()
   }, [])
 
   const filtered = useMemo(() => {

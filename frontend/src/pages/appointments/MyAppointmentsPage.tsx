@@ -14,14 +14,35 @@ export function MyAppointmentsPage() {
 
   // Deep link from a notification (e.g. an appointment reminder) -> My Appointments.
   // Left in the URL so refreshing the page re-opens the same appointment.
+  //
+  // Opening the modal is adjusted during render (re-checked whenever the URL,
+  // the list, or the loading flag changes) instead of setting state in an
+  // effect; only the "not found" toast + URL cleanup runs as an effect.
+  const [deepLinkSource, setDeepLinkSource] = useState<{
+    searchParams: URLSearchParams
+    appointments: typeof appointments
+    isLoading: boolean
+  } | null>(null)
+  if (
+    deepLinkSource === null ||
+    deepLinkSource.searchParams !== searchParams ||
+    deepLinkSource.appointments !== appointments ||
+    deepLinkSource.isLoading !== isLoading
+  ) {
+    setDeepLinkSource({ searchParams, appointments, isLoading })
+    const deepLinkedAppointmentId = searchParams.get('appointmentId')
+    const found =
+      deepLinkedAppointmentId && !isLoading
+        ? appointments.find((appointment) => appointment.id === deepLinkedAppointmentId)
+        : undefined
+    if (found) setViewingAppointment(found)
+  }
+
   useEffect(() => {
     const appointmentId = searchParams.get('appointmentId')
     if (!appointmentId || isLoading) return
 
-    const found = appointments.find((appointment) => appointment.id === appointmentId)
-    if (found) {
-      setViewingAppointment(found)
-    } else {
+    if (!appointments.some((appointment) => appointment.id === appointmentId)) {
       toast.error('This appointment is no longer available.')
       setSearchParams(
         (prev) => {

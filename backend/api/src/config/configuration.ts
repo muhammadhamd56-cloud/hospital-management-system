@@ -30,10 +30,6 @@ export interface AppConfig {
     secretKey: string | undefined;
     webhookSecret: string | undefined;
   };
-  assistant: {
-    anthropicApiKey: string | undefined;
-    model: string;
-  };
   mfa: {
     /** Raw MFA_ENCRYPTION_KEY (32 bytes as base64 or 64 hex chars). Required
      *  in production; unset elsewhere means MFA secrets are stored as plain text. */
@@ -75,10 +71,6 @@ export default (): AppConfig => ({
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-  },
-  assistant: {
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5',
   },
   mfa: {
     encryptionKey: process.env.MFA_ENCRYPTION_KEY?.trim() || undefined,

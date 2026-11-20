@@ -58,6 +58,15 @@ export function EmergencyCenterPage() {
 
   const isAdmin = user?.role === 'admin'
 
+  // Changing a filter shows the loading state again until the refetch below
+  // lands -- adjusted during render rather than in the effect (isLoading
+  // already starts as true for the first fetch).
+  const [fetchedFilters, setFetchedFilters] = useState({ statusFilter, priorityFilter })
+  if (fetchedFilters.statusFilter !== statusFilter || fetchedFilters.priorityFilter !== priorityFilter) {
+    setFetchedFilters({ statusFilter, priorityFilter })
+    setIsLoading(true)
+  }
+
   function refresh() {
     listEmergencies({
       status: statusFilter === 'all' ? undefined : statusFilter,
@@ -72,7 +81,6 @@ export function EmergencyCenterPage() {
   }
 
   useEffect(() => {
-    setIsLoading(true)
     refresh()
     const interval = setInterval(refresh, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
