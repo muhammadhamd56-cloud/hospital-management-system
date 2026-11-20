@@ -17,8 +17,9 @@ describe('loadAdminAiConfig', () => {
       allowPhi: false,
       enableWrites: false,
       ragEnabled: false,
-      provider: 'anthropic',
-      model: 'claude-opus-5-5',
+      provider: 'ollama',
+      model: 'llama3.1:8b',
+      baseUrl: 'http://localhost:11434',
       apiKey: undefined,
     });
   });
@@ -29,13 +30,13 @@ describe('loadAdminAiConfig', () => {
       AI_ENABLE_WRITES: 'TRUE',
       AI_MAX_TOOL_CALLS: '9999',
       AI_REQUEST_TIMEOUT: 'not-a-number',
-      ANTHROPIC_API_KEY: 'fallback-key',
+      AI_API_KEY: ' proxy-key ',
     });
     expect(config.enabled).toBe(true);
     expect(config.enableWrites).toBe(true);
     expect(config.maxToolCalls).toBe(50);
     expect(config.requestTimeoutMs).toBe(90_000);
-    expect(config.apiKey).toBe('fallback-key');
+    expect(config.apiKey).toBe('proxy-key');
   });
 });
 

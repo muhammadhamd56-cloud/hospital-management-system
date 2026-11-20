@@ -34,7 +34,7 @@ import { SettingsAiTools } from './domain-tools/settings.ai-tools';
 import { StaffAiTools } from './domain-tools/staff.ai-tools';
 import { AiMetricsService } from './observability/ai-metrics.service';
 import { AiStoreService } from './persistence/ai-store.service';
-import { AnthropicModelProvider } from './providers/adapters/anthropic.provider';
+import { OllamaModelProvider } from './providers/adapters/ollama.provider';
 import { ModelGatewayService } from './providers/model-gateway.service';
 import { AI_MODEL_PROVIDERS, type AiModelProvider } from './providers/model-provider.interface';
 import { AI_TOOL_PROVIDERS, type AiToolProvider } from './tools/ai-tool.types';
@@ -60,7 +60,7 @@ const DOMAIN_TOOLS = [
   SettingsAiTools,
 ];
 
-const MODEL_PROVIDERS = [AnthropicModelProvider];
+const MODEL_PROVIDERS = [OllamaModelProvider];
 
 /**
  * Admin AI Copilot: one orchestrator over a registry of per-domain tools that

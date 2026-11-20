@@ -18,7 +18,7 @@ function response(partial: Partial<AiModelResponse>): AiModelResponse {
     toolCalls: [],
     stopReason: 'end_turn',
     usage: { inputTokens: 100, outputTokens: 20 },
-    model: 'claude-opus-5-5',
+    model: 'llama3.1:8b',
     providerContent: [],
     ...partial,
   };
@@ -79,7 +79,7 @@ function setup(configOverrides: Partial<AdminAiConfig> = {}) {
   const proposals = { create: jest.fn() };
   const dispatcher = new ToolDispatcherService(registry, policy, proposals as never, store as never, { log: jest.fn() } as never);
   const gateway = {
-    providerName: 'anthropic',
+    providerName: 'ollama',
     isConfigured: jest.fn(() => true),
     generate: jest.fn<Promise<AiModelResponse>, [AiModelRequest, { signal: AbortSignal; onTextDelta?: (d: string) => void }]>(),
   };

@@ -25,10 +25,6 @@ vi.mock('@/features/adminCopilot/api', async () => {
   }
 })
 
-vi.mock('@/features/assistant/AssistantWidget', () => ({
-  AssistantWidget: () => <div>legacy assistant</div>,
-}))
-
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
 const api = vi.mocked(copilotApi)
@@ -90,10 +86,11 @@ async function openPanel() {
 }
 
 describe('AdminCopilot', () => {
-  it('falls back to the existing assistant when the copilot is disabled on the server', async () => {
+  it('renders nothing when the copilot is disabled on the server', async () => {
     api.getCopilotStatus.mockRejectedValue(new ApiError('Not Found', { status: 404 }))
-    renderCopilot()
-    expect(await screen.findByText('legacy assistant')).toBeInTheDocument()
+    const { container } = renderCopilot()
+    await waitFor(() => expect(api.getCopilotStatus).toHaveBeenCalled())
+    await waitFor(() => expect(container).toBeEmptyDOMElement())
     expect(screen.queryByLabelText('Open MediCore Copilot')).toBeNull()
   })
 

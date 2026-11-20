@@ -196,7 +196,7 @@ export function BillingPage() {
     }
   }
 
-  // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
+  // ?filter=unpaid -- e.g. from a deep link to unpaid bills.
   // An additional predicate layered on top of the existing status/date/search
   // filters, since "unpaid" spans several existing InvoiceStatus values
   // rather than being one of them.

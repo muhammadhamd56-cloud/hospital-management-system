@@ -89,7 +89,7 @@ export function PatientBillingPage() {
     [invoices],
   )
 
-  // ?filter=unpaid -- e.g. from the AI Assistant ("show my unpaid bills").
+  // ?filter=unpaid -- e.g. from a deep link to unpaid bills.
   // Same "unpaid" definition already used to decide whether "Pay now" shows.
   const isUnpaidFilterActive = searchParams.get('filter') === 'unpaid'
   const visibleInvoices = useMemo(

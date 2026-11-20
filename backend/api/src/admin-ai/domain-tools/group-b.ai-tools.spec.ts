@@ -519,9 +519,10 @@ describe('ProfileAiTools', () => {
 describe('SettingsAiTools', () => {
   const aiConfig = {
     enabled: true,
-    provider: 'anthropic',
-    model: 'claude-opus-5-5',
-    apiKey: 'sk-ant-supersecretvalue123',
+    provider: 'ollama',
+    model: 'llama3.1:8b',
+    baseUrl: 'http://gpu-box.internal:11434',
+    apiKey: 'proxy-supersecretvalue123',
     allowPhi: false,
     enableWrites: true,
     ragEnabled: false,
@@ -534,31 +535,32 @@ describe('SettingsAiTools', () => {
   };
   const provider = new SettingsAiTools(platform as any, config as any);
 
-  it('returns settings and AI flags without the API key', async () => {
+  it('returns settings and AI flags without the API key or server URL', async () => {
     const result = await run(provider, 'settings.getConfiguration');
     expect(result.adminAi).toEqual({
       enabled: true,
-      provider: 'anthropic',
-      model: 'claude-opus-5-5',
+      provider: 'ollama',
+      model: 'llama3.1:8b',
       writesEnabled: true,
       allowPhi: false,
       ragEnabled: false,
-      apiKeyConfigured: true,
+      modelServerConfigured: true,
     });
-    expect(JSON.stringify(result)).not.toContain('sk-ant');
+    expect(JSON.stringify(result)).not.toContain('supersecret');
+    expect(JSON.stringify(result)).not.toContain('gpu-box');
     expect(result.platform.consultationMargin).toBe(10);
   });
 
   it('finds inconsistencies', async () => {
     platform.getSettings.mockResolvedValueOnce({ consultationMargin: -1.234 });
-    config.get.mockReturnValueOnce({ ...aiConfig, apiKey: undefined as any, ragEnabled: true });
+    config.get.mockReturnValueOnce({ ...aiConfig, baseUrl: undefined as any, ragEnabled: true });
     const result = await run(provider, 'settings.findInconsistencies');
     const settings = result.issues.map((issue: any) => issue.setting);
     expect(settings).toEqual(
-      expect.arrayContaining(['consultationMargin', 'AI_API_KEY', 'AI_ENABLE_WRITES', 'AI_RAG_ENABLED']),
+      expect.arrayContaining(['consultationMargin', 'AI_BASE_URL', 'AI_ENABLE_WRITES', 'AI_RAG_ENABLED']),
     );
     expect(result.issues.filter((issue: any) => issue.setting === 'consultationMargin')).toHaveLength(2);
-    expect(JSON.stringify(result)).not.toContain('sk-ant');
+    expect(JSON.stringify(result)).not.toContain('supersecret');
   });
 
   it('preview enforces DTO bounds and rejects a no-op', async () => {

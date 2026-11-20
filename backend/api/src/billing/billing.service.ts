@@ -236,7 +236,7 @@ export class BillingService {
     } else if (caller.role === Role.PATIENT && invoice.patientId !== caller.id) {
       // Unreachable via BillingController today (GET /billing/invoices/:id is
       // ADMIN/DOCTOR-only there) -- guarded here too so this method stays
-      // safe to call directly from other callers (e.g. AssistantService)
+      // safe to call directly from other services
       // without silently trusting a patient-supplied id.
       throw new NotFoundException('Invoice not found');
     }

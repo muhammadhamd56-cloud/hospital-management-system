@@ -55,10 +55,6 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: ANTHROPIC_MODEL
-        value: claude-sonnet-5
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT
@@ -70,20 +66,23 @@ services:
       # enrolled authenticator, so keep it stable.
       - key: MFA_ENCRYPTION_KEY
         sync: false
-      # Shared demo logins. Keep off for a real deployment.
-      - key: DEMO_MODE
-        value: "false"
-      # Admin AI Copilot (docs/ai/AI_DEPLOYMENT.md). Off until AI_API_KEY is
-      # set and the read-only rollout is verified.
+      # Admin AI Copilot (docs/ai/AI_DEPLOYMENT.md), on a local Ollama model.
+      # Render can't reach Ollama on a local machine, so keep it off here until
+      # AI_BASE_URL points at a model server this service can reach.
       - key: ADMIN_AI_ENABLED
         value: "false"
+      - key: AI_BASE_URL
+        sync: false
       - key: AI_API_KEY
         sync: false
       - key: AI_MODEL
-        value: claude-opus-5-5
+        value: llama3.1:8b
       - key: AI_ALLOW_PHI
         value: "false"
       - key: AI_ENABLE_WRITES
         value: "false"
       - key: AI_RAG_ENABLED
+        value: "false"
+      # Shared demo logins. Keep off for a real deployment.
+      - key: DEMO_MODE
         value: "false"
